@@ -24,7 +24,7 @@ add_library(am_core STATIC
   hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/si.c hw/exi.c hw/vi.c
   hw/cp.c hw/pe.c hw/gather_pipe.c
   gfx/gx_fifo.c
-  audio/dsp_hle.c)
+  audio/dsp_hle.c audio/ax_voice.c)
 target_include_directories(am_core PUBLIC include)
 target_link_libraries(am_core PUBLIC am_ppc)
 am_apply_strict(am_core)

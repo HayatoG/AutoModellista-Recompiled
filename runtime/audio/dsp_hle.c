@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "am/ax_voice.h"
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/timebase.h"
@@ -27,6 +28,8 @@
 #define AX_MAIL_CMDLIST     0xBABE0000U
 /* AXUCode::SignalWorkEnd: AX_EMPTY_COMMAND_LIST_CYCLES. */
 #define AX_YIELD_CYCLES 2500U
+#define AX_CMD_PB_ADDR  0x02U
+#define AX_CMD_PROCESS  0x03U
 #define AX_CMD_MORE     0x0DU
 #define AX_CMD_END      0x0FU
 
@@ -61,6 +64,7 @@ static struct {
     u32 upload_iram_mram;
     u32 upload_iram_size;
     bool needs_resume_mail;
+    u32 pb_addr;
     DspHleStats stats;
 } s_hle;
 
@@ -108,6 +112,7 @@ static void set_ucode(DspHleKind kind, u32 crc) {
 void dsp_hle_reset(void) {
     memset(&s_hle, 0, sizeof(s_hle));
     s_hle.halted = true;
+    ax_voice_reset();
     set_ucode(DSP_HLE_KIND_ROM, DSP_HLE_UCODE_ROM);
 }
 
@@ -193,7 +198,8 @@ static void rom_mail(u32 mail) {
     s_hle.next_parameter = 0;
 }
 
-/* AXUCode::HandleCommandList sem efeitos: percorre até CMD_END para conferir o formato (argumentos por comando). */
+/* AXUCode::HandleCommandList: percorre até CMD_END conferindo o formato (argumentos por comando). Só PB_ADDR e
+ * PROCESS têm efeito (vozes andam, audio/ax_voice.c); os de mixagem e saída são do M7. */
 static void ax_walk_cmdlist(GuestAddr addr, u32 words) {
     static const u8 s_args[0x14] = {2, 5, 2, 0, 4, 4, 2, 2, 10, 2, 0, 0, 0, 3, 4, 0, 4, 2, 4, 12};
     if (words >= DSP_HLE_CMDLIST_MAX) {
@@ -209,6 +215,11 @@ static void ax_walk_cmdlist(GuestAddr addr, u32 words) {
         }
         if (cmd >= sizeof(s_args)) {
             am_fatal("DSP AX: comando 0x%04X desconhecido na lista em 0x%08X (palavra %u)", cmd, addr, i - 1U);
+        }
+        if (cmd == AX_CMD_PB_ADDR) {
+            s_hle.pb_addr = ((u32)mem_read16(NULL, addr + (i * 2U)) << 16) | mem_read16(NULL, addr + (i * 2U) + 2U);
+        } else if (cmd == AX_CMD_PROCESS) {
+            ax_voice_process_list(s_hle.pb_addr);
         }
         if (cmd == AX_CMD_MORE) {
             const u32 hi = mem_read16(NULL, addr + (i * 2U));
