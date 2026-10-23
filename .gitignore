@@ -36,3 +36,6 @@ obj/
 /tests/**/out/
 __pycache__/
 .DS_Store
+
+# ---- Saída de execução (traces, dumps de RAM do jogo): nunca versionar ----
+/logs/

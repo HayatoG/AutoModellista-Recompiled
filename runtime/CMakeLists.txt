@@ -2,21 +2,25 @@
 
 # --- am_ppc: semântica PowerPC (ponto flutuante, paired singles, exceções) --------------------------------------------
 # Compila o cpu.c do DolRecomp (GPL-3.0, mesmo commit do gerador) em vez de reescrever ~1700 linhas de FP do Gekko.
-# O cpu.c também define mem_read*/mem_write* sobre cpu->ram; esses nomes são da NOSSA runtime (core/mem.c), então no cpu.c
-# eles são renomeados por macro. Warnings desligados: é código de terceiros.
+# O cpu.c também define mem_read*/mem_write* sobre cpu->ram e ppc_mftb sobre cpu->timebase (que nada avança); esses nomes
+# são da NOSSA runtime (core/mem.c, core/timebase.c), então no cpu.c eles são renomeados por macro. Warnings desligados:
+# é código de terceiros.
 add_library(am_ppc STATIC "${AM_DOLRECOMP_DIR}/src/cpu/cpu.c")
 target_include_directories(am_ppc SYSTEM PUBLIC "${AM_DOLRECOMP_DIR}/src")
 target_compile_definitions(am_ppc PRIVATE
   mem_read8=dolrecomp_mem_read8   mem_read16=dolrecomp_mem_read16
   mem_read32=dolrecomp_mem_read32 mem_read64=dolrecomp_mem_read64
   mem_write8=dolrecomp_mem_write8   mem_write16=dolrecomp_mem_write16
-  mem_write32=dolrecomp_mem_write32 mem_write64=dolrecomp_mem_write64)
+  mem_write32=dolrecomp_mem_write32 mem_write64=dolrecomp_mem_write64
+  ppc_mftb=dolrecomp_ppc_mftb)
 target_compile_options(am_ppc PRIVATE ${AM_GENERATED_FLAGS})
 
-# --- am_core: memória, barramento, dispatcher, CPUState -------------------------------------------------------------
+# --- am_core: memória, CPUState, dispatcher, boot e chassi; os/ (exceções) e hw/ (dispositivos MMIO) ---------------
 add_library(am_core STATIC
   core/log.c core/mem.c core/dispatch.c core/guest_cpu.c
-  hw/bus.c)
+  core/timebase.c core/ppc_sys.c core/dol.c core/boot.c core/trace.c core/chassis.c
+  os/exception.c
+  hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/si.c hw/exi.c hw/vi.c)
 target_include_directories(am_core PUBLIC include)
 target_link_libraries(am_core PUBLIC am_ppc)
 am_apply_strict(am_core)

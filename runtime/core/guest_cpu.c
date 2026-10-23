@@ -6,9 +6,10 @@
 #include "am/bus.h"
 #include "am/log.h"
 #include "am/mem.h"
+#include "am/ppc_sys.h"
 
-/* Os callbacks abaixo são o contrato que o C gerado e o cpu.c do DolRecomp esperam da runtime. No M3 tudo o que
- * ainda não existe é am_fatal; o que tem resposta correta e trivial já a dá (PVR, cache, host_call). */
+/* Os callbacks abaixo são o contrato que o C gerado e o cpu.c do DolRecomp esperam da runtime. Instruções de sistema
+ * (SPR, cache) ficam em ppc_sys.c; o que ainda não existe é am_fatal. */
 
 static u64 cb_external_read(CPUState *cpu, u32 ea, u8 size) {
     (void)cpu;
@@ -30,11 +31,6 @@ static void cb_external_write32(CPUState *cpu, u32 ea, u32 value, u8 rid) {
     am_fatal("external_write32 sem implementação: ea=0x%08X valor=0x%08X rid=%u", ea, value, rid);
 }
 
-static void cb_instruction_fallback(CPUState *cpu, u32 raw, u32 cia) {
-    (void)cpu;
-    am_fatal("instrução sem recompilação nativa: opcode=0x%08X em 0x%08X (mtsprg/icbi/etc. entram no M4)", raw, cia);
-}
-
 /* false = "não interceptei este endereço": o gerado segue para a função recompilada. É a resposta correta enquanto
  * não há HLE (M5: OSLink, DVD, troca de contexto). O pseudo-endereço de consulta de região nativa não é usado por
  * este port; se aparecer, é bug. */
@@ -46,26 +42,19 @@ static bool cb_host_call(CPUState *cpu, u32 address) {
     return false;
 }
 
+/* mfspr/mtspr pelo caminho do cpu.c (ppc_mfspr/ppc_mtspr). O C gerado deste jogo não usa esse caminho (entrega tudo
+ * ao instruction_fallback), mas os dois vão ao mesmo módulo para não haver duas semânticas. */
 static u32 cb_spr_read(CPUState *cpu, u16 spr, u32 cia) {
-    (void)cpu;
-    if (spr == GUEST_CPU_SPR_PVR) {
-        return PPC_GEKKO_PVR;
-    }
-    am_fatal("mfspr de SPR %u desconhecido em 0x%08X", spr, cia);
+    return ppc_sys_mfspr(cpu, spr, cia);
 }
 
 static void cb_spr_write(CPUState *cpu, u16 spr, u32 value, u32 cia) {
-    (void)cpu;
-    am_fatal("mtspr de SPR %u (valor 0x%08X) desconhecido em 0x%08X", spr, value, cia);
+    ppc_sys_mtspr(cpu, spr, value, cia);
 }
 
-/* O host tem cache coerente e não há JIT: dcbst/dcbf/dcbi/icbi não têm efeito observável.
- * HIPÓTESE: confirmar no M4 que os 4 icbi do DOL (RECOMPILATION_REPORT §3) não geram código. */
+/* PPC_CACHE_DCBST.. (cpu.h) têm a mesma numeração de PpcCacheOp. HIPÓTESE do M3 sobre os icbi: ver ppc_sys.c. */
 static void cb_cache_control(CPUState *cpu, u8 operation, u32 ea, u32 cia) {
-    (void)cpu;
-    (void)operation;
-    (void)ea;
-    (void)cia;
+    ppc_sys_cache_op(cpu, (PpcCacheOp)operation, ea, cia);
 }
 
 bool guest_cpu_create(CPUState *cpu) {
@@ -77,7 +66,7 @@ bool guest_cpu_create(CPUState *cpu) {
     cpu->external_write = cb_external_write;
     cpu->external_read32 = cb_external_read32;
     cpu->external_write32 = cb_external_write32;
-    cpu->instruction_fallback = cb_instruction_fallback;
+    cpu->instruction_fallback = ppc_sys_fallback;
     cpu->host_call = cb_host_call;
     cpu->spr_read = cb_spr_read;
     cpu->spr_write = cb_spr_write;
