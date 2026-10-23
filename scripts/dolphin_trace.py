@@ -3,6 +3,12 @@ entradas de função até a primeira chamada de `main`. Saída em logs/ (fora do
 
     python3 -I scripts/dolphin_trace.py boot-state --iso <rvz> --out logs/m4/dolphin_boot
     python3 -I scripts/dolphin_trace.py trace --iso <rvz> --dol <main.dol> --out logs/m4/dolphin_trace.txt
+    python3 -I scripts/dolphin_trace.py events --iso <rvz> --frames 600 --out logs/m5/dolphin_events.txt
+
+M5 (docs/M5_OS_DISCO.md §6): `events` põe breakpoints só em pontos de interesse (main, OSLink/OSLinkFixed/OSUnlink,
+a função interna Read do DVD que programa o comando 0xA8 no DI, e a entrada do quadro fn_80051034) e grava uma linha
+por evento no mesmo formato que a runtime grava com --events. `trace --after-main N` continua o trace de chamadas
+depois de main até N eventos.
 
 Método: o Dolphin (2609a) para no entry point esperando o GDB (Core.cpp: CPUSetInitialExecutionState). Pomos um
 breakpoint de execução em cada início de função conhecido (analysis/call_graph.json, símbolos do dtk) e em cada alvo
@@ -13,8 +19,10 @@ checar breakpoints (JitArm64/Jit.cpp: IsDebuggingEnabled()).
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -30,6 +38,13 @@ DEFAULT_DOLPHIN = "/Applications/Dolphin.app/Contents/MacOS/Dolphin"
 DEFAULT_USER = "/Volumes/AMRecomp/dolphin-user"
 ENTRY = 0x80003154
 MAIN = 0x800719AC
+# Endereços do M5 (runtime/include/am/game.h).
+OS_LINK = 0x800C5C70
+OS_LINK_FIXED = 0x800C5C94
+OS_UNLINK = 0x800C5F08
+DVD_READ = 0x800CDC70  # Read(addr r3, length r4, offset r5, cb r6): escreve DICMDBUF/DIMAR/DILENGTH e DICR
+FRAME = 0x80051034
+FRAME_RETURN = 0x8004839C
 
 
 def launch(args) -> subprocess.Popen:
@@ -60,17 +75,42 @@ def launch(args) -> subprocess.Popen:
         "-e", args.iso,
     ]
     log = open(args.dolphin_log, "w") if args.dolphin_log else subprocess.DEVNULL
-    return subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+    # O Dolphin fica no grupo de processos do script: with_timeout.sh mata o grupo inteiro mesmo se o Python morrer
+    # com SIGKILL. SIGTERM/SIGINT viram SystemExit para os finally rodarem, e o atexit garante o kill em erro
+    # inesperado: nenhum Dolphin pode sobreviver ao script (um órfão do M4 ficou 2h30 segurando a porta do GDB).
+    proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+    atexit.register(kill_group, proc)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _raise_exit)
+    return proc
+
+
+def _raise_exit(signum, frame) -> None:  # noqa: ARG001
+    raise SystemExit(128 + signum)
+
+
+def kill_group(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+        try:
+            os.kill(proc.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def stop(proc: subprocess.Popen, client: gdb.GdbClient | None) -> None:
     if client is not None:
-        client.kill()
-    proc.terminate()
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+        try:
+            client.kill()
+        except OSError:
+            pass
+    kill_group(proc)
 
 
 def cmd_boot_state(args) -> int:
@@ -161,6 +201,56 @@ def cmd_trace(args) -> int:
     return 0 if reason == "main" else 1
 
 
+def stop_pc(client: gdb.GdbClient, reply: str) -> int:
+    if reply.startswith("T"):
+        for field in reply[3:].split(";"):
+            if field.startswith("40:"):
+                return int(field[3:], 16)
+    return client.read_reg(gdb.REG_PC)
+
+
+def cmd_events(args) -> int:
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    proc = launch(args)
+    client = None
+    lines: list[str] = []
+    frames = 0
+    reason = "?"
+    t0 = time.monotonic()
+    try:
+        client = gdb.GdbClient("127.0.0.1", args.port)
+        for a in (MAIN, OS_LINK, OS_LINK_FIXED, OS_UNLINK, DVD_READ, FRAME):
+            client.add_breakpoint(a)
+        while True:
+            if time.monotonic() - t0 > args.timeout:
+                reason = f"tempo limite de {args.timeout}s"
+                break
+            pc = stop_pc(client, client.cont())
+            r = [client.read_reg(i) for i in (3, 4, 5)]
+            lr = client.read_reg(gdb.REG_LR)
+            if pc == MAIN:
+                lines.append("main")
+            elif pc in (OS_LINK, OS_LINK_FIXED, OS_UNLINK):
+                mid = int.from_bytes(client.read_mem(r[0], 4), "big")
+                kind = "osunlink" if pc == OS_UNLINK else "oslink"
+                lines.append(f"{kind} frame={frames} id={mid} real=0x{r[0]:08X}")
+            elif pc == DVD_READ:
+                lines.append(f"di_read frame={frames} offset=0x{r[2]:09X} length=0x{r[1]:X} dst=0x{r[0] & 0x03FFFFFF:08X}")
+            elif pc == FRAME and lr == FRAME_RETURN:
+                if frames >= args.frames:
+                    reason = "frames"
+                    break
+                frames += 1
+    finally:
+        elapsed = time.monotonic() - t0
+        stop(proc, client)
+        out.write_text(f"# am-events v1 source=dolphin dolphin=2609a frames={frames} end={reason}\n" +
+                       "".join(l + "\n" for l in lines))
+        print(f"{len(lines)} eventos, {frames} quadros em {elapsed:.1f}s; fim: {reason}; {out}")
+    return 0 if reason == "frames" else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dolphin", default=os.environ.get("DOLPHIN", DEFAULT_DOLPHIN))
@@ -179,7 +269,13 @@ def main() -> int:
     t.add_argument("--out", required=True)
     t.add_argument("--max-events", type=int, default=200000)
     t.add_argument("--timeout", type=float, default=1800.0)
+    e = sub.add_parser("events")
+    e.add_argument("--out", required=True)
+    e.add_argument("--frames", type=int, default=600)
+    e.add_argument("--timeout", type=float, default=1800.0)
     args = ap.parse_args()
+    if args.cmd == "events":
+        return cmd_events(args)
     return cmd_boot_state(args) if args.cmd == "boot-state" else cmd_trace(args)
 
 
