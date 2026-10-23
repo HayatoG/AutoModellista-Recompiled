@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "am/pi.h"
 
+#include <string.h>
+
 #include "am/bus.h"
 
 static struct {
@@ -10,6 +12,7 @@ static struct {
     u32 fifo_end;
     u32 fifo_wptr;
     u32 reset_code;
+    u64 deliveries[16];
 } s_pi;
 
 /* Dolphin ProcessorInterfaceManager::Init: causa = botão de reset solto + VI (o VI já pede interrupção ao ligar; fica
@@ -21,6 +24,18 @@ void pi_reset(void) {
     s_pi.fifo_end = 0;
     s_pi.fifo_wptr = 0;
     s_pi.reset_code = 0;
+    memset(s_pi.deliveries, 0, sizeof(s_pi.deliveries));
+}
+
+void pi_count_delivery(void) {
+    const u32 active = s_pi.cause & s_pi.mask;
+    for (u32 bit = 0; bit < 16U; bit++) {
+        s_pi.deliveries[bit] += (active >> bit) & 1U;
+    }
+}
+
+u64 pi_delivery_count(u32 bit) {
+    return bit < 16U ? s_pi.deliveries[bit] : 0U;
 }
 
 static u32 read32(u32 offset) {

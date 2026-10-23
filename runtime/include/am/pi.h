@@ -54,5 +54,9 @@ void pi_fifo_advance(void);
 
 /* true se alguma causa mascarável está ativa e liberada pela máscara: a CPU recebe a exceção externa (0x500). */
 bool pi_external_pending(void);
+/* Quantas vezes cada causa (bit 0..15) estava ativa e liberada quando a CPU recebeu a exceção externa; o chassi
+ * chama pi_count_delivery a cada entrega. Para diagnóstico de tempestade de interrupções. */
+void pi_count_delivery(void);
+u64 pi_delivery_count(u32 bit);
 
 #endif /* AM_PI_H */

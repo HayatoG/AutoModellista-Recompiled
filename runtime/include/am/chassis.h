@@ -26,7 +26,11 @@ typedef struct ChassisConfig {
     u64 same_pc_limit;   /* 0 = CHASSIS_DEFAULT_SAME_PC_LIMIT */
     u64 max_wall_ms;     /* 0 = sem limite de tempo real */
     u64 (*now_ms)(void); /* relógio do host (platform_ticks_ms); obrigatório se max_wall_ms != 0 */
+    /* Opcional: chamado a cada CHASSIS_TICK_STEPS voltas (diagnóstico de laço parado, ver game_run.c). */
+    void (*on_tick)(const CPUState *cpu);
 } ChassisConfig;
+
+#define CHASSIS_TICK_STEPS 0x10000U
 
 typedef struct ChassisStats {
     u64 steps;

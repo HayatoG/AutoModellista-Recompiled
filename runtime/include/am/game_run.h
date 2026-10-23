@@ -21,6 +21,11 @@ void game_run_shutdown(void);
 u64 game_run_frames(void);
 bool game_run_frame_target_reached(void);
 
+/* Para ChassisConfig.on_tick: se o laço de quadros não anda há GAME_RUN_STALL_FIELDS campos de VI, mostra as
+ * threads do SO e para com am_fatal (um jogo esperando algo que a runtime nunca entrega). */
+#define GAME_RUN_STALL_FIELDS 1200U
+void game_run_tick(const CPUState *cpu);
+
 /* Resumo no log: módulos ligados, DVD, VI, DSP, GX. */
 void game_run_report(void);
 

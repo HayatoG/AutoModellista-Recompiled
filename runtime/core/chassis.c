@@ -41,6 +41,7 @@ static void check_interrupts(CPUState *cpu, ChassisStats *stats) {
     }
     /* Prioridade do 750CL (manual, tabela 4-3): externa antes do decrementer. */
     if (pi_external_pending()) {
+        pi_count_delivery();
         exception_deliver(cpu, EXCEPTION_NUM_EXTERNAL, EXCEPTION_VEC_EXTERNAL);
         stats->interrupts++;
     } else if (timebase_dec_expired(cpu)) {
@@ -103,6 +104,9 @@ ChassisStop chassis_run(CPUState *cpu, const ChassisConfig *config, ChassisStats
             return CHASSIS_STOP_HOOK;
         }
         watchdog_check(&wd, cpu, config, stats->steps);
+        if (config->on_tick != NULL && (stats->steps & (CHASSIS_TICK_STEPS - 1U)) == 0U) {
+            config->on_tick(cpu);
+        }
         timebase_begin_slice(cpu);
         dispatch_step(cpu);
         timebase_end_slice(cpu);

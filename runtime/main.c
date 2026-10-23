@@ -373,7 +373,8 @@ static int run_boot(CPUState *cpu, const Options *o) {
                                        .max_steps = o->max_steps,
                                        .same_pc_limit = o->same_pc_limit,
                                        .max_wall_ms = o->max_seconds * 1000U,
-                                       .now_ms = platform_ticks_ms};
+                                       .now_ms = platform_ticks_ms,
+                                       .on_tick = o->frames != 0U ? game_run_tick : NULL};
             ChassisStats stats = {0};
             const ChassisStop stop = chassis_run(cpu, &cfg, &stats);
             trace_close();

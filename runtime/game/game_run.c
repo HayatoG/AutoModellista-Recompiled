@@ -20,7 +20,9 @@
 #include "am/hook.h"
 #include "am/log.h"
 #include "am/os_link.h"
+#include "am/os_threads.h"
 #include "am/pad_script.h"
+#include "am/pi.h"
 #include "am/platform.h"
 #include "am/recomp.h"
 #include "am/si.h"
@@ -43,6 +45,7 @@ static struct {
     u32 rel_count;
     FILE *events;
     PadScript pad;
+    u64 fields_at_frame; /* campos de VI quando o último quadro começou */
 } s_run;
 
 static void event_line(const char *fmt, ...) AM_PRINTF(1, 2);
@@ -56,6 +59,7 @@ static void event_line(const char *fmt, ...) {
     (void)vfprintf(s_run.events, fmt, ap);
     va_end(ap);
     (void)fputc('\n', s_run.events);
+    (void)fflush(s_run.events); /* poucas linhas; um timeout não pode levar o que já aconteceu */
 }
 
 static void on_di_read(u64 offset, u32 length, u32 dst) {
@@ -114,6 +118,7 @@ static HookAction on_frame(CPUState *cpu, void *user) {
         return HOOK_STOP;
     }
     s_run.frames++;
+    s_run.fields_at_frame = vi_field_count();
     si_set_pad_buttons(pad_script_buttons(&s_run.pad, s_run.frames));
     if (s_run.frames == 1U || s_run.frames % 60U == 0U) {
         AM_LOG_INFO("quadro %" PRIu64 ": %" PRIu64 " campos de VI, %" PRIu64 " ciclos, %" PRIu64 " leituras de DVD",
@@ -191,6 +196,26 @@ void game_run_shutdown(void) {
     }
     s_run.rel_count = 0;
     disc_close();
+}
+
+void game_run_tick(const CPUState *cpu) {
+    if (s_run.frames == 0U || vi_field_count() - s_run.fields_at_frame < GAME_RUN_STALL_FIELDS) {
+        return;
+    }
+    os_threads_dump(cpu, 12);
+    AM_LOG_INFO("PI: causa 0x%05X máscara 0x%05X; MSR 0x%08X; VI DI0 0x%08X DI1 0x%08X", pi_cause(), pi_mask(),
+                cpu->msr, (u32)vi_read(0x30U, 4), (u32)vi_read(0x34U, 4));
+    AM_LOG_INFO("interrupções entregues por causa: DI %" PRIu64 " SI %" PRIu64 " EXI %" PRIu64 " AI %" PRIu64
+                " DSP %" PRIu64 " VI %" PRIu64 " PE token %" PRIu64 " PE fim %" PRIu64 " CP %" PRIu64,
+                pi_delivery_count(2), pi_delivery_count(3), pi_delivery_count(4), pi_delivery_count(5),
+                pi_delivery_count(6), pi_delivery_count(8), pi_delivery_count(9), pi_delivery_count(10),
+                pi_delivery_count(11));
+    AM_LOG_INFO("VI: VTR 0x%04X DCR 0x%04X HTR0 0x%08X VTO 0x%08X VTE 0x%08X clock %u, meia-linha %u",
+                (u32)vi_read(0x00U, 2), (u32)vi_read(0x02U, 2), (u32)vi_read(0x04U, 4), (u32)vi_read(0x0CU, 4),
+                (u32)vi_read(0x10U, 4), (u32)vi_read(0x6CU, 2), vi_half_line());
+    am_fatal("laço de quadros parado: quadro %" PRIu64 " começou há %" PRIu64 " campos de VI (%" PRIu64
+             " leituras de DVD até aqui); threads acima",
+             s_run.frames, vi_field_count() - s_run.fields_at_frame, di_stats()->reads);
 }
 
 u64 game_run_frames(void) {
