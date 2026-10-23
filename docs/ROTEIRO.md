@@ -103,7 +103,7 @@ Padrões de trabalho que funcionaram:
 - O REA só aceita Ghidra 12.1.x; a 12.2, lançada em 22/10, ainda não.
 - O Ghidra oficial não traz o decompilador nativo `mac_arm_64`: foi compilado com `support/gradle/gradlew buildNatives` (36 s).
 - O `main.elf` do dtk vem com `EF_PPC_EMB` (0x80000000) e o REA recusa; uma cópia com `e_flags = 0` em `/Volumes/AMRecomp/work/rea/main.elf` funciona: 3.897 funções, 9.902 strings, perfil `PowerPC:BE:32:default`.
-- O Ghidra padrão não tem perfil Gekko: paired singles não decodificam. Pendência para o M6 (há extensão da comunidade, a avaliar).
+- O Ghidra padrão não tem perfil Gekko. Resolvido com a extensão GameCubeLoader 1.3.1 (Apache-2.0): linguagem `PowerPC:BE:32:Gekko_Broadway`, `.sla` compilado com `support/sleigh`, fixada no MCP via `REA_GHIDRA_LANGUAGE_ID`. Resultado: 3.897 funções, 9.905 strings.
 
 ## Perguntas em aberto e próximos passos
 
