@@ -1,0 +1,24 @@
+{
+ "dolphin": "2609a",
+ "criterion": "docs/M4_BOOT.md §5",
+ "variants": {
+  "default": {
+   "dolphin_events": 1998,
+   "runtime_events": 1998,
+   "chunks": 155,
+   "dolphin_sha256": "2bdb761ae8cba763c52e32cb164705a4fe130e468bfd66f42201a42f54d00c14",
+   "runtime_sha256": "2bdb761ae8cba763c52e32cb164705a4fe130e468bfd66f42201a42f54d00c14",
+   "first_divergence": null,
+   "both_end_at_main": true
+  },
+  "c128": {
+   "dolphin_events": 2733,
+   "runtime_events": 2733,
+   "chunks": 2737,
+   "dolphin_sha256": "a6a30d2134f2b08a9c9f0e7634768ed1d49b8dfc68ed83ee4f664748664f3b18",
+   "runtime_sha256": "a6a30d2134f2b08a9c9f0e7634768ed1d49b8dfc68ed83ee4f664748664f3b18",
+   "first_divergence": null,
+   "both_end_at_main": true
+  }
+ }
+}
