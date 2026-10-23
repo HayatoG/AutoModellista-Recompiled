@@ -98,6 +98,13 @@ Padrões de trabalho que funcionaram:
 - **Commits pequenos por marco**, sem bytes do jogo, conferidos antes de cada commit.
 - **Memória entre sessões** no ai-memory: decisão de arquitetura fixada e página de status atualizada a cada etapa.
 
+**Ferramentas de engenharia reversa (23/10):** Ghidra 12.1.4 + JDK 21 (Temurin 21.0.13) instalados no SSD em `/Volumes/AMRecomp/ext`, e REA 6.7.0 no notebook, registrado como MCP no Claude Code (só entra em uso após reiniciar a sessão).
+
+- O REA só aceita Ghidra 12.1.x; a 12.2, lançada em 22/10, ainda não.
+- O Ghidra oficial não traz o decompilador nativo `mac_arm_64`: foi compilado com `support/gradle/gradlew buildNatives` (36 s).
+- O `main.elf` do dtk vem com `EF_PPC_EMB` (0x80000000) e o REA recusa; uma cópia com `e_flags = 0` em `/Volumes/AMRecomp/work/rea/main.elf` funciona: 3.897 funções, 9.902 strings, perfil `PowerPC:BE:32:default`.
+- O Ghidra padrão não tem perfil Gekko: paired singles não decodificam. Pendência para o M6 (há extensão da comunidade, a avaliar).
+
 ## Perguntas em aberto e próximos passos
 
 O próximo marco visível é o M6: a primeira imagem do jogo na tela, desenhada pela runtime.

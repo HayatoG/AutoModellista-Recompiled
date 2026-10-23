@@ -113,6 +113,19 @@ Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até i
 
 **Motion (planejado):** fluxo em quatro caixas (Você pergunta → IA → REA → Ghidra) com um pacote de luz indo e voltando entre elas; na volta, a resposta abre como um cartão com três campos: “função”, “evidência”, “incerto”. Selo “só ELF por enquanto” aparece no canto quando a fala cita o limite.
 
+### 3.6 Instalando Ghidra e REA: dois tropeços (gravado em 23/10)
+
+**Fala:** “Instalar não foi só ‘next, next’. Primeiro: o Ghidra oficial não vem com o decompilador nativo pra Mac com chip Apple, só pra Linux e Windows. Tive que compilar essa peça, levou 36 segundos. Segundo: o REA recusou o arquivo do jogo, porque ele vinha marcado como ‘PowerPC embarcado’, uma variante diferente. Essa marcação é só um rótulo no cabeçalho, então fiz uma cópia sem ela. Aí funcionou: o Ghidra achou 3.897 funções e quase 10 mil textos dentro do jogo. E ainda tem um porém: o Ghidra não conhece as instruções especiais do processador do GameCube, o Gekko. Isso fica pra resolver quando a gente precisar.”
+
+**Na tela:**
+
+- A pasta do Ghidra mostrando só `linux_x86_64` e `win_x86_64` em `Decompiler/os/`; depois o `BUILD SUCCESSFUL in 36s` e o arquivo `mac_arm_64/decompile`.
+- A mensagem do REA: “EF_PPC_EMB declares an embedded PowerPC variant”.
+- O byte do cabeçalho mudando de `0x80000000` para `0x00000000`.
+- O resultado: `procedure_count = 3897`, `string_count = 9902`.
+
+**Motion:** a pasta do Ghidra abre e as duas plataformas aparecem; um espaço vazio pisca com “mac_arm_64?” e depois é preenchido com uma engrenagem girando (compilando) e um check. Para o rótulo: o cabeçalho do arquivo como uma etiqueta de bagagem com “EMB” carimbado; uma tesoura corta o carimbo e o arquivo passa pela catraca do REA. Contadores sobem até 3.897 e 9.902.
+
 ## Cap. 4 — Bastidores: como a IA trabalhou
 
 ### 4.1 Um time de IAs, cada uma no seu tamanho
@@ -175,4 +188,4 @@ Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até i
 
 | Data | O que entrou no roteiro |
 | --- | --- |
-| 23/10/2026 | Versão inicial: gancho, capítulos 1–5, cenas de Ghidra e REA como “a gravar”; Motion em todas as cenas |
+| 23/10/2026 | Versão inicial: gancho, capítulos 1–5, cenas de Ghidra e REA como “a gravar”; Motion em todas as cenas; 3.6 instalação do Ghidra 12.1.4 e do REA 6.7.0 (decompilador ARM64 compilado, flag EF_PPC_EMB, 3.897 funções) |
