@@ -19,8 +19,12 @@ target_compile_options(am_ppc PRIVATE ${AM_GENERATED_FLAGS})
 add_library(am_core STATIC
   core/log.c core/mem.c core/dispatch.c core/guest_cpu.c
   core/timebase.c core/ppc_sys.c core/dol.c core/boot.c core/trace.c core/chassis.c core/disc.c core/rel_map.c core/hook.c
+  core/pad_script.c
   os/exception.c
-  hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/si.c hw/exi.c hw/vi.c)
+  hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/si.c hw/exi.c hw/vi.c
+  hw/cp.c hw/pe.c hw/gather_pipe.c
+  gfx/gx_fifo.c
+  audio/dsp_hle.c)
 target_include_directories(am_core PUBLIC include)
 target_link_libraries(am_core PUBLIC am_ppc)
 am_apply_strict(am_core)

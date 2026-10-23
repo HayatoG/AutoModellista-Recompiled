@@ -47,6 +47,11 @@ void pi_write(u32 offset, u64 value, u8 size);
 void pi_set_interrupt(u32 cause, bool set);
 u32 pi_cause(void);
 u32 pi_mask(void);
+/* FIFO da CPU (PI_FIFO_BASE/END/WPTR), endereços físicos alinhados a 32. O gather pipe grava em wptr e avança:
+ * depois do bloco em END volta a BASE (Dolphin GPFifo.cpp: UpdateGatherPipe). */
+u32 pi_fifo_write_pointer(void);
+void pi_fifo_advance(void);
+
 /* true se alguma causa mascarável está ativa e liberada pela máscara: a CPU recebe a exceção externa (0x500). */
 bool pi_external_pending(void);
 

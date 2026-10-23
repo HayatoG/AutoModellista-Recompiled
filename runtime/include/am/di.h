@@ -33,7 +33,23 @@
 
 #define DI_CMD_INQUIRY 0x12U
 
+typedef struct DiStats {
+    u64 commands;
+    u64 reads;
+    u64 read_bytes;
+    u64 seeks;
+    u64 stop_motor;
+    u64 audio_buffer_config;
+} DiStats;
+
+/* Chamado a cada comando de leitura (deslocamento no disco, bytes, destino físico), para o log de eventos. */
+typedef void (*DiReadObserver)(u64 offset, u32 length, u32 dst);
+
 void di_reset(void);
+void di_set_read_observer(DiReadObserver observer);
+const DiStats *di_stats(void);
+/* Ciclo em que o comando em andamento termina, ou UINT64_MAX. */
+u64 di_next_event_cycle(void);
 /* Conclui comandos cujo prazo passou (o chassi chama a cada volta). */
 void di_update(void);
 u64 di_read(u32 offset, u8 size);

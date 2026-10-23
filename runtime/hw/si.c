@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Serial Interface como no Dolphin 2609a (Core/HW/SI/SI.cpp, SI_DeviceGCController.cpp, SI_DeviceNull.cpp). A
  * transferência pelo buffer de comunicação termina na hora (RunSIBuffer devolve resposta não nula): TCINT sobe na
- * própria escrita de TSTART. Polling de controle (SIPOLL.ENx, WR) é do PADInit, depois de main: am_fatal. */
+ * própria escrita de TSTART. O polling (UpdateDevices) é disparado pelo VI nas meias-linhas agendadas. O controle
+ * da porta 1 está conectado e sem entrada: a leitura devolve sempre o estado neutro (entrada de verdade: M7). */
 #include "am/si.h"
 
 #include <string.h>
@@ -10,9 +11,15 @@
 #include "am/log.h"
 #include "am/pi.h"
 
-/* Comandos de buffer (Dolphin SI_Device.h: EBufferCommands). */
-#define SI_CMD_STATUS 0x00U
-#define SI_CMD_RESET  0xFFU
+/* Comandos de buffer (Dolphin SI_Device.h: EBufferCommands) e direto (EDirectCommands). */
+#define SI_CMD_STATUS      0x00U
+#define SI_CMD_DIRECT      0x40U
+#define SI_CMD_ORIGIN      0x41U
+#define SI_CMD_RECALIBRATE 0x42U
+#define SI_CMD_RESET       0xFFU
+#define SI_DIRECT_WRITE    0x40U
+/* SOrigin: botões (2), sticks (4), gatilhos (2), 2 desconhecidos. */
+#define SI_ORIGIN_SIZE 10U
 
 typedef struct SiChannel {
     u32 out;
@@ -27,6 +34,9 @@ static struct {
     u32 status;
     u32 exi_clock;
     u8 buffer[SI_BUFFER_SIZE];
+    u32 pad_mode; /* m_mode do controle (comando direto 0x40 com poll = 0) */
+    u16 pad_buttons;
+    u64 polls;
 } s_si;
 
 void si_reset(void) {
@@ -46,19 +56,99 @@ static void update_interrupts(void) {
                                     ((c & SI_CSR_TCINT) != 0U && (c & SI_CSR_TCINTMSK) != 0U));
 }
 
+/* CSIDevice_GCController::GetData no modo atual: sticks e gatilhos neutros, botões do roteiro de teste. Só o modo 3
+ * (o do PADInit) está conferido. */
+static void pad_get_data(u32 *hi, u32 *lo) {
+    if (s_si.pad_mode != 3U && s_si.pad_mode != 0U) {
+        am_fatal("SI: controle no modo %u; só os modos 0 e 3 estão implementados", s_si.pad_mode);
+    }
+    *hi = SI_PAD_NEUTRAL_HI | ((u32)s_si.pad_buttons << 16); /* MapPadStatus: botões nos bits 16-31 */
+    /* Modo 0: A/B/gatilhos com 4 bits e substick com 8, todos neutros dão o mesmo valor do modo 3. */
+    *lo = SI_PAD_NEUTRAL_LO_MODE3;
+}
+
 /* ISIDevice::RunBuffer: tamanho da resposta, -1 = sem resposta (porta vazia). */
 static int run_device(u32 channel) {
     if (channel != 0U) {
         return -1; /* CSIDevice_Null */
     }
     const u8 command = s_si.buffer[0];
-    if (command == SI_CMD_STATUS || command == SI_CMD_RESET) {
+    switch (command) {
+    case SI_CMD_STATUS:
+    case SI_CMD_RESET:
         s_si.buffer[0] = (u8)(SI_TYPE_GC_CONTROLLER >> 24); /* CreateStatusResponse: 3 bytes big-endian */
         s_si.buffer[1] = (u8)(SI_TYPE_GC_CONTROLLER >> 16);
         s_si.buffer[2] = (u8)(SI_TYPE_GC_CONTROLLER >> 8);
         return 3;
+    case SI_CMD_DIRECT: {
+        u32 hi = 0;
+        u32 lo = 0;
+        pad_get_data(&hi, &lo);
+        for (u32 i = 0; i < 4U; i++) {
+            s_si.buffer[i] = (u8)(hi >> (24U - (i * 8U)));
+            s_si.buffer[i + 4U] = (u8)(lo >> (24U - (i * 8U)));
+        }
+        return 8;
     }
-    am_fatal("SI: comando de controle 0x%02X na porta 1 não implementado (origem/leitura direta: TODO(M7))", command);
+    case SI_CMD_ORIGIN:
+    case SI_CMD_RECALIBRATE:
+        /* Origem centrada do construtor de CSIDevice_GCController: botões 0, sticks 0x80, gatilhos 0. */
+        memset(s_si.buffer, 0, SI_ORIGIN_SIZE);
+        s_si.buffer[2] = 0x80U;
+        s_si.buffer[3] = 0x80U;
+        s_si.buffer[4] = 0x80U;
+        s_si.buffer[5] = 0x80U;
+        return (int)SI_ORIGIN_SIZE;
+    default:
+        am_fatal("SI: comando 0x%02X para o controle da porta 1 desconhecido (Dolphin: PanicAlert)", command);
+    }
+}
+
+void si_update_devices(void) {
+    s_si.polls++;
+    for (u32 i = 0; i < SI_CHANNEL_COUNT; i++) {
+        SiChannel *c = &s_si.ch[i];
+        const u32 errlatch = c->in_hi & 0x40000000U;
+        if (i == 0U) {
+            pad_get_data(&c->in_hi, &c->in_lo);
+            c->in_hi = (c->in_hi & ~0x40000000U) | errlatch;
+            s_si.status |= 0x20000000U >> (i * 8U); /* RDSTn */
+        } else {
+            s_si.status |= 0x08000000U >> (i * 8U); /* SetNoResponse: NOREPn */
+            c->in_hi |= 0xC0000000U;                /* ERRSTAT e ERRLATCH */
+        }
+    }
+    update_interrupts();
+}
+
+void si_set_pad_buttons(u16 buttons) {
+    s_si.pad_buttons = buttons;
+}
+
+u32 si_poll_x_lines(void) {
+    return (s_si.poll >> 16) & 0x3FFU;
+}
+
+u64 si_poll_count(void) {
+    return s_si.polls;
+}
+
+/* CSIDevice_GCController::SendCommand (escrita de SISR.WR): só o comando direto 0x40 (rumble + modo). */
+static void send_command(u32 channel, u32 out, bool poll_enabled) {
+    if (channel != 0U) {
+        return; /* CSIDevice_Null::SendCommand não faz nada */
+    }
+    const u32 command = (out >> 16) & 0xFFU;
+    if (command == SI_DIRECT_WRITE) {
+        if (!poll_enabled) {
+            s_si.pad_mode = out & 0xFFU;
+            AM_LOG_DEBUG("SI: controle 1 no modo %u (rumble %u)", s_si.pad_mode, (out >> 8) & 0xFFU);
+        }
+        return;
+    }
+    if (command != 0U) {
+        am_fatal("SI: comando direto 0x%08X desconhecido para o controle 1 (Dolphin: PanicAlert)", out);
+    }
 }
 
 /* RunSIBuffer, para aparelhos que respondem na hora. */
@@ -91,7 +181,11 @@ static void write_status(u32 v) {
     /* UNRUN/OVRUN/COLL/NOREP de cada canal (bits 0-3 de cada byte): escrever 1 apaga. */
     s_si.status &= ~(v & 0x0F0F0F0FU);
     if ((v & 0x80000000U) != 0U) {
-        am_fatal("SI: SISR.WR (copiar saída para os controles) não implementado (TODO(M7))");
+        /* SIPOLL.EN0..3 = bits 7..4. */
+        for (u32 i = 0; i < SI_CHANNEL_COUNT; i++) {
+            send_command(i, s_si.ch[i].out, ((s_si.poll >> (7U - i)) & 1U) != 0U);
+        }
+        s_si.status &= ~0x90101010U; /* WR (bit 31) e WRST0..3 (bits 28, 20, 12, 4) */
     }
 }
 
@@ -168,9 +262,6 @@ void si_write(u32 offset, u64 value, u8 size) {
     }
     switch (offset) {
     case SI_REG_POLL:
-        if ((v & 0xF0U) != 0U) {
-            am_fatal("SI: polling de controle habilitado (SIPOLL=0x%08X) não implementado (TODO(M7))", v);
-        }
         s_si.poll = v;
         return;
     case SI_REG_COMCSR:

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Audio Interface (0xCC006C00): controle (AICR), volume do streaming, contador de amostras, timing de interrupção.
- * YAGCD 5.10; Dolphin Core/HW/AudioInterface.{h,cpp} (tag 2609a). Streaming do disco (PSTAT) é am_fatal até o M5. */
+ * YAGCD 5.10; Dolphin Core/HW/AudioInterface.{h,cpp} (tag 2609a). O streaming do disco só tem o relógio (AISCNT). */
 #ifndef AM_AI_H
 #define AM_AI_H
 
@@ -23,6 +23,10 @@
 #define AI_CR_AIDFR    0x40U
 
 void ai_reset(void);
+/* Avança o contador de amostras do streaming até o ciclo atual (o chassi chama a cada volta). */
+void ai_update(void);
+/* Quantas vezes PSTAT foi ligado (o AIInit liga para medir o conversor). */
+u64 ai_stream_starts(void);
 u64 ai_read(u32 offset, u8 size);
 void ai_write(u32 offset, u64 value, u8 size);
 

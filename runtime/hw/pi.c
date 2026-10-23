@@ -98,6 +98,14 @@ void pi_set_interrupt(u32 cause, bool set) {
     }
 }
 
+u32 pi_fifo_write_pointer(void) {
+    return s_pi.fifo_wptr;
+}
+
+void pi_fifo_advance(void) {
+    s_pi.fifo_wptr = s_pi.fifo_wptr == s_pi.fifo_end ? s_pi.fifo_base : s_pi.fifo_wptr + 32U;
+}
+
 u32 pi_cause(void) {
     return s_pi.cause;
 }

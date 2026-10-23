@@ -2,12 +2,17 @@
 #include "am/bus.h"
 
 #include "am/ai.h"
+#include "am/cp.h"
 #include "am/di.h"
 #include "am/dsp.h"
 #include "am/exi.h"
+#include "am/gather_pipe.h"
+#include "am/gx_fifo.h"
 #include "am/log.h"
 #include "am/mi.h"
+#include "am/pe.h"
 #include "am/pi.h"
+#include "am/rel_map.h"
 #include "am/si.h"
 #include "am/vi.h"
 
@@ -25,12 +30,17 @@ typedef struct BusRegion {
 } BusRegion;
 
 static const BusRegion s_bus_regions[] = {
-    {0x0C000000U, 0x1000U, "CP", NULL, NULL},           {0x0C001000U, 0x1000U, "PE", NULL, NULL},
-    {0x0C002000U, 0x1000U, "VI", vi_read, vi_write},    {0x0C003000U, 0x1000U, "PI", pi_read, pi_write},
-    {0x0C004000U, 0x1000U, "MI", mi_read, mi_write},    {0x0C005000U, 0x1000U, "DSP", dsp_read, dsp_write},
-    {0x0C006000U, 0x0400U, "DI", di_read, di_write},    {0x0C006400U, 0x0400U, "SI", si_read, si_write},
-    {0x0C006800U, 0x0400U, "EXI", exi_read, exi_write}, {0x0C006C00U, 0x0400U, "AI", ai_read, ai_write},
-    {0x0C008000U, 0x1000U, "WGPipe", NULL, NULL},
+    {0x0C000000U, 0x1000U, "CP", cp_read, cp_write},
+    {0x0C001000U, 0x1000U, "PE", pe_read, pe_write},
+    {0x0C002000U, 0x1000U, "VI", vi_read, vi_write},
+    {0x0C003000U, 0x1000U, "PI", pi_read, pi_write},
+    {0x0C004000U, 0x1000U, "MI", mi_read, mi_write},
+    {0x0C005000U, 0x1000U, "DSP", dsp_read, dsp_write},
+    {0x0C006000U, 0x0400U, "DI", di_read, di_write},
+    {0x0C006400U, 0x0400U, "SI", si_read, si_write},
+    {0x0C006800U, 0x0400U, "EXI", exi_read, exi_write},
+    {0x0C006C00U, 0x0400U, "AI", ai_read, ai_write},
+    {0x0C008000U, 0x1000U, "WGPipe", gather_pipe_read, gather_pipe_write},
 };
 
 #define BUS_REGION_COUNT (sizeof(s_bus_regions) / sizeof(s_bus_regions[0]))
@@ -52,6 +62,10 @@ static const BusRegion *find_region(GuestAddr addr) {
 
 const char *bus_region_name(GuestAddr addr) {
     const BusRegion *r = find_region(addr);
+    const u32 phys = addr & 0x3FFFFFFFU;
+    if (r == NULL && (addr >> 30) >= 2U && phys >= REL_MAP_PHYS_START && phys < REL_MAP_PHYS_END) {
+        return "REL virtual sem módulo ligado"; /* core/rel_map.c: janela sem OSLink que a cubra */
+    }
     return r != NULL ? r->name : "desconhecido";
 }
 
@@ -91,9 +105,16 @@ void bus_reset(void) {
     di_reset();
     si_reset();
     exi_reset();
+    cp_reset();
+    pe_reset();
+    gather_pipe_reset();
+    const GxFifoSink sink = {pe_signal_finish, pe_signal_token};
+    gx_fifo_reset(&sink);
 }
 
 void bus_update(void) {
     dsp_update();
     di_update();
+    vi_update();
+    ai_update();
 }

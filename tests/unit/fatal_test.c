@@ -61,6 +61,16 @@ static void scenario_trace_limit(CPUState *cpu) {
     (void)trace_on_dispatch(cpu);
 }
 
+/* Tarefa de boot pela ROM com uma IRAM zerada: o hash não é de nenhum AX conhecido. */
+static void scenario_dsp_ucode(CPUState *cpu) {
+    bus_reset();
+    static const u32 s_mails[] = {0x80F3A001U, 0x80100000U, 0x80F3A002U, 0x00000100U, 0x80F3D001U, 0x00000010U};
+    for (size_t i = 0; i < sizeof(s_mails) / sizeof(s_mails[0]); i++) {
+        mem_write16(cpu, 0xCC005000U, (u16)(s_mails[i] >> 16));
+        mem_write16(cpu, 0xCC005002U, (u16)s_mails[i]);
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc != 2 || !mem_init()) {
         (void)fprintf(stderr, "uso: fatal_test <cenário>\n");
@@ -74,7 +84,7 @@ int main(int argc, char **argv) {
     const char *scenario = argv[1];
 
     if (strcmp(scenario, "mmio_read") == 0) {
-        (void)mem_read32(&cpu, 0xCC002000U);
+        (void)mem_read32(&cpu, 0xCC002100U);
     } else if (strcmp(scenario, "mmio_write") == 0) {
         mem_write16(&cpu, 0xCC006C00U, 1U);
     } else if (strcmp(scenario, "unmapped_read") == 0) {
@@ -99,8 +109,21 @@ int main(int argc, char **argv) {
         scenario_vector(&cpu);
     } else if (strcmp(scenario, "trace_limit") == 0) {
         scenario_trace_limit(&cpu);
-    } else if (strcmp(scenario, "dsp_mail") == 0) {
-        mem_write16(&cpu, 0xCC005002U, 1U);
+    } else if (strcmp(scenario, "dsp_ucode") == 0) {
+        scenario_dsp_ucode(&cpu);
+    } else if (strcmp(scenario, "rel_window") == 0) {
+        (void)mem_read32(&cpu, 0x81800000U);
+    } else if (strcmp(scenario, "gx_opcode") == 0) {
+        bus_reset();
+        bus_write(0xCC000002U, 0x11U, 2); /* CP: leitura e link ligados */
+        bus_write(0xCC008000U, 0x01U, 1);
+        for (u32 i = 0; i < 31U; i++) {
+            bus_write(0xCC008000U, 0U, 1);
+        }
+    } else if (strcmp(scenario, "di_stream") == 0) {
+        bus_reset();
+        mem_write32(&cpu, 0xCC006008U, 0xE1000000U);
+        mem_write32(&cpu, 0xCC00601CU, 1U);
     } else if (strcmp(scenario, "assertion") == 0) {
         AM_ASSERT(cpu.pc == 0U, "pc=0x%08X", cpu.pc);
     }
