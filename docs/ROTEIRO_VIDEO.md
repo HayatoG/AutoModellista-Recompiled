@@ -169,6 +169,23 @@ Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até i
 
 **Motion:** as duas listas rolam e linhas correspondentes se conectam por fios entre os lados; os números de frame diferentes piscam em amarelo com o rótulo “tempo de disco, esperado”. Os nomes `menu.rel`, `menu00`, `msg_e` saem da lista e encaixam numa “memória” desenhada.
 
+### 4.6 Quanto custou até aqui (tokens e tempo)
+
+**Fala:** “E quanto de IA foi isso? Até agora, uns 389 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 2,1 milhões de tokens, algo como uns 20 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, e o maior consumo até aqui foi o M5, o sistema operacional e o disco.”
+
+**Na tela:**
+
+| Etapa | Modelo | Duração | Tokens gerados | Tokens processados |
+| --- | --- | --- | --- | --- |
+| M0–M2 | Opus | 4h51 | 147 mil | 49,7 M |
+| Decomp (5 agentes) | Sonnet + Haiku | 4h10 | 1,1 M | 103,1 M |
+| M3 esqueleto | Sonnet | 23 min | 98 mil | 7,0 M |
+| M4 boot | Opus | 1h32 | 275 mil | 74,2 M |
+| M5 OS e disco (parte 1) | Opus | 1h46 | 322 mil | 105,3 M |
+| Sessão principal | Opus | 4h38+ | 159 mil | 37,4 M |
+
+**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “389 M processados · 2,1 M escritos”. Atualizar os números na edição final.
+
 ## Cap. 5 — Onde estamos e o que vem
 
 **Fala:** “Hoje o Auto Modellista liga no meu computador sem emulador, inicializa o sistema, lê o disco e carrega os menus. Só que tela, ainda nada: o próximo passo é ensinar a runtime a desenhar, traduzindo o chip gráfico do GameCube pra Metal, Vulkan e DirectX. É a parte mais difícil, porque o visual de desenho animado do jogo depende de truques de hardware. Quando o logo da Capcom aparecer pela primeira vez na janela, sai o próximo vídeo. Se você quer ver isso, já sabe.”
@@ -189,4 +206,4 @@ Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até i
 
 | Data | O que entrou no roteiro |
 | --- | --- |
-| 23/10/2026 | Versão inicial: gancho, capítulos 1–5, cenas de Ghidra e REA como “a gravar”; Motion em todas as cenas; 3.6 instalação do Ghidra 12.1.4 e do REA 6.7.0 (decompilador ARM64 compilado, flag EF_PPC_EMB, 3.897 funções) |
+| 23/10/2026 | Versão inicial: gancho, capítulos 1–5, cenas de Ghidra e REA como “a gravar”; Motion em todas as cenas; 3.6 instalação do Ghidra 12.1.4 e do REA 6.7.0 (decompilador ARM64 compilado, flag EF_PPC_EMB, 3.897 funções); 4.6 tokens e tempo por etapa |

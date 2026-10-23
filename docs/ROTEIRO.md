@@ -78,6 +78,25 @@ O que cada marco provou, em uma linha:
 - **M4:** o próprio código do jogo, recompilado, inicializa o SDK e imprime “Dolphin OS … Console Type: Development HW3”, como no console.
 - **M5 (até aqui):** o jogo nativo pede os mesmos arquivos ao disco que o original e carrega os módulos de menu.
 
+### Tokens e tempo por etapa
+
+Até 23/10 às 16:36 (horário de Brasília), o projeto processou cerca de 389 milhões de tokens, dos quais 2,1 milhões foram texto gerado pelos modelos. Somado dos registros de cada sessão do Claude Code, contando cada resposta uma vez.
+
+| Etapa | Modelo | Início → fim | Duração | Respostas | Tokens gerados | Tokens processados |
+| --- | --- | --- | --- | --- | --- | --- |
+| M5 OS e disco, parte 1 (interrompida: o volume do SSD desmontou) | Opus 5.5 | 23/10 14:49 → 16:35 | 1h46 | 248 | 322.027 | 105,3 M |
+| M4 boot até `main` | Opus 5.5 | 23/10 13:01 → 14:33 | 1h32 (inclui a parada do disco cheio) | 201 | 275.489 | 74,2 M |
+| M3 esqueleto | Sonnet 5.5 | 23/10 12:26 → 12:49 | 23 min | 48 | 97.718 | 7,0 M |
+| Sessão principal (plano, revisões, SDL3, roteiros, Ghidra/REA) | Opus 5.5 | 23/10 11:58 → 16:36+ | 4h38+ | 172 | 159.018 | 37,4 M |
+| Agentes do decomp.wtf (5 em paralelo) | Sonnet 5.5, Haiku 5.5 | 22/10 22:35 → 23/10 02:45 | 4h10 | 1.925 | 1.095.949 | 103,1 M |
+| M0–M2 (ferramentas, ISO, recompilação) | Opus 5.5 | 22/10 22:03 → 23/10 02:54 | 4h51 | 220 | 147.256 | 49,7 M |
+| Sessão de 22/10 (início do projeto) | Opus 5.5 | 22/10 01:57 → 02:46 | 49 min | 100 | 41.470 | 12,4 M |
+
+- **Tokens processados** inclui o contexto relido a cada resposta (cache). É a maior parte do volume, mas é a parte mais barata.
+- **Tokens gerados** é o que os modelos escreveram: código, documentos, comandos e respostas.
+- Duração é o tempo de relógio entre a primeira e a última resposta, incluindo esperas por builds e pelo Dolphin.
+- Fonte: `scripts/usage_report.py` sobre os registros em `~/.claude/projects/`; o comando `/usage` do Claude Code mostra o consumo da conta.
+
 ## Problemas e lições
 
 O problema mais caro não foi técnico do jogo: foi um log sem limite que encheu o disco do Mac.

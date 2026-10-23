@@ -18,6 +18,10 @@ o turno:
 
 - O roteiro descreve o que **aconteceu de fato**: números, mensagens e commits reais, conferidos. Cena planejada fica
   marcada "a gravar" até ser verdade; quando a realidade mudar, a cena muda junto.
+- Em cada etapa, registrar **tokens e tempo** (modelo, início → fim, respostas, tokens gerados e processados) nos dois
+  roteiros, com `python3 -I scripts/usage_report.py "$HOME/.claude/projects/<projeto>/**/*.jsonl"`.
+- O volume `/Volumes/AMRecomp` (imagem no SSD) pode ser desanexado pelo macOS: antes de rodar algo longo, confira
+  `ls /Volumes/AMRecomp`; para remontar, `hdiutil attach /Volumes/SSD/AMRecomp.sparsebundle`.
 - Ênfase do vídeo: o "como funciona" de cada ferramenta (DolRecomp, runtime, Dolphin como oráculo, Ghidra, REA).
 - Doc e `.md` ficam em sincronia; o `.md` é commitado. Nunca mostrar código ou bytes do jogo nos roteiros.
 - Agentes em segundo plano não editam os roteiros: reportam o que fizeram, e a sessão principal escreve.
