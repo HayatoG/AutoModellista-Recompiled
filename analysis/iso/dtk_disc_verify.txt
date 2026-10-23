@@ -1,0 +1,19 @@
+Loading //Volumes/SSD/GameCube/Auto Modellista (USA)/Auto Modellista (USA).rvz
+Format: RVZ
+Compression: Zstandard
+Block size: 128 KiB
+Lossless: true
+Verification data: true
+
+Title: auto modellista
+Game ID: GAUE08
+Disc 1, Revision 0
+
+Verifying...
+
+
+Redump: Auto Modellista (USA) ✅
+CRC32 : ab80ecfb ✅
+SHA-1 : 800b74412f60939c2d93d7f1ce679cd3da068e55 ✅
+XXH64 : 87fe73d836e11ed5 ✅
+

@@ -1,0 +1,72 @@
+{
+  "Dolphin SDK (OS)": {
+    "count": 13,
+    "samples": [
+      "<< Dolphin SDK - AI\trelease build: Sep  5 2002 05:34:25 (0x2301) >>",
+      "<< Dolphin SDK - AR\trelease build: Sep  5 2002 05:34:27 (0x2301) >>",
+      "<< Dolphin SDK - ARQ\trelease build: Sep  5 2002 05:34:29 (0x2301) >>",
+      "<< Dolphin SDK - AX\trelease build: Mar 11 2003 11:19:39 (0x2301) >>",
+      "<< Dolphin SDK - CARD\trelease build: Sep  5 2002 05:35:20 (0x2301) >>",
+      "<< Dolphin SDK - DSP\trelease build: Sep  5 2002 05:35:13 (0x2301) >>",
+      "<< Dolphin SDK - DVD\trelease build: Oct 29 2002 09:56:49 (0x2301) >>",
+      "<< Dolphin SDK - EXI\trelease build: Mar 11 2003 11:19:00 (0x2301) >>",
+      "<< Dolphin SDK - GX\trelease build: Feb  7 2003 04:01:13 (0x2301) >>",
+      "<< Dolphin SDK - OS\trelease build: Mar 17 2003 04:20:41 (0x2301) >>",
+      "<< Dolphin SDK - PAD\trelease build: Sep  5 2002 05:34:02 (0x2301) >>",
+      "<< Dolphin SDK - SI\trelease build: Sep  5 2002 05:33:08 (0x2301) >>"
+    ]
+  },
+  "Nintendo SDK módulos": {
+    "count": 13,
+    "samples": [
+      "<< Dolphin SDK - AI",
+      "<< Dolphin SDK - AR",
+      "<< Dolphin SDK - ARQ",
+      "<< Dolphin SDK - AX",
+      "<< Dolphin SDK - CARD",
+      "<< Dolphin SDK - DSP",
+      "<< Dolphin SDK - DVD",
+      "<< Dolphin SDK - EXI",
+      "<< Dolphin SDK - GX",
+      "<< Dolphin SDK - OS",
+      "<< Dolphin SDK - PAD",
+      "<< Dolphin SDK - SI"
+    ]
+  },
+  "Metrowerks / MSL": {
+    "count": 1,
+    "samples": [
+      "Metrowerks"
+    ]
+  },
+  "CRI Middleware (ADX/Sofdec)": {
+    "count": 93,
+    "samples": [
+      "ADXF",
+      "ADXT",
+      "CRI ",
+      "SFD_",
+      "Sofdec"
+    ]
+  },
+  "DVD": {
+    "count": 6,
+    "samples": [
+      "DVDOpen",
+      "DVDReadAsync",
+      "dvdfs"
+    ]
+  },
+  "AX/AI/DSP (áudio)": {
+    "count": 1,
+    "samples": [
+      "DSPInit"
+    ]
+  },
+  "VI": {
+    "count": 1,
+    "samples": [
+      "VIConfigure"
+    ]
+  }
+}

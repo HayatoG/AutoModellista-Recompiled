@@ -1,0 +1,20 @@
+REL module ID: 4
+REL version: 3
+Original section count: 20
+
+Sections:
+      Name | Type       | Size       | File Off   | Index     
+     .text | code       | 0x1CFF4    | 0xEC       | 2         
+    .ctors | rodata     | 0x4        | 0x1D0E0    | 3         
+    .dtors | rodata     | 0x4        | 0x1D0E4    | 4         
+   .rodata | rodata     | 0x278      | 0x1D0E8    | 5         
+     .data | data       | 0x2580     | 0x1D360    | 6         
+      .bss | bss        | 0x1C       | 0x0        | 7         
+
+Discovered symbols:
+   Section | Address    | Size       | Name      
+     .text | 0x3054     | 0x4        | _unresolved
+     .text | 0x3058     | 0x4        | _epilog   
+     .text | 0x305C     | 0x14       | _prolog   
+    .ctors | 0x0        | ?          | _ctors    
+    .dtors | 0x0        | ?          | _dtors    

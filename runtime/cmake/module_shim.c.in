@@ -1,0 +1,34 @@
+/* Arquivo-ponte gerado pelo CMake (cmake/AmRecomp.cmake) a partir de cmake/module_shim.c.in; módulo @AM_MODULE_ID@.
+ * Inclui o generated.h deste módulo (e só dele) e registra os trechos no dispatcher. */
+#include "generated.h"
+
+#include "am/dispatch.h"
+#include "am/log.h"
+
+GuestAddr recomp_mod_@AM_MODULE_ID@_entry(void) {
+    return DOLRECOMP_ENTRY_POINT;
+}
+
+/* Cada trecho cobre [início, primeiro endereço que dolrecomp_find_original deixa de devolver a mesma função). */
+size_t recomp_mod_@AM_MODULE_ID@_register(void) {
+    static const u32 starts[] = {
+@AM_CHUNK_STARTS@    };
+    size_t registered = 0;
+    for (size_t i = 0; i < sizeof(starts) / sizeof(starts[0]); i++) {
+        const DolRecompFunction fn = dolrecomp_find_original(starts[i]);
+        if (fn == NULL) {
+            am_fatal("módulo @AM_MODULE_ID@: func_%08X declarada mas fora de dolrecomp_find_original", starts[i]);
+        }
+        u32 end = starts[i] + 4U;
+        while (dolrecomp_find_original(end) == fn) {
+            end += 4U;
+        }
+        const DispatchResult result = dispatch_register(starts[i], end, (DispatchFn)fn);
+        if (result != DISPATCH_OK) {
+            am_fatal("módulo @AM_MODULE_ID@: dispatch_register(0x%08X, 0x%08X) falhou (%d)", starts[i], end,
+                     (int)result);
+        }
+        registered++;
+    }
+    return registered;
+}

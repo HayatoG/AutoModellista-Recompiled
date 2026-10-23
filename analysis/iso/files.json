@@ -1,0 +1,306 @@
+{
+  "total_files": 38,
+  "total_bytes": 861688678,
+  "by_extension": {
+    ".afs": {
+      "count": 3,
+      "bytes": 855687168
+    },
+    ".bin": {
+      "count": 7,
+      "bytes": 1680940
+    },
+    ".bnr": {
+      "count": 1,
+      "bytes": 6496
+    },
+    ".dir": {
+      "count": 1,
+      "bytes": 36
+    },
+    ".dol": {
+      "count": 1,
+      "bytes": 1598944
+    },
+    ".ico": {
+      "count": 9,
+      "bytes": 74304
+    },
+    ".img": {
+      "count": 1,
+      "bytes": 116484
+    },
+    ".rel": {
+      "count": 13,
+      "bytes": 2523244
+    },
+    ".str": {
+      "count": 2,
+      "bytes": 1062
+    }
+  },
+  "by_magic": {
+    "desconhecido": 21,
+    "AFS (arquivo CRI)": 3,
+    "REL (módulo id 3)": 2,
+    "REL (módulo id 1)": 1,
+    "REL (módulo id 2)": 1,
+    "REL (módulo id 4)": 1,
+    "REL (módulo id 6)": 1,
+    "REL (módulo id 7)": 1,
+    "REL (módulo id 8)": 1,
+    "REL (módulo id 9)": 1,
+    "REL (módulo id 10)": 1,
+    "REL (módulo id 11)": 1,
+    "REL (módulo id 12)": 1,
+    "REL (módulo id 5)": 1,
+    "BNR1 (banner GameCube)": 1
+  },
+  "modules": [
+    "files/module/game.rel",
+    "files/module/menu.rel",
+    "files/module/menu00.rel",
+    "files/module/menu01.rel",
+    "files/module/msg_e.rel",
+    "files/module/msg_f.rel",
+    "files/module/msg_g.rel",
+    "files/module/msg_i.rel",
+    "files/module/msg_j.rel",
+    "files/module/msg_k.rel",
+    "files/module/msg_s.rel",
+    "files/module/rave.str",
+    "files/module/raveD.str",
+    "files/module/test.rel",
+    "files/module/vj.rel"
+  ],
+  "files": [
+    {
+      "path": "files/0flist.dir",
+      "size": 36,
+      "magic": "61667330302e6166",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/Fonts/NECx20.bin",
+      "size": 780800,
+      "magic": "0000000000000000",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/Fonts/UTF8x20.bin",
+      "size": 21720,
+      "magic": "0102000300000000",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/Fonts/UTF8x20_Kor.bin",
+      "size": 179036,
+      "magic": "0100000200000000",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/Fonts/utf8_20.bin",
+      "size": 689280,
+      "magic": "0000000000000000",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/IconNetwork.ico",
+      "size": 8256,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/IconReplay.ico",
+      "size": 8256,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/IconSystem.ico",
+      "size": 14400,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/RepJPN.ico",
+      "size": 5184,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/RepPAL.ico",
+      "size": 8256,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/RepUSA.ico",
+      "size": 5184,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/SysJPN.ico",
+      "size": 5184,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/SysPAL.ico",
+      "size": 14400,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/GC/SysUSA.ico",
+      "size": 5184,
+      "magic": "6175746f206d6f64",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/afs00.afs",
+      "size": 503166976,
+      "magic": "41465300f5000000",
+      "format": "AFS (arquivo CRI)"
+    },
+    {
+      "path": "files/afs01_gu.afs",
+      "size": 216006656,
+      "magic": "41465300d2020000",
+      "format": "AFS (arquivo CRI)"
+    },
+    {
+      "path": "files/afs02.afs",
+      "size": 136513536,
+      "magic": "414653006a000000",
+      "format": "AFS (arquivo CRI)"
+    },
+    {
+      "path": "files/module/game.rel",
+      "size": 444120,
+      "magic": "0000000100000000",
+      "format": "REL (módulo id 1)"
+    },
+    {
+      "path": "files/module/menu.rel",
+      "size": 521340,
+      "magic": "0000000200000000",
+      "format": "REL (módulo id 2)"
+    },
+    {
+      "path": "files/module/menu00.rel",
+      "size": 138456,
+      "magic": "0000000300000000",
+      "format": "REL (módulo id 3)"
+    },
+    {
+      "path": "files/module/menu01.rel",
+      "size": 171552,
+      "magic": "0000000400000000",
+      "format": "REL (módulo id 4)"
+    },
+    {
+      "path": "files/module/msg_e.rel",
+      "size": 145048,
+      "magic": "0000000600000000",
+      "format": "REL (módulo id 6)"
+    },
+    {
+      "path": "files/module/msg_f.rel",
+      "size": 147612,
+      "magic": "0000000700000000",
+      "format": "REL (módulo id 7)"
+    },
+    {
+      "path": "files/module/msg_g.rel",
+      "size": 145988,
+      "magic": "0000000800000000",
+      "format": "REL (módulo id 8)"
+    },
+    {
+      "path": "files/module/msg_i.rel",
+      "size": 148144,
+      "magic": "0000000900000000",
+      "format": "REL (módulo id 9)"
+    },
+    {
+      "path": "files/module/msg_j.rel",
+      "size": 159040,
+      "magic": "0000000a00000000",
+      "format": "REL (módulo id 10)"
+    },
+    {
+      "path": "files/module/msg_k.rel",
+      "size": 156204,
+      "magic": "0000000b00000000",
+      "format": "REL (módulo id 11)"
+    },
+    {
+      "path": "files/module/msg_s.rel",
+      "size": 147068,
+      "magic": "0000000c00000000",
+      "format": "REL (módulo id 12)"
+    },
+    {
+      "path": "files/module/rave.str",
+      "size": 525,
+      "magic": "453a5c776f726b5c",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/module/raveD.str",
+      "size": 537,
+      "magic": "453a5c776f726b5c",
+      "format": "desconhecido"
+    },
+    {
+      "path": "files/module/test.rel",
+      "size": 8120,
+      "magic": "0000000300000000",
+      "format": "REL (módulo id 3)"
+    },
+    {
+      "path": "files/module/vj.rel",
+      "size": 190552,
+      "magic": "0000000500000000",
+      "format": "REL (módulo id 5)"
+    },
+    {
+      "path": "files/opening.bnr",
+      "size": 6496,
+      "magic": "424e523100000000",
+      "format": "BNR1 (banner GameCube)"
+    },
+    {
+      "path": "sys/apploader.img",
+      "size": 116484,
+      "magic": "323030322f30392f",
+      "format": "desconhecido"
+    },
+    {
+      "path": "sys/bi2.bin",
+      "size": 8192,
+      "magic": "0000000001800000",
+      "format": "desconhecido"
+    },
+    {
+      "path": "sys/boot.bin",
+      "size": 1088,
+      "magic": "4741554530380000",
+      "format": "desconhecido"
+    },
+    {
+      "path": "sys/fst.bin",
+      "size": 824,
+      "magic": "0100000000000000",
+      "format": "desconhecido"
+    },
+    {
+      "path": "sys/main.dol",
+      "size": 1598944,
+      "magic": "00000100000026c0",
+      "format": "desconhecido"
+    }
+  ]
+}

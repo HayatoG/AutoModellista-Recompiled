@@ -1,0 +1,44 @@
+/* Tabela de módulos gerada pelo CMake (cmake/AmRecomp.cmake). Não editar. */
+#include "am/recomp.h"
+
+@AM_MODULE_DECLS@
+typedef struct RecompModule {
+    const char *name;
+    size_t (*register_chunks)(void);
+    GuestAddr (*entry)(void);
+    size_t chunks;
+} RecompModule;
+
+static RecompModule s_modules[] = {
+@AM_MODULE_TABLE@};
+
+#define RECOMP_MODULE_COUNT (sizeof(s_modules) / sizeof(s_modules[0]))
+
+bool recomp_is_generated(void) {
+    return true;
+}
+
+size_t recomp_register_all(void) {
+    size_t total = 0;
+    for (size_t i = 0; i < RECOMP_MODULE_COUNT; i++) {
+        s_modules[i].chunks = s_modules[i].register_chunks();
+        total += s_modules[i].chunks;
+    }
+    return total;
+}
+
+size_t recomp_module_count(void) {
+    return RECOMP_MODULE_COUNT;
+}
+
+const char *recomp_module_name(size_t index) {
+    return index < RECOMP_MODULE_COUNT ? s_modules[index].name : "";
+}
+
+GuestAddr recomp_module_entry(size_t index) {
+    return index < RECOMP_MODULE_COUNT ? s_modules[index].entry() : 0;
+}
+
+size_t recomp_module_chunks(size_t index) {
+    return index < RECOMP_MODULE_COUNT ? s_modules[index].chunks : 0;
+}

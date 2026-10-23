@@ -1,0 +1,31 @@
+---
+# O check de insecureAPI.DeprecatedOrUnsafeBufferHandling manda trocar printf por fprintf_s (Anexo K do C11), que não
+# existe em glibc, macOS nem clang-cl: ruído puro, desligado.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  cert-*,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  misc-*,
+  -misc-include-cleaner,
+  performance-*,
+  portability-*,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-function-cognitive-complexity
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'runtime/.*'
+CheckOptions:
+  - { key: readability-identifier-naming.FunctionCase,       value: lower_case }
+  - { key: readability-identifier-naming.VariableCase,       value: lower_case }
+  - { key: readability-identifier-naming.ParameterCase,      value: lower_case }
+  - { key: readability-identifier-naming.TypedefCase,        value: CamelCase }
+  - { key: readability-identifier-naming.StructCase,         value: CamelCase }
+  - { key: readability-identifier-naming.EnumConstantCase,   value: UPPER_CASE }
+  - { key: readability-identifier-naming.MacroDefinitionCase, value: UPPER_CASE }
+  - { key: readability-identifier-naming.StaticVariablePrefix, value: s_ }
+  - { key: readability-function-size.LineThreshold,          value: 60 }
+...

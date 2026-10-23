@@ -1,0 +1,17 @@
+{
+  "game_id": "GAUE08",
+  "console": "G",
+  "game_code": "AU",
+  "region_code": "E",
+  "region": "USA (NTSC-U)",
+  "maker": "08",
+  "disc_number": 0,
+  "revision": 0,
+  "audio_streaming": 1,
+  "magic_ok": true,
+  "title": "auto modellista",
+  "dol_offset": "0x1ec00",
+  "fst_offset": "0x1a5200",
+  "fst_size": "0x338",
+  "boot_bin_size": 1088
+}

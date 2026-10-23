@@ -1,0 +1,38 @@
+# ---- Material proprietário da Capcom/Nintendo: NUNCA versionar ----
+*.iso
+*.gcm
+*.rvz
+*.ciso
+*.gcz
+*.wbfs
+*.nkit.*
+*.zip
+*.dol
+*.rel
+*.elf
+*.map
+/game/
+/extracted/
+/analysis/files/
+/analysis/ghidra/
+/recomp/out/
+/recomp/generated/
+/decomp/orig/
+/decomp/build/
+
+# ---- Ferramentas de terceiros (buscadas por scripts/fetch_tools.sh em commits fixos) ----
+/tools/*/
+!/tools/README.md
+
+# ---- Builds, caches, logs locais ----
+build/
+build-*/
+obj/
+*.o
+*.a
+*.dylib
+*.so
+*.log
+/tests/**/out/
+__pycache__/
+.DS_Store
