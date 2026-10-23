@@ -5,6 +5,7 @@
 #include "am/dispatch.h"
 #include "am/exception.h"
 #include "am/guest_cpu.h"
+#include "am/hook.h"
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/pi.h"
@@ -22,6 +23,11 @@ static void check_sync_exception(CPUState *cpu) {
         exception_system_call(cpu);
         return;
     }
+    /* MSR[FP]=0 numa instrução de FP: o SDK troca o contexto de FPU sob demanda (OSSwitchFPUContext, número 7). */
+    if (cpu->exception == PPC_EXC_FP_UNAVAILABLE && cpu->pc == EXCEPTION_VEC_FP_UNAVAILABLE) {
+        exception_enter_taken(cpu, EXCEPTION_NUM_FP_UNAVAILABLE, EXCEPTION_VEC_FP_UNAVAILABLE, PPC_EXC_FP_UNAVAILABLE);
+        return;
+    }
     if (cpu->exception != 0U) {
         am_fatal("exceção síncrona 0x%08X (programa=0x%08X) levantada pelo código; srr0=0x%08X, vetor pc=0x%08X: "
                  "entrega não implementada (TODO(M5))",
@@ -33,11 +39,13 @@ static void check_interrupts(CPUState *cpu, ChassisStats *stats) {
     if ((cpu->msr & PPC_MSR_EE) == 0U) {
         return;
     }
-    if (timebase_dec_expired(cpu)) {
-        am_fatal("decrementer expirou com MSR[EE]=1: exceção 0x900 não implementada (TODO(M5))");
-    }
+    /* Prioridade do 750CL (manual, tabela 4-3): externa antes do decrementer. */
     if (pi_external_pending()) {
         exception_deliver(cpu, EXCEPTION_NUM_EXTERNAL, EXCEPTION_VEC_EXTERNAL);
+        stats->interrupts++;
+    } else if (timebase_dec_expired(cpu)) {
+        timebase_dec_take();
+        exception_deliver(cpu, EXCEPTION_NUM_DECREMENTER, EXCEPTION_VEC_DECREMENTER);
         stats->interrupts++;
     }
 }
@@ -90,6 +98,9 @@ ChassisStop chassis_run(CPUState *cpu, const ChassisConfig *config, ChassisStats
         }
         if (config->max_steps != 0U && stats->steps >= config->max_steps) {
             return CHASSIS_STOP_STEPS;
+        }
+        if (hook_run(cpu) == HOOK_STOP) {
+            return CHASSIS_STOP_HOOK;
         }
         watchdog_check(&wd, cpu, config, stats->steps);
         timebase_begin_slice(cpu);

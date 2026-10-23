@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "am/exception.h"
 
+#include <string.h>
+
 #include "am/guest_cpu.h"
 #include "am/log.h"
 #include "am/mem.h"
@@ -31,6 +33,7 @@ static struct {
     bool ready;
     u64 delivered;
     u64 system_calls;
+    u64 by_number[16];
 } s_exc;
 
 void exception_init(const ExceptionLayout *layout) {
@@ -38,6 +41,11 @@ void exception_init(const ExceptionLayout *layout) {
     s_exc.ready = true;
     s_exc.delivered = 0;
     s_exc.system_calls = 0;
+    memset(s_exc.by_number, 0, sizeof(s_exc.by_number));
+}
+
+u64 exception_count_of(u32 number) {
+    return number < 16U ? s_exc.by_number[number] : 0U;
 }
 
 u64 exception_delivered_count(void) {
@@ -112,6 +120,17 @@ void exception_deliver(CPUState *cpu, u32 number, u32 vector) {
     ppc_take_exception(cpu, 0U, vector, cpu->pc, 0U);
     run_vector_stub(cpu, number, vector);
     s_exc.delivered++;
+    s_exc.by_number[number & 15U]++;
+}
+
+void exception_enter_taken(CPUState *cpu, u32 number, u32 vector, u32 exc_bit) {
+    AM_ASSERT(s_exc.ready, "exception_enter_taken antes de exception_init");
+    AM_ASSERT(cpu->pc == vector, "exceção %u tomada com pc=0x%08X, vetor 0x%X", number, cpu->pc, vector);
+    verify_vector(number, vector);
+    cpu->exception &= ~exc_bit;
+    run_vector_stub(cpu, number, vector);
+    s_exc.delivered++;
+    s_exc.by_number[number & 15U]++;
 }
 
 u64 exception_system_call_count(void) {

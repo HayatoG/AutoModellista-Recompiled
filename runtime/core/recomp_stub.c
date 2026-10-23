@@ -28,3 +28,13 @@ size_t recomp_module_chunks(size_t index) {
     (void)index;
     return 0;
 }
+
+GuestAddr recomp_module_code_start(size_t index) {
+    (void)index;
+    return 0;
+}
+
+GuestAddr recomp_module_code_end(size_t index) {
+    (void)index;
+    return 0;
+}

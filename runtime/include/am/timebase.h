@@ -32,7 +32,12 @@ void timebase_write_upper(const CPUState *cpu, u32 value);
 /* DEC conta para baixo a cada tique do TB. */
 u32 timebase_dec_read(const CPUState *cpu);
 void timebase_dec_write(const CPUState *cpu, u32 value);
-/* true se o DEC passou de 0 para negativo (bit 31) desde a última escrita: o Gekko gera exceção de decrementer. */
+/* true se o DEC passou de 0 para negativo (bit 31) desde a última escrita e a exceção ainda não foi entregue: o Gekko
+ * gera exceção de decrementer (fica pendente até MSR[EE]). */
 bool timebase_dec_expired(const CPUState *cpu);
+/* A exceção foi entregue: só volta a valer depois de outra escrita no DEC. */
+void timebase_dec_take(void);
+/* Ciclo em que o DEC passa de 0 (UINT64_MAX se não vai gerar exceção). Para o avanço de tempo ocioso do chassi. */
+u64 timebase_dec_expiry_cycle(void);
 
 #endif /* AM_TIMEBASE_H */

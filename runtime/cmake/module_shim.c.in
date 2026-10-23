@@ -9,8 +9,9 @@ GuestAddr recomp_mod_@AM_MODULE_ID@_entry(void) {
     return DOLRECOMP_ENTRY_POINT;
 }
 
-/* Cada trecho cobre [início, primeiro endereço que dolrecomp_find_original deixa de devolver a mesma função). */
-size_t recomp_mod_@AM_MODULE_ID@_register(void) {
+/* Cada trecho cobre [início, primeiro endereço que dolrecomp_find_original deixa de devolver a mesma função).
+ * `lo`/`hi` recebem o menor início e o maior fim (a faixa de código do módulo, endereços virtuais para RELs). */
+size_t recomp_mod_@AM_MODULE_ID@_register(GuestAddr *lo, GuestAddr *hi) {
     static const u32 starts[] = {
 @AM_CHUNK_STARTS@    };
     size_t registered = 0;
@@ -23,6 +24,8 @@ size_t recomp_mod_@AM_MODULE_ID@_register(void) {
         while (dolrecomp_find_original(end) == fn) {
             end += 4U;
         }
+        *lo = starts[i] < *lo ? starts[i] : *lo;
+        *hi = end > *hi ? end : *hi;
         const DispatchResult result = dispatch_register(starts[i], end, (DispatchFn)fn);
         if (result != DISPATCH_OK) {
             am_fatal("módulo @AM_MODULE_ID@: dispatch_register(0x%08X, 0x%08X) falhou (%d)", starts[i], end,

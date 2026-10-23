@@ -18,7 +18,7 @@ target_compile_options(am_ppc PRIVATE ${AM_GENERATED_FLAGS})
 # --- am_core: memória, CPUState, dispatcher, boot e chassi; os/ (exceções) e hw/ (dispositivos MMIO) ---------------
 add_library(am_core STATIC
   core/log.c core/mem.c core/dispatch.c core/guest_cpu.c
-  core/timebase.c core/ppc_sys.c core/dol.c core/boot.c core/trace.c core/chassis.c
+  core/timebase.c core/ppc_sys.c core/dol.c core/boot.c core/trace.c core/chassis.c core/disc.c core/rel_map.c core/hook.c
   os/exception.c
   hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/si.c hw/exi.c hw/vi.c)
 target_include_directories(am_core PUBLIC include)

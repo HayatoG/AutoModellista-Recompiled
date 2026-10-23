@@ -57,3 +57,11 @@ u64 platform_ticks_ms(void) {
 int platform_sdl_version(void) {
     return SDL_GetVersion();
 }
+
+bool platform_make_dir(const char *path) {
+    if (!SDL_CreateDirectory(path)) {
+        set_error(SDL_GetError());
+        return false;
+    }
+    return true;
+}

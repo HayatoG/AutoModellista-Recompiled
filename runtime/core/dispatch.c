@@ -6,6 +6,7 @@
 
 #include "am/guest_cpu.h"
 #include "am/log.h"
+#include "am/rel_map.h"
 
 #define DISPATCH_INITIAL_CAPACITY 256U
 
@@ -88,8 +89,26 @@ DispatchFn dispatch_lookup(GuestAddr pc) {
     return pc < entry->end ? entry->fn : NULL;
 }
 
+/* pc dentro de um REL pelo endereço real (alguém saltou por um ponteiro calculado a partir do endereço de carga):
+ * traduz para a base virtual do C gerado, pc - base_real + base_virtual (PLANO_PORT_C.md §2.1). */
+static DispatchFn lookup_rel_real(CPUState *cpu) {
+    GuestAddr virt = 0;
+    if (!rel_map_real_to_virtual(cpu->pc, &virt)) {
+        return NULL;
+    }
+    const DispatchFn fn = dispatch_lookup(virt);
+    if (fn != NULL) {
+        AM_LOG_DEBUG("dispatcher: pc real 0x%08X de REL -> virtual 0x%08X (lr=0x%08X)", cpu->pc, virt, cpu->lr);
+        cpu->pc = virt;
+    }
+    return fn;
+}
+
 void dispatch_step(CPUState *cpu) {
-    const DispatchFn fn = dispatch_lookup(cpu->pc);
+    DispatchFn fn = dispatch_lookup(cpu->pc);
+    if (fn == NULL) {
+        fn = lookup_rel_real(cpu);
+    }
     if (fn == NULL) {
         am_fatal("dispatcher: nenhuma função recompilada cobre pc=0x%08X (lr=0x%08X)", cpu->pc, cpu->lr);
     }

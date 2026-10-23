@@ -195,9 +195,7 @@ u32 ppc_sys_mfspr(CPUState *cpu, u16 spr, u32 cia) {
 static bool mtspr_special(CPUState *cpu, u16 spr, u32 value, u32 cia) {
     switch (spr) {
     case PPC_SPR_DEC:
-        if ((timebase_dec_read(cpu) & 0x80000000U) == 0U && (value & 0x80000000U) != 0U) {
-            am_fatal("mtspr DEC=0x%08X em 0x%08X dispara exceção de decrementer por software (TODO(M5))", value, cia);
-        }
+        (void)cia;
         timebase_dec_write(cpu, value);
         return true;
     case PPC_SPR_TBL_W:

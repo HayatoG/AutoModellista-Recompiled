@@ -6,6 +6,7 @@
 #include "am/bus.h"
 #include "am/guest_cpu.h"
 #include "am/log.h"
+#include "am/rel_map.h"
 
 static struct {
     u8 *mem1;
@@ -40,15 +41,18 @@ u8 *mem_mem1_data(void) {
     return s_mem.mem1;
 }
 
-/* Traduz endereço de CPU para MEM1. 0x80xxxxxx e 0xC0xxxxxx são o mesmo bloco físico (BAT padrão do SDK); o que
- * cair fora dos 24 MiB (MMIO em 0xCC..., cache bloqueado em 0xE0..., MEM2 do Wii) devolve NULL e vai ao barramento. */
+/* Traduz endereço de CPU para MEM1. 0x80xxxxxx e 0xC0xxxxxx são o mesmo bloco físico (BAT padrão do SDK). Físico
+ * entre 24 e 64 MiB é a janela virtual dos RELs (core/rel_map.c). O resto (MMIO em 0xCC..., cache bloqueado em
+ * 0xE0...) devolve NULL e vai ao barramento. */
 static u8 *mem1_resolve(GuestAddr addr, u32 size) {
     if ((addr >> 30) < 2U) {
         return NULL;
     }
-    const u32 phys = addr & 0x3FFFFFFFU;
+    u32 phys = addr & 0x3FFFFFFFU;
     if (phys > MEM_MEM1_SIZE - size) {
-        return NULL;
+        if (phys < REL_MAP_PHYS_START || phys >= REL_MAP_PHYS_END || !rel_map_resolve(phys, size, &phys)) {
+            return NULL;
+        }
     }
     return s_mem.mem1 + phys;
 }

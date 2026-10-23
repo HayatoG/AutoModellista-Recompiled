@@ -21,6 +21,14 @@ am_add_unit_test(boot)
 am_add_unit_test(exception)
 am_add_unit_test(hw)
 am_add_unit_test(chassis)
+am_add_unit_test(sched)
+am_add_unit_test(disc)
+target_link_libraries(disc_test PRIVATE am_platform) # cria a árvore sintética com platform_make_dir
+
+# Impasse isolado do jogo: as threads sintéticas esperam umas pelas outras; o chassi tem de parar com o watchdog.
+add_test(NAME sched_deadlock COMMAND sched_test deadlock)
+set_tests_properties(sched_deadlock PROPERTIES PASS_REGULAR_EXPRESSION
+  "\\[FATAL\\] watchdog: pc=0x80009000 despachado 5000 vezes seguidas")
 
 # Os stubs fatais (MMIO, SPR, instrução sem recompilação) têm de parar com mensagem clara. O fatal_test escolhe o
 # cenário pelo argumento; PASS_REGULAR_EXPRESSION ignora o código de saída e exige a mensagem.

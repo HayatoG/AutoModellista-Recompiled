@@ -69,8 +69,8 @@ function(am_add_recomp_target target generated_dir)
     list(APPEND sources "${shim}")
 
     string(APPEND decls
-      "size_t recomp_mod_${id}_register(void);\nGuestAddr recomp_mod_${id}_entry(void);\n")
-    string(APPEND table "    {\"${id}\", recomp_mod_${id}_register, recomp_mod_${id}_entry, 0},\n")
+      "size_t recomp_mod_${id}_register(GuestAddr *lo, GuestAddr *hi);\nGuestAddr recomp_mod_${id}_entry(void);\n")
+    string(APPEND table "    {\"${id}\", recomp_mod_${id}_register, recomp_mod_${id}_entry, 0, 0, 0},\n")
   endforeach()
 
   set(AM_MODULE_DECLS "${decls}")

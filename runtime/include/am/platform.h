@@ -13,6 +13,9 @@ const char *platform_last_error(void);
 u8 *platform_load_file(const char *path, size_t *size);
 void platform_free_file(u8 *data);
 
+/* Cria o diretório (e os pais que faltarem); true se já existe. */
+bool platform_make_dir(const char *path);
+
 /* Milissegundos de relógio monotônico desde platform_init. */
 u64 platform_ticks_ms(void);
 

@@ -17,5 +17,8 @@ const char *recomp_module_name(size_t index);
 GuestAddr recomp_module_entry(size_t index);
 /* Trechos registrados por recomp_register_all para o módulo. */
 size_t recomp_module_chunks(size_t index);
+/* Faixa [início, fim) coberta pelos trechos do módulo (virtual para RELs); válida depois de recomp_register_all. */
+GuestAddr recomp_module_code_start(size_t index);
+GuestAddr recomp_module_code_end(size_t index);
 
 #endif /* AM_RECOMP_H */

@@ -13,6 +13,7 @@
 typedef enum ChassisStop {
     CHASSIS_STOP_ADDRESS, /* pc chegou em stop_at (antes de executar) */
     CHASSIS_STOP_STEPS,   /* limite de voltas */
+    CHASSIS_STOP_HOOK,    /* um gancho (am/hook.h) pediu parada */
 } ChassisStop;
 
 /* Watchdog padrão: o mesmo pc despachado tantas vezes seguidas é laço sem saída (espera por hardware que não
