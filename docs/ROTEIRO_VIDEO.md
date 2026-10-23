@@ -71,7 +71,7 @@ Vídeo horizontal de bastidores, em primeira pessoa, contando como um jogo de Ga
 
 ## Cap. 3 — As ferramentas e como funcionam
 
-Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até instalarmos e usarmos de verdade.
+Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para achar o caminho pelos menus até a corrida.
 
 ### 3.1 DolRecomp: o tradutor
 
@@ -97,21 +97,31 @@ Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até i
 
 **Motion:** dois terminais lado a lado rolando em sincronia, com linhas iguais piscando em verde nos dois lados ao mesmo tempo. Um contador central sobe até 1.998. No fim, um “=” grande aparece entre os terminais e o veredito `IGUAIS` entra em destaque.
 
-### 3.4 Ghidra (a gravar)
+### 3.4 Ghidra: o raio-X do jogo
 
-**Fala (rascunho):** “Até aqui eu não precisei entender o jogo, só traduzir. Daqui pra frente preciso: como ele desenha o cel-shading, como toca o áudio. Pra isso entra o Ghidra, a ferramenta de engenharia reversa da NSA, que mostra o assembly, um pseudocódigo em C e quem chama quem.”
+**Fala:** “Até o boot eu não precisei entender o jogo, só traduzir. No M5 isso mudou: sem apertar botão, o jogo para na tela de ‘Sem Memory Card, começar sem salvar?’, e o módulo da corrida, o `game.rel`, só é carregado quando uma corrida começa. Eu precisava saber quais telas existem e que botão leva de uma à outra. Pra isso entra o Ghidra, a ferramenta de engenharia reversa da NSA. Ele lê o código de máquina e mostra o assembly, um pseudocódigo parecido com C e quem chama quem. E com a extensão do Gekko ele entende até as instruções especiais do processador do GameCube.”
 
-**Na tela (planejado):** o Ghidra aberto no `main.elf` do decomp, com as funções já nomeadas.
+**Na tela:**
 
-**Motion (planejado):** gravação de tela do Ghidra com zoom guiado: lista de funções → clique numa função → painel de assembly e painel de pseudocódigo lado a lado, com um realce percorrendo a linha correspondente nos dois. Borrar o código do jogo; manter visíveis só nomes e estrutura.
+- A tela do jogo no Dolphin parada em “No Memory Card… start without saving?” (print curto).
+- O Ghidra aberto no `main.elf`: lista de funções (3.897), um painel de assembly e um de pseudocódigo, com o código borrado e só nomes e endereços visíveis.
+- O perfil `PowerPC:BE:32:Gekko_Broadway` na barra de status.
 
-### 3.5 REA: a IA dentro do Ghidra (a gravar)
+**Motion:** zoom guiado na gravação do Ghidra: lista de funções → clique numa função → assembly e pseudocódigo lado a lado, com um realce percorrendo a linha correspondente nos dois. Código borrado, nomes nítidos. A tela do jogo parada entra antes como “o problema”, com um cadeado desenhado sobre o botão de corrida.
 
-**Fala (rascunho):** “O REA é um MCP, um conector que deixa a IA usar o Ghidra sozinha. Eu pergunto ‘onde o jogo monta o cel-shading?’, e ela abre o binário, procura, lê o pseudocódigo, segue as referências e me devolve a resposta com a evidência: qual função, qual endereço, o que ainda é incerto. Um detalhe: ele ainda não lê o formato de GameCube direto, só ELF, então eu dou pra ele o ELF que o projeto do decomp já gera.”
+### 3.5 REA: a IA dentro do Ghidra
 
-**Na tela (planejado):** o fluxo pergunta → REA → Ghidra → resposta com evidência; a primeira consulta real que fizermos no M6.
+**Fala:** “Só que eu não fiquei clicando no Ghidra. Quem clicou foi a IA, através do REA, um conector que deixa o modelo usar o Ghidra sozinho. Eu pedi pro agente achar onde o jogo carrega a corrida. Ele procurou os textos dos menus, seguiu quem chama quem e leu o pseudocódigo. Voltou com evidência: a função que, logo no começo, deixa todos os módulos pré-carregados na memória de áudio do GameCube; a função que liga cada módulo; e seis funções de troca de módulo, com a corrida sempre no espaço 1 e o menu no espaço 2. E de brinde achou um erro nas minhas anotações: uma função que eu achava que trocava a imagem da tela era outra, e o endereço certo estava logo ao lado.”
 
-**Motion (planejado):** fluxo em quatro caixas (Você pergunta → IA → REA → Ghidra) com um pacote de luz indo e voltando entre elas; na volta, a resposta abre como um cartão com três campos: “função”, “evidência”, “incerto”. Selo “só ELF por enquanto” aparece no canto quando a fala cita o limite.
+**Na tela:**
+
+- O fluxo: pergunta → agente → REA → Ghidra → resposta com evidência.
+- O resultado real do REA ao abrir o jogo: `procedure_count: 3897`, `string_count: 9905`, linguagem `Gekko_Broadway`.
+- Um diagrama dos módulos: `game`, `menu`, `menu00`, `menu01`, `vj` e 7 `msg_*` entrando na ARAM; depois `menu.rel` no espaço 2 e `game.rel` no espaço 1.
+- A correção: `VISetNextFrameBuffer` riscado no endereço errado e o certo ao lado (só nomes e endereços).
+- O caminho pelos menus até a corrida, quando o agente terminar (a completar com o resultado real).
+
+**Motion:** quatro caixas (Você → IA → REA → Ghidra) com um pacote de luz indo e voltando; na volta, a resposta abre como cartão com três campos: “função”, “evidência”, “incerto”. Depois, os módulos voam como cartuchos para dentro de uma caixa “ARAM”, e dois encaixes rotulados “espaço 1: corrida” e “espaço 2: menu” recebem `game.rel` e `menu.rel`. Na correção, um carimbo “errado” no nome antigo e uma seta curta até o endereço certo.
 
 ### 3.6 Instalando Ghidra e REA: dois tropeços (gravado em 23/10)
 
@@ -169,7 +179,36 @@ Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até i
 
 **Motion:** as duas listas rolam e linhas correspondentes se conectam por fios entre os lados; os números de frame diferentes piscam em amarelo com o rótulo “tempo de disco, esperado”. Os nomes `menu.rel`, `menu00`, `msg_e` saem da lista e encaixam numa “memória” desenhada.
 
-### 4.6 Quanto custou até aqui (tokens e tempo)
+### 4.6 O dia em que o SSD sumiu
+
+**Fala:** “Depois do disco cheio, eu mudei tudo que é pesado pra um SSD externo, dentro de uma imagem de disco. Resolveu um problema e criou outro. No meio do M5, com uma hora e quarenta e seis minutos de trabalho da IA, o macOS simplesmente desmontou essa imagem. A pasta do projeto sumiu de baixo dos pés do agente, e ele morreu no meio de uma investigação. Quase tudo sobreviveu: o trabalho não commitado continuava dentro da imagem, só uma edição pequena se perdeu. Eu montei de novo e retomei… e uma hora depois aconteceu de novo. Dessa vez nem eu, a IA principal, conseguia rodar comando, porque até a pasta temporária do Claude Code morava no SSD. A causa provável era boba: o Mac põe o disco pra dormir depois de dez minutos parado, e um SSD de USB que dorme pode ser desconectado. Desliguei o repouso do disco, tirei a pasta temporária do SSD e virou regra: antes de rodar algo longo, conferir se o volume está lá.”
+
+**Na tela:**
+
+- O Finder ou terminal sem `/Volumes/AMRecomp` (pasta ausente).
+- O comando `hdiutil attach /Volumes/SSD/AMRecomp.sparsebundle` e a pasta voltando.
+- O `git status` com os arquivos ainda não commitados intactos (`ax_voice.c`, `os_threads.c`…).
+- A segunda queda: a sessão respondendo `EACCES: permission denied, mkdir '/Volumes/AMRecomp'` a qualquer comando.
+- O `pmset -g` com `disksleep 10` e depois `disksleep 0`.
+- A regra nova no `CLAUDE.md`: “antes de rodar algo longo, confira `ls /Volumes/AMRecomp`”.
+
+**Motion:** o ícone do SSD no desktop some com um “pop”; os cartões de arquivo do projeto que estavam sobre ele caem no vazio em câmera lenta e congelam no ar. Um comando digita na base da tela, o ícone volta e os cartões sobem de volta ao lugar. Fecha com a linha da regra nova no `CLAUDE.md` sendo sublinhada por um marca-texto.
+
+### 4.7 Três IAs de três empresas, ao mesmo tempo
+
+**Fala:** “No meio do M5 eu pensei: estou gastando a cota do Claude em trabalho mecânico. Então montei um time misto. O Claude Opus continuou no que exige investigar: achar o caminho pelos menus com o REA. O Codex, da OpenAI, num modelo pequeno e barato, ficou com conferir se o jogo compila em PC x86 e em modo de depuração. E o opencode, com um modelo da DeepSeek, voltou ao decomp, casando funções uma por uma. Os três rodando juntos, no mesmo Mac. E o cuidado pra ninguém estragar nada: cada um numa cópia separada do projeto, o Codex numa caixa de areia sem internet, o opencode com uma lista do que pode e do que não pode, sem apagar arquivo, sem mexer no histórico, sem tocar na cópia do jogo. E deu errado logo de cara, por culpa minha: esqueci de dizer pro Codex onde estava o tradutor. Ele parou em 36 segundos e me avisou, sem inventar conserto. Corrigi o pedido e, em 11 minutos, as três builds passaram em todos os 38 testes.”
+
+**Na tela:**
+
+- Três terminais lado a lado: agente do M5 (Claude Opus), `codex exec` (GPT-6 Luna) e `opencode run` (DeepSeek V4.1 Flash), cada um com seu log rolando.
+- O erro da primeira tentativa do Codex: `DolRecomp não encontrado`.
+- A tabela final do Codex: x86\_64 Release, x86\_64 Debug e arm64 Debug, “38/38 passaram”.
+- O primeiro commit do opencode: `Match fn_80005B28`.
+- O `opencode.json` com as regras (`rm: deny`, `git push: deny`…), destacando as negações.
+
+**Motion:** três cartões de logo (Claude, OpenAI, OpenCode) entram como jogadores escalados; cada um puxa uma linha até sua tarefa num quadro. Em volta de cada tarefa, uma “caixa” de vidro se fecha (o isolamento). No erro do Codex, a caixa dele pisca em vermelho, um bilhete “faltou o caminho” cola na tela e some; o contador de testes sobe de 0 a 38 três vezes. Fecha com os três logs rolando juntos em tela dividida.
+
+### 4.8 Quanto custou até aqui (tokens e tempo)
 
 **Fala:** “E quanto de IA foi isso? Até agora, uns 389 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 2,1 milhões de tokens, algo como uns 20 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, e o maior consumo até aqui foi o M5, o sistema operacional e o disco.”
 
@@ -182,7 +221,10 @@ Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até i
 | M3 esqueleto | Sonnet | 23 min | 98 mil | 7,0 M |
 | M4 boot | Opus | 1h32 | 275 mil | 74,2 M |
 | M5 OS e disco (parte 1) | Opus | 1h46 | 322 mil | 105,3 M |
-| Sessão principal | Opus | 4h38+ | 159 mil | 37,4 M |
+| M5 OS e disco (parte 2, parcial) | Opus | 46 min+ | 50 mil | 17,9 M |
+| Builds x86\_64/Debug | Codex (GPT-6 Luna) | 12 min | 15 mil | 5,5 M |
+| Matching do decomp (parcial) | opencode (DeepSeek V4.1 Flash) | 15 min+ | 9 mil | 3,3 M |
+| Sessão principal | Opus | 5h29+ | 198 mil | 45,5 M |
 
 **Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “389 M processados · 2,1 M escritos”. Atualizar os números na edição final.
 
@@ -207,3 +249,4 @@ Uma cena por ferramenta. As de Ghidra e REA ficam marcadas “a gravar” até i
 | Data | O que entrou no roteiro |
 | --- | --- |
 | 23/10/2026 | Versão inicial: gancho, capítulos 1–5, cenas de Ghidra e REA como “a gravar”; Motion em todas as cenas; 3.6 instalação do Ghidra 12.1.4 e do REA 6.7.0 (decompilador ARM64 compilado, flag EF_PPC_EMB, 3.897 funções); 4.6 tokens e tempo por etapa |
+| 23/10/2026 (tarde) | 4.6 o SSD que sumiu duas vezes (causa provável `disksleep`, correções); 3.4 Ghidra e 3.5 REA deixam de ser “a gravar”: primeiro uso real do REA no M5 (pré-carregador na ARAM, ligador, trocas de módulo, endereço de VI corrigido); 4.7 três IAs de três empresas em paralelo (Codex nas builds, opencode no decomp, isolamento); 4.8 tokens com M5 parte 2, Codex e opencode |

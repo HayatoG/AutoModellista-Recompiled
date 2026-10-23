@@ -58,6 +58,10 @@ A decisão central foi escrever uma runtime própria em C17 sobre SDL3 e deixar 
 | Arquitetura, depuração contra o Dolphin, revisão | Opus | M4 (boot), M5 (OS e disco) |
 | Implementação com especificação clara | Sonnet | M3 (esqueleto e build) |
 | Tarefas mecânicas com verificador automático | Haiku | Matching de funções no decomp (o objdiff dá o veredito) |
+| Verificação mecânica em paralelo, fora da cota do Claude | Codex CLI (GPT-6 Luna, raciocínio baixo) | Builds x86\_64/Debug com a SDL nova (M5) |
+| Matching do decomp em paralelo, fora da cota do Claude | opencode CLI (DeepSeek V4.1 Flash via OpenCode Go) | Funções do decomp num branch próprio (M5) |
+
+**Agentes de outras ferramentas (23/10, M5):** para não gastar a cota semanal do Claude em tarefas mecânicas, a sessão principal passou duas tarefas para o Codex CLI e o opencode CLI, rodando em segundo plano. Regras de segurança: cada um numa `git worktree` própria (o repo principal e as builds do agente do M5 ficam intocados); o Codex no sandbox `workspace-write` sem rede (a SDL vem de uma cópia local); o opencode com `opencode.json` que nega qualquer comando fora de uma lista (sem `rm`, `push`, `reset`, `clean`, troca de branch); a cópia do jogo fica fora do git e proibida no prompt; tudo com `with_timeout.sh`; a sessão principal confere o resultado antes de aceitar.
 
 ## Linha do tempo
 
@@ -65,7 +69,8 @@ Em 23/10/2026, o port foi do plano até o jogo rodando nativo além de `main`, c
 
 | Data | Marco | Modelo | Resultado verificado | Commits |
 | --- | --- | --- | --- | --- |
-| 23/10 | M5 OS e disco (em andamento) | Opus | Leituras de disco na mesma ordem e offsets do Dolphin; `menu.rel`, `menu00`, `menu01` e `msg_e` carregados via `OSLink`; RELs regenerados com base em 0x81800000 | `4cd34e0`, `73cdf41`, `456174f`, `557e0f1` |
+| 23/10 | M5 OS e disco (em andamento; parte 2 desde 17:11) | Opus | Leituras de disco na mesma ordem e offsets do Dolphin; `menu.rel`, `menu00`, `menu01` e `msg_e` carregados via `OSLink`; RELs regenerados com base em 0x81800000. Parte 2: vozes do AX andando sem mixagem (teste novo com vozes sintéticas), detector de laço de quadros parado; 38/38 testes; 600 quadros em 11,4 s sem erro e 31 eventos de disco/módulos iguais ao Dolphin | `4cd34e0`, `73cdf41`, `456174f`, `557e0f1`, `501e2cc`, `73d7e10` |
+| 23/10 | Builds x86\_64 Release, x86\_64 Debug e arm64 Debug com SDL 3.4.18 | Codex (GPT-6 Luna) | Três builds compilam, 38/38 testes em cada; verificado de novo pela sessão principal | (sem commit: só verificação) |
 | 23/10 | SDL3 3.4.14 → 3.4.18 | (sessão principal) | 26/26 testes; boot idêntico (41.422 voltas, 6.420 chamadas) | `09deea0` |
 | 23/10 | M4 boot até `main` | Opus | Trace idêntico ao Dolphin em 1.998 eventos (2.733 com trechos de 128); arm64 e x86\_64; 26 testes | `852ba6d`, `7614f88`, `64a09b6` |
 | 23/10 | M3 esqueleto | Sonnet | DOL + 12 RELs linkados num executável (155 trechos); 12 testes; CI escrito | `f3dd0ac` |
@@ -84,6 +89,10 @@ Até 23/10 às 16:36 (horário de Brasília), o projeto processou cerca de 389 m
 
 | Etapa | Modelo | Início → fim | Duração | Respostas | Tokens gerados | Tokens processados |
 | --- | --- | --- | --- | --- | --- | --- |
+| opencode: matching do decomp (em andamento, parcial) | DeepSeek V4.1 Flash (OpenCode Go) | 23/10 17:44 → 17:59+ | 15 min+ | 77 | 8.679 | 3,3 M |
+| Codex: builds x86\_64/Debug com SDL 3.4.18 (2 tentativas) | GPT-6 Luna | 23/10 17:44 → 17:57 | 12 min | — | 14.602 | 5,5 M |
+| M5 OS e disco, parte 2 (em andamento, parcial) | Opus 5.5 | 23/10 17:11 → 17:57+ | 46 min+ | 104 | 49.950 | 17,9 M |
+| Sessão principal, retomada após a queda do volume | Opus 5.5 | 23/10 17:08 → 17:59+ | 51 min+ | 64 | 39.013 | 8,1 M |
 | M5 OS e disco, parte 1 (interrompida: o volume do SSD desmontou) | Opus 5.5 | 23/10 14:49 → 16:35 | 1h46 | 248 | 322.027 | 105,3 M |
 | M4 boot até `main` | Opus 5.5 | 23/10 13:01 → 14:33 | 1h32 (inclui a parada do disco cheio) | 201 | 275.489 | 74,2 M |
 | M3 esqueleto | Sonnet 5.5 | 23/10 12:26 → 12:49 | 23 min | 48 | 97.718 | 7,0 M |
@@ -95,6 +104,7 @@ Até 23/10 às 16:36 (horário de Brasília), o projeto processou cerca de 389 m
 - **Tokens processados** inclui o contexto relido a cada resposta (cache). É a maior parte do volume, mas é a parte mais barata.
 - **Tokens gerados** é o que os modelos escreveram: código, documentos, comandos e respostas.
 - Duração é o tempo de relógio entre a primeira e a última resposta, incluindo esperas por builds e pelo Dolphin.
+- Codex e opencode não aparecem no `/usage` do Claude: os números vêm do log JSON de cada CLI (`/Volumes/AMRecomp/logs/paralelos/`); não consomem a cota do Claude.
 - Fonte: `scripts/usage_report.py` sobre os registros em `~/.claude/projects/`; o comando `/usage` do Claude Code mostra o consumo da conta.
 
 ## Problemas e lições
@@ -110,6 +120,9 @@ O problema mais caro não foi técnico do jogo: foi um log sem limite que encheu
 | Dolphin órfão aberto por 2h30 | Script do oráculo não fechava o Dolphin ao terminar | Scripts matam o Dolphin e o grupo de processos em qualquer saída |
 | Número de frame difere do Dolphin | Tempo de leitura do disco é diferente nos dois | Comparar a sequência de eventos, não o frame exato |
 | Mudança paralela com agente trabalhando | Mesma árvore e mesmas pastas de build | Testar numa `git worktree` separada e avisar o agente |
+| Primeira tentativa do Codex falhou em 36 s nas três builds (`DolRecomp não encontrado`) | O prompt não dizia onde está `tools/DolRecomp`, que fica fora do git e não existe na worktree | O Codex obedeceu e não tentou consertar; prompt corrigido com o caminho (só leitura) e a segunda tentativa passou. Ao isolar em worktree, listar tudo que não está no git |
+| opencode não autenticava (`Invalid API key` no 9router, 403 no provedor nvidia) | Chave do 9router inválida | Testar o modelo com uma mensagem mínima antes de lançar; usado o provedor OpenCode Go, que respondeu |
+| Volume do SSD desmontado duas vezes no M5 (23/10, \~16:35 e de novo \~17:30); na primeira o agente morreu após 1h46, na segunda a sessão inteira parou de rodar comandos | O macOS desanexou a imagem `AMRecomp.sparsebundle` (SSD USB). Causa provável: `disksleep 10` (repouso de disco após 10 min). A pasta temporária do Claude Code também ficava no volume, então nem o `hdiutil attach` rodava | Uma edição não commitada se perdeu (o `--pad-script`, reescrito depois); o resto estava na imagem. Correções: `sudo pmset -a disksleep 0`; pasta temporária do Claude Code no disco interno (`RETOMAR.md`); regra no `CLAUDE.md` de conferir `ls /Volumes/AMRecomp` antes de execuções longas |
 
 Padrões de trabalho que funcionaram:
 
@@ -123,6 +136,8 @@ Padrões de trabalho que funcionaram:
 - O Ghidra oficial não traz o decompilador nativo `mac_arm_64`: foi compilado com `support/gradle/gradlew buildNatives` (36 s).
 - O `main.elf` do dtk vem com `EF_PPC_EMB` (0x80000000) e o REA recusa; uma cópia com `e_flags = 0` em `/Volumes/AMRecomp/work/rea/main.elf` funciona: 3.897 funções, 9.902 strings, perfil `PowerPC:BE:32:default`.
 - O Ghidra padrão não tem perfil Gekko. Resolvido com a extensão GameCubeLoader 1.3.1 (Apache-2.0): linguagem `PowerPC:BE:32:Gekko_Broadway`, `.sla` compilado com `support/sleigh`, fixada no MCP via `REA_GHIDRA_LANGUAGE_ID`. Resultado: 3.897 funções, 9.905 strings.
+
+**Primeiro uso real do REA (M5, 23/10):** o agente do M5 usou o REA sobre o `main.elf` para achar o caminho até o `game.rel`, consultando strings, referências cruzadas e pseudocódigo. Achados até aqui: a função que pré-carrega os módulos na memória de áudio (ARAM) no começo (`game`, `menu`, `menu00`, `menu01`, `vj` e 7 `msg_*`), a função que liga os módulos (`OSLink`) e as 6 funções de troca de módulo (o `game.rel` entra no espaço 1, o `menu.rel` no 2). De quebra, corrigiu um endereço do projeto: o que estava anotado como `VISetNextFrameBuffer` era `VIFlush`.
 
 ## Perguntas em aberto e próximos passos
 
