@@ -32,7 +32,7 @@ Alvos CMake:
 
 Opções: `AM_WITH_GENERATED` (ON), `AM_GENERATED_DIR` (diretório que contém `dol/` e `rels/`; também lido da variável de
 ambiente de mesmo nome), `AM_DOLRECOMP_DIR` (padrão `tools/DolRecomp`), `AM_SDL3_SYSTEM` (OFF: SDL3 via FetchContent na
-tag fixa `release-3.4.14`), `AM_SANITIZE` (ASan + UBSan nos alvos estritos), `AM_BUILD_TESTS` (ON).
+tag fixa `release-3.4.18`), `AM_SANITIZE` (ASan + UBSan nos alvos estritos), `AM_BUILD_TESTS` (ON).
 
 ## 2. Como o C gerado se encaixa
 

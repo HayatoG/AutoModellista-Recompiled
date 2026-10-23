@@ -17,7 +17,7 @@ option(AM_SDL3_SYSTEM "Usa a SDL3 instalada (find_package) em vez de baixar a ta
 option(AM_BUILD_TESTS "Compila os testes unitários (CTest)" ON)
 option(AM_SANITIZE "ASan + UBSan nos alvos da runtime (builds Debug)" OFF)
 
-set(AM_SDL3_TAG "release-3.4.14" CACHE STRING "Tag fixa da SDL3 usada pelo FetchContent")
+set(AM_SDL3_TAG "release-3.4.18" CACHE STRING "Tag fixa da SDL3 usada pelo FetchContent")
 
 if(NOT EXISTS "${AM_DOLRECOMP_DIR}/src/cpu/cpu.h")
   message(FATAL_ERROR "DolRecomp não encontrado em ${AM_DOLRECOMP_DIR}. Rode scripts/fetch_tools.sh "
