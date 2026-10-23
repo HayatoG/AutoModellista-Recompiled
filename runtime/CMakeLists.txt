@@ -20,7 +20,7 @@ add_library(am_core STATIC
   core/log.c core/mem.c core/dispatch.c core/guest_cpu.c
   core/timebase.c core/ppc_sys.c core/dol.c core/boot.c core/trace.c core/chassis.c core/disc.c core/rel_map.c core/hook.c
   core/pad_script.c
-  os/exception.c
+  os/exception.c os/os_link.c
   hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/si.c hw/exi.c hw/vi.c
   hw/cp.c hw/pe.c hw/gather_pipe.c
   gfx/gx_fifo.c
@@ -65,7 +65,7 @@ target_link_libraries(am_platform PUBLIC SDL3::SDL3)
 am_apply_strict(am_platform)
 
 # --- Executável -----------------------------------------------------------------------------------------------------
-add_executable(automodellista main.c)
+add_executable(automodellista main.c game/game_run.c)
 target_link_libraries(automodellista PRIVATE am_recomp am_platform)
 am_apply_strict(automodellista)
 am_apply_sanitize_link(automodellista)

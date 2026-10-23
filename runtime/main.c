@@ -3,6 +3,7 @@
  *
  *   automodellista                       autoteste do M3: liga o C gerado e confere o dispatcher (usado no CI)
  *   automodellista --sys <dir> [opções]  M4: carrega o DOL de <dir> (sys/ do dtk disc extract) e roda até main
+ *   automodellista --sys <dir> --frames <n>  M5: roda o jogo (disco, RELs) até completar n quadros do laço principal
  *
  * Opções do boot (docs/M4_BOOT.md §6):
  *   --trace <arquivo>          grava o trace de chamadas (formato de scripts/am_trace_lib.py)
@@ -14,6 +15,10 @@
  *   --trace-max-mb <n>         teto do trace em MiB (padrão 256); passou disso é am_fatal
  *   --max-seconds <n>          watchdog de tempo real (padrão 120; 0 = sem limite)
  *   --same-pc-limit <n>        watchdog: mesmo pc despachado n vezes seguidas sem chamada nova (padrão 2000000)
+ *   --frames <n>               M5: para depois de n quadros de fn_80051034 (sem parada em main)
+ *   --disc <dir>               raiz da árvore extraída (sys/ e files/); padrão: <--sys>/..
+ *   --pad-script <roteiro>     botões do controle 1 por quadro, "200:D_LEFT:8,240:A:8" (am/pad_script.h)
+ *   --events <arquivo>         log de eventos do M5 (main, OSLink, leituras do DVD) para comparar com o Dolphin
  *   --verbose                  log de depuração (acessos MMIO, UART)
  *
  * Caminhos relativos de --trace/--dump-boot-state são resolvidos em $AM_LOG_DIR quando definido (os scripts usam
@@ -31,7 +36,9 @@
 #include "am/exception.h"
 #include "am/exi.h"
 #include "am/game.h"
+#include "am/game_run.h"
 #include "am/guest_cpu.h"
+#include "am/hook.h"
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/platform.h"
@@ -51,6 +58,11 @@ typedef struct Options {
     u64 trace_max_mb;
     u64 max_seconds;
     u64 same_pc_limit;
+    u64 frames;
+    const char *disc_root;
+    const char *events;
+    const char *pad_script;
+    bool stop_given;
     bool verbose;
 } Options;
 
@@ -106,6 +118,15 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->dump_prefix = value;
     } else if (strcmp(name, "--stop-at") == 0 && parse_u64(value, &n) && n <= 0xFFFFFFFFU) {
         o->stop_at = (GuestAddr)n;
+        o->stop_given = true;
+    } else if (strcmp(name, "--frames") == 0 && parse_u64(value, &n) && n > 0U) {
+        o->frames = n;
+    } else if (strcmp(name, "--disc") == 0) {
+        o->disc_root = value;
+    } else if (strcmp(name, "--events") == 0) {
+        o->events = value;
+    } else if (strcmp(name, "--pad-script") == 0) {
+        o->pad_script = value;
     } else if (strcmp(name, "--max-steps") == 0 && parse_u64(value, &n)) {
         o->max_steps = n;
     } else if (strcmp(name, "--trace-max-mb") == 0 && parse_u64(value, &n) && n > 0U) {
@@ -141,6 +162,9 @@ static bool parse_args(int argc, char **argv, Options *o) {
             AM_LOG_ERROR("opção inválida: %s (veja o comentário no topo de runtime/main.c)", argv[i]);
             return false;
         }
+    }
+    if (o->frames != 0U && !o->stop_given) {
+        o->stop_at = 0; /* M5: o jogo segue depois de main */
     }
     return true;
 }
@@ -283,12 +307,33 @@ static void report(const CPUState *cpu, ChassisStop stop, const ChassisStats *st
     for (u32 i = 0; i < ps->icbi_first_count; i++) {
         AM_LOG_DEBUG("  icbi[%u] bloco 0x%08X", i, ps->icbi_first[i]);
     }
+    game_run_report();
     if (stop == CHASSIS_STOP_ADDRESS) {
         AM_LOG_INFO("parada em 0x%08X (lr=0x%08X)%s", cpu->pc, cpu->lr,
                     cpu->pc == GAME_ADDR_MAIN ? ": M4: main alcançado" : "");
+    } else if (stop == CHASSIS_STOP_HOOK && game_run_frame_target_reached()) {
+        AM_LOG_INFO("parada em 0x%08X: M5: %" PRIu64 " quadros completos do laço fn_80051034", cpu->pc,
+                    game_run_frames());
     } else {
         AM_LOG_INFO("parada por limite de voltas em pc=0x%08X", cpu->pc);
     }
+}
+
+/* Todo gancho tem de ser alcançável pelo chassi (am/hook.h): confere os desvios diretos do texto do DOL. */
+static bool check_hooks(const SysFiles *f, const DolImage *dol) {
+    HookCodeRange ranges[DOL_TEXT_COUNT];
+    u32 count = 0;
+    for (u32 i = 0; i < DOL_TEXT_COUNT; i++) {
+        const DolSection *s = &dol->sections[i];
+        if (s->size != 0U) {
+            ranges[count++] = (HookCodeRange){s->addr, s->size, f->dol.data + s->offset};
+        }
+    }
+    if (!hook_check_reachable(ranges, count)) {
+        AM_LOG_ERROR("há ganchos que o chassi não veria; ver o log acima");
+        return false;
+    }
+    return true;
 }
 
 static bool open_trace(const char *path, const Options *o) {
@@ -306,7 +351,15 @@ static int run_boot(CPUState *cpu, const Options *o) {
     SysFiles files = {0};
     DolImage dol;
     int status = EXIT_FAILURE;
-    if (load_sys(o->sys_dir, &files) && prepare(cpu, o, &files, &dol)) {
+    char disc_buf[1024];
+    char events_buf[1024];
+    (void)snprintf(disc_buf, sizeof(disc_buf), "%s/..", o->sys_dir);
+    const GameRunConfig run = {.disc_root = o->disc_root != NULL ? o->disc_root : disc_buf,
+                               .frames = o->frames,
+                               .events = log_path(o->events, events_buf, sizeof(events_buf)),
+                               .pad_script = o->pad_script};
+    if (load_sys(o->sys_dir, &files) && prepare(cpu, o, &files, &dol) && game_run_init(&run) &&
+        check_hooks(&files, &dol)) {
         char dump_buf[1024];
         char trace_buf[1024];
         const char *dump = log_path(o->dump_prefix, dump_buf, sizeof(dump_buf));
@@ -325,9 +378,12 @@ static int run_boot(CPUState *cpu, const Options *o) {
             const ChassisStop stop = chassis_run(cpu, &cfg, &stats);
             trace_close();
             report(cpu, stop, &stats);
-            status = stop == CHASSIS_STOP_ADDRESS ? EXIT_SUCCESS : EXIT_FAILURE;
+            const bool frames_ok = stop == CHASSIS_STOP_HOOK && game_run_frame_target_reached();
+            status = stop == CHASSIS_STOP_ADDRESS || frames_ok ? EXIT_SUCCESS : EXIT_FAILURE;
         }
     }
+    game_run_shutdown();
+    hook_clear();
     free_sys(&files);
     return status;
 }

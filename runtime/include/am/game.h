@@ -21,4 +21,17 @@
 #define GAME_ADDR_OS_SC_START 0x800C7A44U
 #define GAME_ADDR_OS_SC_END   0x800C7A60U
 
+/* OSLink.c do SDK (ordem do arquivo, conferida no disassembly: Link em 0x800C5990 chama OSNotifyLink 0x800C56CC):
+ * OSLink = Link(m, bss, FALSE), OSLinkFixed = Link(m, bss, TRUE) só para versão >= 3, OSUnlink desfaz. Chamados pelo
+ * carregador de módulos do jogo (fn_80071658 liga, fn_800715FC desliga). */
+#define GAME_ADDR_OS_LINK       0x800C5C70U
+#define GAME_ADDR_OS_LINK_FIXED 0x800C5C94U
+#define GAME_ADDR_OS_UNLINK     0x800C5F08U
+
+/* Laço principal: fn_8004838C chama fn_80051034 (um quadro: lógica, VIWaitForRetrace, VISetNextFrameBuffer...) em
+ * 0x80048398; analysis/known_addresses.md. */
+#define GAME_ADDR_FRAME           0x80051034U
+#define GAME_ADDR_FRAME_RETURN    0x8004839CU
+#define GAME_ADDR_VI_WAIT_RETRACE 0x800D276CU
+
 #endif /* AM_GAME_H */

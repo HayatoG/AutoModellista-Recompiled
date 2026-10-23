@@ -22,6 +22,7 @@ am_add_unit_test(exception)
 am_add_unit_test(hw)
 am_add_unit_test(chassis)
 am_add_unit_test(sched)
+am_add_unit_test(rel_map)
 am_add_unit_test(disc)
 target_link_libraries(disc_test PRIVATE am_platform) # cria a árvore sintética com platform_make_dir
 am_add_unit_test(vi)
