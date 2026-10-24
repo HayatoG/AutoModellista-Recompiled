@@ -6,9 +6,9 @@
  "timebase": {
   "frame": 6400,
   "frames_compared": 6400,
-  "lag_fields": 2.096,
+  "lag_fields": 0.0,
   "lag_first_frame_fields": 0.0,
-  "max_abs_lag_fields": 2.096,
+  "max_abs_lag_fields": 0.038,
   "ok": true
  },
  "soft": {
