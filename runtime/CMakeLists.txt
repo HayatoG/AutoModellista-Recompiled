@@ -15,6 +15,14 @@ target_compile_definitions(am_ppc PRIVATE
   ppc_mftb=dolrecomp_ppc_mftb)
 target_compile_options(am_ppc PRIVATE ${AM_GENERATED_FLAGS})
 
+# --- gfx: o GX em software (M6). Sem contração de a*b+c em FMA: arm64 e x86_64 dão os mesmos pixels (o golden do
+# M6 guarda o hash da captura dos dois builds).
+set(AM_GFX_SOURCES gfx/gx_fifo.c gfx/gx_vtx.c gfx/gx_xf.c gfx/gx_bp.c gfx/gx_tex.c gfx/gx_tev.c gfx/gx_efb.c
+  gfx/gx_setup.c gfx/gx_raster.c)
+if(NOT MSVC)
+  set_source_files_properties(${AM_GFX_SOURCES} PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
 # --- am_core: memória, CPUState, dispatcher, boot e chassi; os/ (exceções) e hw/ (dispositivos MMIO) ---------------
 add_library(am_core STATIC
   core/log.c core/mem.c core/dispatch.c core/guest_cpu.c
@@ -23,12 +31,12 @@ add_library(am_core STATIC
   os/exception.c os/os_link.c os/os_threads.c
   hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/dvd_timing.c hw/si.c hw/exi.c hw/vi.c
   hw/cp.c hw/pe.c hw/gather_pipe.c
-  gfx/gx_fifo.c
+  ${AM_GFX_SOURCES}
   audio/dsp_hle.c audio/ax_voice.c)
 target_include_directories(am_core PUBLIC include)
 target_link_libraries(am_core PUBLIC am_ppc)
 if(NOT APPLE AND NOT WIN32)
-  target_link_libraries(am_core PUBLIC m) # hw/dvd_timing.c: sqrt, fmod
+  target_link_libraries(am_core PUBLIC m) # hw/dvd_timing.c e gfx/: sqrt, fmod, pow
 endif()
 am_apply_strict(am_core)
 
