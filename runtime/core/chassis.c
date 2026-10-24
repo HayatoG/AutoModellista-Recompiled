@@ -9,11 +9,14 @@
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/pi.h"
+#include "am/profile.h"
 #include "am/timebase.h"
 #include "am/trace.h"
 
 #define PPC_MSR_EE 0x00008000U
 #define PPC_MSR_IR 0x00000020U
+/* OSGetCurrentThread lê este endereço (SDK OSThread.c: __OSCurrentThread em 0x800000E4). */
+#define CHASSIS_OS_CURRENT_THREAD 0x800000E4U
 
 /* Exceções síncronas que o C gerado levanta via ppc_take_exception (sc, programa, FP indisponível, DSI...): o SO do
  * jogo trataria pelo vetor. Só o "sc" (barreira de DCFlushRange) acontece até main; as outras são do marco que
@@ -107,9 +110,14 @@ ChassisStop chassis_run(CPUState *cpu, const ChassisConfig *config, ChassisStats
         if (config->on_tick != NULL && (stats->steps & (CHASSIS_TICK_STEPS - 1U)) == 0U) {
             config->on_tick(cpu);
         }
+        const GuestAddr entry = cpu->pc;
+        const u64 before = timebase_cycles(cpu);
         timebase_begin_slice(cpu);
         dispatch_step(cpu);
         timebase_end_slice(cpu);
+        if (profile_active()) {
+            profile_add(entry, mem_read32(NULL, CHASSIS_OS_CURRENT_THREAD), timebase_cycles(cpu) - before);
+        }
         check_sync_exception(cpu);
         stats->steps++;
     }

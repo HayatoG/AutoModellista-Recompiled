@@ -17,6 +17,7 @@
 #include "am/dsp_hle.h"
 #include "am/exception.h"
 #include "am/game.h"
+#include "am/game_diag.h"
 #include "am/gather_pipe.h"
 #include "am/guest_cpu.h"
 #include "am/gx_efb.h"
@@ -109,7 +110,7 @@ static void event_line(const char *fmt, ...) {
 
 static void on_di_read(u64 offset, u32 length, u32 dst) {
     if (s_run.timebase != NULL) {
-        (void)fprintf(s_run.timebase, "read 0x%09" PRIX64 " 0x%X %" PRIu64 "\n", offset, length, timebase_read(NULL));
+        (void)fprintf(s_run.timebase, "read 0x%09" PRIX64 " 0x%X %" PRIu64 "\n", offset, length, timebase_guest_last());
     }
     event_line("di_read frame=%" PRIu64 " offset=0x%09" PRIX64 " length=0x%X dst=0x%08X", s_run.frames, offset, length,
                dst & 0x03FFFFFFU);
@@ -128,10 +129,12 @@ static HookAction on_main(CPUState *cpu, void *user) {
     return HOOK_CONTINUE;
 }
 
-/* __DVDInterruptHandler: com --timebase-out, o instante de cada interrupção do DVD (o mesmo do oráculo). */
+/* __DVDInterruptHandler: com --timebase-out, o instante de cada interrupção do DVD (o mesmo do oráculo: o último
+ * mftb do jogo, am/timebase.h). */
 static HookAction on_dvd_irq(CPUState *cpu, void *user) {
+    (void)cpu;
     (void)user;
-    (void)fprintf(s_run.timebase, "dvdirq %" PRIu64 "\n", timebase_read(cpu));
+    (void)fprintf(s_run.timebase, "dvdirq %" PRIu64 "\n", timebase_guest_last());
     return HOOK_CONTINUE;
 }
 
@@ -313,8 +316,9 @@ static HookAction on_frame(CPUState *cpu, void *user) {
     s_run.frames++;
     s_run.fields_at_frame = vi_field_count();
     if (s_run.timebase != NULL) {
-        (void)fprintf(s_run.timebase, "%" PRIu64 " %" PRIu64 "\n", s_run.frames, timebase_read(cpu));
+        (void)fprintf(s_run.timebase, "%" PRIu64 " %" PRIu64 "\n", s_run.frames, timebase_guest_last());
     }
+    game_diag_frame(s_run.frames);
     const bool last_skipped = s_run.skipping;
     if (s_run.config.realtime) {
         decide_skip(pace());
@@ -463,7 +467,7 @@ bool game_run_init(const GameRunConfig *config) {
                                .module_count = build_modules(modules),
                                .load_rel = load_rel,
                                .on_event = on_link_event};
-    if (!init_logs(config)) {
+    if (!init_logs(config) || !game_diag_init(config->profile, config->probes, s_run.timebase)) {
         return false;
     }
     if (!os_link_init(&link) || !hook_register(GAME_ADDR_FRAME, "quadro (fn_80051034)", on_frame, NULL) ||
@@ -484,6 +488,7 @@ void game_run_shutdown(void) {
         s_run.events = NULL;
     }
     di_set_read_observer(NULL);
+    game_diag_shutdown();
     if (s_run.timebase != NULL) {
         (void)fclose(s_run.timebase);
         s_run.timebase = NULL;

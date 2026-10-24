@@ -88,7 +88,9 @@ TEST(cpu_state_of_the_bs2) {
     EXPECT_EQ(cpu.hid2, 0xE0000000U);
     EXPECT_EQ(ppc_sys_spr(PPC_SPR_HID0), 0x0011C464U);
     EXPECT_EQ(ppc_sys_spr(PPC_SPR_IBAT0U + 10U), 0xC0001FFFU);
-    EXPECT_EQ(timebase_read(&cpu), 77U);
+    /* M8: o TB do entry point já inclui o BS2/apploader do Dolphin (am/boot.h), 12 ciclos por tique. */
+    EXPECT_EQ(timebase_read(&cpu), 77U + (BOOT_BS2_CYCLES / 12U));
+    EXPECT_EQ(timebase_cycles(&cpu), BOOT_BS2_CYCLES);
 }
 
 int main(void) {

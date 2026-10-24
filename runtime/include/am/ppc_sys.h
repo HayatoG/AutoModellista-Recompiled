@@ -94,4 +94,7 @@ const PpcSysStats *ppc_sys_stats(void);
 /* instruction_fallback do CPUState: decodifica `raw` (em `cia`) e executa; o que não é suportado é am_fatal. */
 void ppc_sys_fallback(CPUState *cpu, u32 raw, u32 cia);
 
+/* M8: ciclos do Dolphin para uma instrução que o C gerado trata por fallback (dcbf, mfspr...). */
+u32 ppc_sys_fallback_cycles(u32 raw);
+
 #endif /* AM_PPC_SYS_H */

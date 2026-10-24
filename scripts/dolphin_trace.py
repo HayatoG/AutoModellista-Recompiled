@@ -387,6 +387,14 @@ def cmd_events(args) -> int:
     pad = PadPipe(args.user_dir) if steps else None
     # M7: timebase na entrada de cada quadro ("quadro tb"), para comparar o tempo emulado com o da runtime.
     tb_out = open(args.timebase_out, "w") if args.timebase_out else None
+    # M8: --probes q0:a,b,... = a partir do quadro q0, "probe pc lr tb" a cada entrada nesses endereços (o mesmo da
+    # runtime, runtime/game/game_diag.c). Os breakpoints entram só no quadro q0, para não pagar a parada antes.
+    probe_from, probes = 0, []
+    if args.probes:
+        q0, _, lst = args.probes.partition(":")
+        probe_from, probes = int(q0), [int(a, 16) for a in lst.split(",") if a]
+        if tb_out is None:
+            raise SystemExit("--probes exige --timebase-out")
     proc = launch(args)
     client = None
     lines: list[str] = []
@@ -422,11 +430,18 @@ def cmd_events(args) -> int:
             elif pc == DVD_IRQ:
                 tb = (client.read_reg(gdb.REG_TBU) << 32) | client.read_reg(gdb.REG_TBL)
                 tb_out.write(f"dvdirq {tb}\n")
+            elif pc in probes and frames >= probe_from:
+                tb = (client.read_reg(gdb.REG_TBU) << 32) | client.read_reg(gdb.REG_TBL)
+                tb_out.write(f"probe {pc:08X} {lr:08X} {tb}\n")
             elif pc == FRAME and lr == FRAME_RETURN:
                 if frames >= args.frames:
                     reason = "frames"
                     break
                 frames += 1
+                if probes and frames == probe_from:
+                    for a in probes:
+                        if a not in (MAIN, OS_LINK, OS_LINK_FIXED, OS_UNLINK, DVD_READ, FRAME, DVD_IRQ):
+                            client.add_breakpoint(a)
                 if tb_out is not None:
                     tb = (client.read_reg(gdb.REG_TBU) << 32) | client.read_reg(gdb.REG_TBL)
                     tb_out.write(f"{frames} {tb}\n")
@@ -484,6 +499,7 @@ def main() -> int:
     e.add_argument("--shots", default=None, help="quadros cujo XFB vira PNG ao lado de --out (ex.: 300,800)")
     e.add_argument("--audio-dump", default=None, help="M7: grava o dspdump.wav do Dolphin neste arquivo")
     e.add_argument("--timebase-out", default=None, help="M7: grava 'quadro timebase' na entrada de cada quadro")
+    e.add_argument("--probes", default=None, help="M8: 'q0:hex,hex' grava 'probe pc lr tb' a partir do quadro q0")
     args = ap.parse_args()
     if args.cmd == "events":
         return cmd_events(args)

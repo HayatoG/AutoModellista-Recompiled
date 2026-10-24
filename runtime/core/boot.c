@@ -172,4 +172,5 @@ void boot_prepare_cpu(CPUState *cpu, GuestAddr entry, const BootLayout *layout) 
     ppc_sys_set_spr(PPC_SPR_IBAT0U + 11U, 0x0000002AU);
 
     timebase_reset(layout->time_base);
+    timebase_advance(BOOT_BS2_CYCLES);
 }

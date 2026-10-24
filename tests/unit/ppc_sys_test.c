@@ -33,6 +33,24 @@ TEST(fallback_advances_pc_past_the_instruction) {
     EXPECT_EQ(cpu.pc, 0x80003008U);
 }
 
+/* M8: o fallback desconta do downcount os ciclos que o Dolphin conta (PPCTables.cpp). dcbf 0,r3 = 0x7C0018AC,
+ * icbi 0,r3 = 0x7C001FAC, dcbst 0,r3 = 0x7C00186C. */
+TEST(fallback_charges_dolphin_cycles) {
+    CPUState cpu;
+    setup(&cpu);
+    EXPECT_EQ(ppc_sys_fallback_cycles(0x7C0018ACU), 5U);
+    EXPECT_EQ(ppc_sys_fallback_cycles(0x7C00186CU), 5U);
+    EXPECT_EQ(ppc_sys_fallback_cycles(0x7C001FACU), 4U);
+    EXPECT_EQ(ppc_sys_fallback_cycles(mtspr(3, 272)), 2U);
+    EXPECT_EQ(ppc_sys_fallback_cycles(mfspr(3, 272)), 1U);
+    cpu.gpr[3] = 1U;
+    timebase_begin_slice(&cpu);
+    ppc_sys_fallback(&cpu, mtspr(3, 272), 0x80003000U);
+    ppc_sys_fallback(&cpu, mfspr(4, 272), 0x80003004U);
+    timebase_end_slice(&cpu);
+    EXPECT_EQ(timebase_cycles(&cpu), 3U);
+}
+
 TEST(hid0_icfi_self_clears_and_hid2_masks) {
     CPUState cpu;
     setup(&cpu);
@@ -99,6 +117,7 @@ TEST(segment_registers) {
 int main(void) {
     EXPECT_TRUE(mem_init());
     RUN_TEST(fallback_advances_pc_past_the_instruction);
+    RUN_TEST(fallback_charges_dolphin_cycles);
     RUN_TEST(hid0_icfi_self_clears_and_hid2_masks);
     RUN_TEST(dec_and_tb_go_through_timebase);
     RUN_TEST(bat_remap_that_keeps_translation_is_accepted);

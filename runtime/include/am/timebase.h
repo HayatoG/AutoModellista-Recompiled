@@ -40,4 +40,11 @@ void timebase_dec_take(void);
 /* Ciclo em que o DEC passa de 0 (UINT64_MAX se não vai gerar exceção). Para o avanço de tempo ocioso do chassi. */
 u64 timebase_dec_expiry_cycle(void);
 
+/* M8: o TB que o jogo leu por último (mftb). É o que o stub GDB do Dolphin mostra num breakpoint (GDBStub.cpp lê o
+ * SPR TL, que só o mftb atualiza), então é o que o --timebase-out grava para comparar com o oráculo. */
+u64 timebase_guest_last(void);
+
+/* M8: ciclos que passam sem o C gerado rodar (o BS2 e o apploader antes do entry point, am/boot.h). Fora de fatia. */
+void timebase_advance(u64 cycles);
+
 #endif /* AM_TIMEBASE_H */

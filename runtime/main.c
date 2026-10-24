@@ -33,6 +33,8 @@
  *   --gx-tex-cache on|off      M7: cache de texturas decodificadas (padrão on; off decodifica texel a texel, mesma
  *                              imagem)
  *   --timebase-out <arq>       M7: "quadro timebase" na entrada de cada quadro (o mesmo de dolphin_trace.py)
+ *   --profile <q0>:<q1>:<arq>  M8: perfil de ciclos emulados por trecho e por thread do quadro q0 ao q1
+ *   --probes <q0>:<hex>,...    M8: a partir do quadro q0, entrada nesses endereços no --timebase-out
  *   --frameskip on|off         M7: com --realtime, não desenha até 4 quadros seguidos quando a emulação atrasa
  *                              (padrão on; o jogo segue no ritmo certo e a janela mostra a última imagem)
  *   --gx-threads <n>           M7: trabalhadores do rasterizador (padrão 0 = um por núcleo; 1 = sem threads). A
@@ -90,6 +92,8 @@ typedef struct Options {
     int gx_tex_cache; /* -1 = padrão */
     int frameskip;    /* -1 = padrão */
     const char *timebase_out;
+    const char *profile;
+    const char *probes;
     bool gfx_off;
     bool stop_given;
     bool verbose;
@@ -195,6 +199,10 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         return true;
     } else if (strcmp(name, "--timebase-out") == 0) {
         o->timebase_out = value;
+    } else if (strcmp(name, "--profile") == 0) {
+        o->profile = value;
+    } else if (strcmp(name, "--probes") == 0) {
+        o->probes = value;
     } else if (strcmp(name, "--gx-threads") == 0 && parse_u64(value, &n) && n <= 16U) {
         o->gx_threads = n;
     } else if (strcmp(name, "--max-steps") == 0 && parse_u64(value, &n)) {
@@ -476,7 +484,9 @@ static GameRunConfig run_config(const Options *o, RunPaths *p) {
                            .gx_threads = (u32)o->gx_threads,
                            .gx_tex_cache = o->gx_tex_cache != 0,
                            .frameskip = o->frameskip != 0,
-                           .timebase_out = log_path(o->timebase_out, p->timebase, sizeof(p->timebase))};
+                           .timebase_out = log_path(o->timebase_out, p->timebase, sizeof(p->timebase)),
+                           .profile = o->profile,
+                           .probes = o->probes};
 }
 
 static int run_boot(CPUState *cpu, const Options *o) {

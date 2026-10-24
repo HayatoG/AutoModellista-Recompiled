@@ -12,6 +12,13 @@
 
 /* Arquivos de sys/ do disco extraído (dtk disc extract): boot.bin (cabeçalho, 0x440 bytes), bi2.bin (0x2000) e
  * fst.bin. Buffers do host, só lidos. */
+/* M8: tempo emulado que o Dolphin já passou ao chegar no entry point: o BS2 em HLE roda o apploader na CPU emulada
+ * (Boot_BS2Emu.cpp: RunFunction), com o TB e o VI contando desde o início. Medido, não derivado: é a diferença do
+ * timebase na primeira interrupção do DVD (200059 tiques x 12 ciclos), com o resto do caminho igual (docs/M8_CORRIDA.md
+ * §2). Começar a runtime com esse tempo deixa a fase do VI igual à do Dolphin. HIPÓTESE: o apploader leva sempre esse
+ * tempo (não depende do host; o oráculo é determinístico). */
+#define BOOT_BS2_CYCLES 2400708ULL
+
 typedef struct BootFiles {
     const u8 *boot_bin;
     size_t boot_bin_size;

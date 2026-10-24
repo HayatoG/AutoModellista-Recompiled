@@ -7,6 +7,7 @@
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/ppc_sys.h"
+#include "am/timebase.h"
 
 /* Globais do SO em memória baixa (YAGCD 4.2.1; SDK OSContext.h): */
 #define OS_CURRENT_CONTEXT_PADDR 0x800000C0U /* endereço FÍSICO do OSContext atual */
@@ -27,6 +28,12 @@
 #define OS_CONTEXT_STATE_EXC 0x0002U
 
 #define PPC_MSR_RI 0x00000002U
+
+/* M8: ciclos que o Dolphin conta para o código do vetor que a runtime traduz em C (PPCTables.cpp: 1 por instrução,
+ * 2 para mtspr e rfi, 3 para sync). Caminho do __OSEVStart com RI ligado: 33 instruções até o bne, mais rlwinm, lwz,
+ * mtsrr0 e rfi = 38 ciclos; o de system call (mfhid0, ori, mthid0, isync, sync, mthid0, rfi) = 12. */
+#define EXCEPTION_VECTOR_CYCLES  38U
+#define EXCEPTION_SYSCALL_CYCLES 12U
 
 static struct {
     ExceptionLayout layout;
@@ -111,6 +118,7 @@ static void run_vector_stub(CPUState *cpu, u32 number, u32 vector) {
     cpu->srr0 = cpu->gpr[5];
     cpu->pc = vector;
     ppc_rfi(cpu, MEM_CACHED_BASE | vector); /* rfi: pc = SRR0, MSR = SRR1 */
+    timebase_advance(EXCEPTION_VECTOR_CYCLES);
 }
 
 void exception_deliver(CPUState *cpu, u32 number, u32 vector) {
@@ -160,5 +168,6 @@ void exception_system_call(CPUState *cpu) {
     ppc_sys_mtspr(cpu, PPC_SPR_HID0, cpu->gpr[9], cia);
     cpu->exception &= ~(u32)PPC_EXC_SYSTEM_CALL;
     ppc_rfi(cpu, dst + 0x18U);
+    timebase_advance(EXCEPTION_SYSCALL_CYCLES);
     s_exc.system_calls++;
 }

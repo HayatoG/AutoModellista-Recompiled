@@ -386,9 +386,37 @@ static bool fallback_execute(CPUState *cpu, u32 raw, u32 cia) {
     }
 }
 
+/* M8: ciclos que o Dolphin conta para a instrução (Source/Core/Core/PowerPC/PPCTables.cpp, num_cycles; o JIT soma
+ * isso no downcount do bloco). O DolRecomp dá 0 ciclos a toda instrução de fallback (c_cfg.c: instruction_cycles), e
+ * o laço do DCFlushRange (dcbf, addi, bdnz) contava 2 ciclos por linha de 32 bytes em vez de 7: nos carregamentos o
+ * jogo passa a maior parte do tempo nele, e era essa a diferença de tempo emulado contra o Dolphin (docs/M8_CORRIDA.md
+ * §2). */
+u32 ppc_sys_fallback_cycles(u32 raw) {
+    if (INSN_OPCD(raw) != 31U) {
+        return 0;
+    }
+    switch (INSN_XO(raw)) {
+    case XO_DCBST:
+    case XO_DCBF:
+    case XO_DCBI:
+        return 5;
+    case XO_ICBI:
+        return 4;
+    case XO_MFSR:
+    case XO_MFSRIN:
+        return 3;
+    case XO_MTSPR:
+        return 2;
+    default: /* mfspr, mftb, mtsr, mtsrin */
+        return 1;
+    }
+}
+
 void ppc_sys_fallback(CPUState *cpu, u32 raw, u32 cia) {
     if (!fallback_execute(cpu, raw, cia)) {
         am_fatal("instrução sem recompilação nativa: opcode=0x%08X em 0x%08X", raw, cia);
     }
+    /* Depois da instrução, como no JIT (o downcount do bloco é descontado na saída): um mftb aqui não se vê. */
+    cpu->downcount -= (s64)ppc_sys_fallback_cycles(raw);
     cpu->pc = cia + 4U;
 }

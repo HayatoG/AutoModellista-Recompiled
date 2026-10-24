@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "am/guest_cpu.h"
+#include "am/log.h"
 
 /* Estado: ciclos já consolidados + o valor do TB e do DEC no ciclo da última escrita (como o "FakeTBStartTicks" do
  * Dolphin, HW/SystemTimers.cpp: GetFakeTimeBase/GetFakeDecrementer). */
@@ -17,12 +18,14 @@ static struct {
     bool dec_forced; /* escrita que levou o DEC de positivo a negativo */
     bool in_slice;
     const CPUState *slice_cpu; /* para timebase_cycles(NULL) enxergar a fatia em andamento (dispositivos) */
+    u64 guest_last;            /* M8: valor do último mftb do jogo */
 } s_tb;
 
 void timebase_reset(u64 tb) {
     s_tb.cycles = 0;
     s_tb.tb_value = tb;
     s_tb.tb_cycle = 0;
+    s_tb.guest_last = 0; /* o SPR do Dolphin começa em 0 (GDB no entry point: tbl = tbu = 0) */
     s_tb.dec_value = 0xFFFFFFFFU;
     s_tb.dec_cycle = 0;
     s_tb.dec_taken = false;
@@ -122,6 +125,7 @@ u64 timebase_dec_expiry_cycle(void) {
  * no alvo am_ppc ela é renomeada (runtime/CMakeLists.txt) e esta toma o lugar. TBR 268 = TBL, 269 = TBU. */
 u32 ppc_mftb(CPUState *cpu, u16 tbr, u32 cia) {
     const u64 tb = timebase_read(cpu);
+    s_tb.guest_last = tb;
     if (tbr == 268U) {
         return (u32)tb;
     }
@@ -130,4 +134,13 @@ u32 ppc_mftb(CPUState *cpu, u16 tbr, u32 cia) {
     }
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
     return 0;
+}
+
+u64 timebase_guest_last(void) {
+    return s_tb.guest_last;
+}
+
+void timebase_advance(u64 cycles) {
+    AM_ASSERT(!s_tb.in_slice, "timebase_advance dentro de uma fatia");
+    s_tb.cycles += cycles;
 }
