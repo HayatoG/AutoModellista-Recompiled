@@ -2,7 +2,8 @@
 /* Serial Interface como no Dolphin 2609a (Core/HW/SI/SI.cpp, SI_DeviceGCController.cpp, SI_DeviceNull.cpp). A
  * transferência pelo buffer de comunicação termina na hora (RunSIBuffer devolve resposta não nula): TCINT sobe na
  * própria escrita de TSTART. O polling (UpdateDevices) é disparado pelo VI nas meias-linhas agendadas. O controle
- * da porta 1 está conectado e sem entrada: a leitura devolve sempre o estado neutro (entrada de verdade: M7). */
+ * da porta 1 está conectado; o estado (botões, sticks, gatilhos) vem de si_set_pad (roteiro de teste ou teclado/gamepad
+ * da janela, M7). */
 #include "am/si.h"
 
 #include <string.h>
@@ -35,12 +36,20 @@ static struct {
     u32 exi_clock;
     u8 buffer[SI_BUFFER_SIZE];
     u32 pad_mode; /* m_mode do controle (comando direto 0x40 com poll = 0) */
-    u16 pad_buttons;
+    SiPadState pad;
     u64 polls;
 } s_si;
 
+SiPadState si_pad_neutral(void) {
+    return (SiPadState){.stick_x = SI_PAD_STICK_CENTER,
+                        .stick_y = SI_PAD_STICK_CENTER,
+                        .substick_x = SI_PAD_STICK_CENTER,
+                        .substick_y = SI_PAD_STICK_CENTER};
+}
+
 void si_reset(void) {
     memset(&s_si, 0, sizeof(s_si));
+    s_si.pad = si_pad_neutral();
     s_si.poll = 492U << 16; /* SerialInterfaceManager::Init: m_poll.X = 492 */
 }
 
@@ -56,15 +65,40 @@ static void update_interrupts(void) {
                                     ((c & SI_CSR_TCINT) != 0U && (c & SI_CSR_TCINTMSK) != 0U));
 }
 
-/* CSIDevice_GCController::GetData no modo atual: sticks e gatilhos neutros, botões do roteiro de teste. Só o modo 3
- * (o do PADInit) está conferido. */
-static void pad_get_data(u32 *hi, u32 *lo) {
-    if (s_si.pad_mode != 3U && s_si.pad_mode != 0U) {
-        am_fatal("SI: controle no modo %u; só os modos 0 e 3 estão implementados", s_si.pad_mode);
+/* CSIDevice_GCController::GetData + MapPadStatus: botões (com PAD_USE_ORIGIN) e stick principal na palavra alta; a
+ * baixa muda com o modo (analogA/B não existem no controle padrão e ficam 0). */
+void si_pad_encode(const SiPadState *pad, u32 mode, u32 *hi, u32 *lo) {
+    const u32 tl = pad->trigger_l;
+    const u32 tr = pad->trigger_r;
+    const u32 cx = pad->substick_x;
+    const u32 cy = pad->substick_y;
+    *hi = (u32)pad->stick_y | ((u32)pad->stick_x << 8) | ((u32)(pad->buttons | 0x0080U) << 16);
+    switch (mode) {
+    case 0U:
+    case 5U:
+    case 6U:
+    case 7U:
+        *lo = ((tr >> 4) << 8) | ((tl >> 4) << 12) | (cy << 16) | (cx << 24);
+        return;
+    case 1U:
+        *lo = (tr << 8) | (tl << 16) | ((cy >> 4) << 24) | ((cx >> 4) << 28);
+        return;
+    case 2U:
+        *lo = ((tr >> 4) << 16) | ((tl >> 4) << 20) | ((cy >> 4) << 24) | ((cx >> 4) << 28);
+        return;
+    case 3U:
+        *lo = tr | (tl << 8) | (cy << 16) | (cx << 24);
+        return;
+    case 4U:
+        *lo = (cy << 16) | (cx << 24);
+        return;
+    default:
+        am_fatal("SI: controle no modo %u (o Dolphin só conhece 0 a 7)", mode);
     }
-    *hi = SI_PAD_NEUTRAL_HI | ((u32)s_si.pad_buttons << 16); /* MapPadStatus: botões nos bits 16-31 */
-    /* Modo 0: A/B/gatilhos com 4 bits e substick com 8, todos neutros dão o mesmo valor do modo 3. */
-    *lo = SI_PAD_NEUTRAL_LO_MODE3;
+}
+
+static void pad_get_data(u32 *hi, u32 *lo) {
+    si_pad_encode(&s_si.pad, s_si.pad_mode, hi, lo);
 }
 
 /* ISIDevice::RunBuffer: tamanho da resposta, -1 = sem resposta (porta vazia). */
@@ -121,8 +155,8 @@ void si_update_devices(void) {
     update_interrupts();
 }
 
-void si_set_pad_buttons(u16 buttons) {
-    s_si.pad_buttons = buttons;
+void si_set_pad(const SiPadState *pad) {
+    s_si.pad = *pad;
 }
 
 u32 si_poll_x_lines(void) {

@@ -25,6 +25,7 @@
 #include "am/mem.h"
 #include "am/os_link.h"
 #include "am/os_threads.h"
+#include "am/pad_input.h"
 #include "am/pad_script.h"
 #include "am/pi.h"
 #include "am/platform.h"
@@ -55,6 +56,7 @@ static struct {
     u32 rel_count;
     FILE *events;
     PadScript pad;
+    bool live_input;     /* sem --pad-script e com janela: teclado e gamepad (M7) */
     u64 fields_at_frame; /* campos de VI quando o último quadro começou */
     Shot shots[GAME_RUN_SHOT_MAX];
     u32 shot_count;
@@ -195,6 +197,19 @@ static bool capture_frame(CPUState *cpu) {
     return open;
 }
 
+/* Controle do quadro: o roteiro (--pad-script) tem prioridade; sem ele, com janela, o teclado e o gamepad. */
+static void update_pad(void) {
+    SiPadState pad = si_pad_neutral();
+    if (s_run.live_input) {
+        PlatformInput in;
+        platform_input_read(&in);
+        pad_input_map(&in, &pad);
+    } else {
+        pad.buttons = pad_script_buttons(&s_run.pad, s_run.frames);
+    }
+    si_set_pad(&pad);
+}
+
 /* fn_80051034 chamada pelo laço de fn_8004838C = um quadro. Para depois de `frames` quadros completos. */
 static HookAction on_frame(CPUState *cpu, void *user) {
     (void)user;
@@ -207,7 +222,7 @@ static HookAction on_frame(CPUState *cpu, void *user) {
     }
     s_run.frames++;
     s_run.fields_at_frame = vi_field_count();
-    si_set_pad_buttons(pad_script_buttons(&s_run.pad, s_run.frames));
+    update_pad();
     if (!capture_frame(cpu)) {
         s_run.window_closed = true;
         return HOOK_STOP;
@@ -265,6 +280,9 @@ bool game_run_init(const GameRunConfig *config) {
             return false;
         }
         s_run.window = true;
+        s_run.live_input = config->pad_script == NULL;
+        AM_LOG_INFO("controle: %s", s_run.live_input ? "teclado e gamepad da janela (docs/M7_MENUS.md §3)"
+                                                     : "roteiro --pad-script (a janela não lê a entrada)");
     }
     const DiscResult d = disc_open(config->disc_root);
     if (d != DISC_OK) {

@@ -78,7 +78,9 @@ TEST(si_polled_from_vi_with_neutral_pad) {
     EXPECT_EQ(bus_read(0xCC006404U, 4), SI_PAD_NEUTRAL_HI);
     EXPECT_EQ(bus_read(0xCC006438U, 4) & 0x20000000U, 0U);          /* ler IN apaga RDST0 */
     EXPECT_EQ(bus_read(0xCC006438U, 4) & 0x08080808U, 0x00080808U); /* NOREP nas portas vazias */
-    si_set_pad_buttons(SI_PAD_A | SI_PAD_START);
+    SiPadState pad = si_pad_neutral();
+    pad.buttons = SI_PAD_A | SI_PAD_START;
+    si_set_pad(&pad);
     run_cycles(&cpu, 2000000);
     EXPECT_EQ(bus_read(0xCC006404U, 4), SI_PAD_NEUTRAL_HI | ((SI_PAD_A | SI_PAD_START) << 16));
 }
