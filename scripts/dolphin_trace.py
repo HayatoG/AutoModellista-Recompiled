@@ -10,6 +10,13 @@ a função interna Read do DVD que programa o comando 0xA8 no DI, e a entrada do
 por evento no mesmo formato que a runtime grava com --events. `trace --after-main N` continua o trace de chamadas
 depois de main até N eventos.
 
+Entrada (`events --pad-script`): o mesmo roteiro da runtime ("quadro:BOTÃO[+BOTÃO]:duração,...", am/pad_script.h)
+vira linhas PRESS/RELEASE no controle por pipe do Dolphin (Pipes/pad1 no diretório de usuário, ligado à porta 1 em
+Config/GCPadNew.ini). O roteiro é aplicado quando o quadro N começa (breakpoint em fn_80051034), como na runtime; o
+Dolphin lê o pipe na próxima leitura do controle, então o quadro exato pode diferir em 1: compare a sequência de
+eventos, não o número do quadro. `--shots 300,800` grava o XFB (YUV 4:2:2, endereço dado ao VISetNextFrameBuffer)
+desses quadros em PNG, para ver em que tela o jogo está.
+
 Método: o Dolphin (2609a) para no entry point esperando o GDB (Core.cpp: CPUSetInitialExecutionState). Pomos um
 breakpoint de execução em cada início de função conhecido (analysis/call_graph.json, símbolos do dtk) e em cada alvo
 de bl/bcl direto do DOL; a cada parada lemos LR e CTR. O modo debug do Dolphin precisa estar ligado para o JIT
@@ -36,6 +43,7 @@ from am_trace_lib import Dol, direct_call_targets, load_function_names, write_tr
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DOLPHIN = "/Applications/Dolphin.app/Contents/MacOS/Dolphin"
 DEFAULT_USER = "/Volumes/AMRecomp/dolphin-user"
+DEFAULT_USER_PIPE = "/Volumes/AMRecomp/dolphin-user-pipe"  # com --pad-script: GCPadNew.ini aponta para o pipe
 ENTRY = 0x80003154
 MAIN = 0x800719AC
 # Endereços do M5 (runtime/include/am/game.h).
@@ -45,6 +53,26 @@ OS_UNLINK = 0x800C5F08
 DVD_READ = 0x800CDC70  # Read(addr r3, length r4, offset r5, cb r6): escreve DICMDBUF/DIMAR/DILENGTH e DICR
 FRAME = 0x80051034
 FRAME_RETURN = 0x8004839C
+# VISetNextFrameBuffer (0x800D358C) guarda o ponteiro do próximo XFB nesta variável do vi.c, que o VIFlush
+# (0x800D345C) copia para o registro do VI (REA/Ghidra; analysis/known_addresses.md).
+VI_NEXT_FB_VAR = 0x8026E648
+XFB_W, XFB_H = 640, 448
+# Máscaras e nomes do runtime/core/pad_script.c (nomes do controle por pipe do Dolphin).
+PAD_BUTTONS = {"D_LEFT": 0x0001, "D_RIGHT": 0x0002, "D_DOWN": 0x0004, "D_UP": 0x0008, "Z": 0x0010, "A": 0x0100,
+               "B": 0x0200, "X": 0x0400, "Y": 0x0800, "START": 0x1000}
+PAD_GCPAD_INI = """[GCPad1]
+Device = Pipe/0/pad1
+Buttons/A = `Button A`
+Buttons/B = `Button B`
+Buttons/X = `Button X`
+Buttons/Y = `Button Y`
+Buttons/Z = `Button Z`
+Buttons/Start = `Button START`
+D-Pad/Up = `Button D_UP`
+D-Pad/Down = `Button D_DOWN`
+D-Pad/Left = `Button D_LEFT`
+D-Pad/Right = `Button D_RIGHT`
+"""
 
 
 def launch(args) -> subprocess.Popen:
@@ -52,7 +80,7 @@ def launch(args) -> subprocess.Popen:
         args.dolphin,
         "-u", args.user_dir,
         "-b",
-        "-v", "Null",
+        "-v", args.video,
         "-C", f"Dolphin.General.GDBPort={args.port}",
         "-C", "Dolphin.Interface.DebugModeEnabled=True",
         "-C", "Dolphin.Analytics.PermissionAsked=True",
@@ -72,8 +100,17 @@ def launch(args) -> subprocess.Popen:
         "-C", "Dolphin.Core.SIDevice1=0",
         "-C", "Dolphin.Core.SIDevice2=0",
         "-C", "Dolphin.Core.SIDevice3=0",
+        # Sem foco de janela (modo batch) o Dolphin ignora a entrada, a menos que a entrada em segundo plano valha.
+        "-C", "Dolphin.Input.BackgroundInput=True",
         "-e", args.iso,
     ]
+    if args.video != "Null":
+        # O XFB só existe na RAM se as cópias EFB->XFB forem gravadas nela (o padrão é só textura na GPU; o backend
+        # Null nem copia). Necessário para --shots. "-C GFX.Hacks..." não teve efeito no 2609a; o GFX.ini do
+        # diretório de usuário tem.
+        config = Path(args.user_dir) / "Config"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "GFX.ini").write_text("[Hacks]\nXFBToTextureEnable = False\nDeferEFBCopies = False\n")
     log = open(args.dolphin_log, "w") if args.dolphin_log else subprocess.DEVNULL
     # O Dolphin fica no grupo de processos do script: with_timeout.sh mata o grupo inteiro mesmo se o Python morrer
     # com SIGKILL. SIGTERM/SIGINT viram SystemExit para os finally rodarem, e o atexit garante o kill em erro
@@ -155,6 +192,7 @@ def cmd_trace(args) -> int:
     client = None
     events: list[tuple[int, int, int]] = []
     reason = "?"
+    after_main = -1  # eventos depois de main (M5: --after-main)
     t0 = time.monotonic()
     try:
         client = gdb.GdbClient("127.0.0.1", args.port)
@@ -181,9 +219,16 @@ def cmd_trace(args) -> int:
             lr = client.read_reg(gdb.REG_LR)
             ctr = client.read_reg(gdb.REG_CTR)
             events.append((pc, lr, ctr))
+            if after_main >= 0:
+                after_main += 1
+                if after_main >= args.after_main:
+                    reason = "after_main"
+                    break
             if pc == MAIN:
-                reason = "main"
-                break
+                if args.after_main <= 0:
+                    reason = "main"
+                    break
+                after_main = 0
     finally:
         elapsed = time.monotonic() - t0
         stop(proc, client)
@@ -198,7 +243,7 @@ def cmd_trace(args) -> int:
         }
         write_trace(out, header, events)
         print(f"{len(events)} paradas em {elapsed:.1f}s; fim: {reason}; trace: {out}")
-    return 0 if reason == "main" else 1
+    return 0 if reason in ("main", "after_main") else 1
 
 
 def stop_pc(client: gdb.GdbClient, reply: str) -> int:
@@ -209,9 +254,108 @@ def stop_pc(client: gdb.GdbClient, reply: str) -> int:
     return client.read_reg(gdb.REG_PC)
 
 
+def parse_pad_script(text: str) -> list[tuple[int, int, int]]:
+    """Mesma gramática de runtime/core/pad_script.c: (quadro, duração, máscara)."""
+    steps = []
+    for item in filter(None, text.split(",")):
+        frame, names, hold = item.split(":")
+        mask = 0
+        for name in names.split("+"):
+            if name not in PAD_BUTTONS:
+                raise SystemExit(f"botão desconhecido no roteiro: {name}")
+            mask |= PAD_BUTTONS[name]
+        if int(hold) <= 0:
+            raise SystemExit(f"duração inválida no roteiro: {item}")
+        steps.append((int(frame), int(hold), mask))
+    return steps
+
+
+def pad_buttons(steps: list[tuple[int, int, int]], frame: int) -> int:
+    mask = 0
+    for start, hold, m in steps:
+        if start <= frame < start + hold:
+            mask |= m
+    return mask
+
+
+class PadPipe:
+    """Escreve no pipe nomeado que o Dolphin lê como controle (InputCommon/ControllerInterface/Pipes)."""
+
+    def __init__(self, user_dir: str) -> None:
+        pipes = Path(user_dir) / "Pipes"
+        pipes.mkdir(parents=True, exist_ok=True)
+        self.path = pipes / "pad1"
+        if self.path.exists() and not self.path.is_fifo():
+            self.path.unlink()
+        if not self.path.exists():
+            os.mkfifo(self.path)
+        config = Path(user_dir) / "Config"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "GCPadNew.ini").write_text(PAD_GCPAD_INI)
+        self.fd = -1
+        self.state = 0
+
+    def open(self, timeout: float = 60.0) -> None:
+        """O Dolphin abre o pipe para leitura ao iniciar a entrada; antes disso abrir para escrita dá ENXIO."""
+        t0 = time.monotonic()
+        while self.fd < 0:
+            try:
+                self.fd = os.open(self.path, os.O_WRONLY | os.O_NONBLOCK)
+            except OSError:
+                if time.monotonic() - t0 > timeout:
+                    raise
+                time.sleep(0.05)
+
+    def set(self, mask: int) -> None:
+        lines = []
+        for name, bit in PAD_BUTTONS.items():
+            if (mask ^ self.state) & bit:
+                lines.append(f"{'PRESS' if mask & bit else 'RELEASE'} {name}\n")
+        if lines:
+            os.write(self.fd, "".join(lines).encode())
+        self.state = mask
+
+    def close(self) -> None:
+        if self.fd >= 0:
+            os.close(self.fd)
+            self.fd = -1
+
+
+def write_xfb_png(path: Path, data: bytes, width: int, height: int) -> None:
+    """XFB do GameCube: YUYV 4:2:2 (Y0 U Y1 V), BT.601 de faixa limitada."""
+    import zlib
+
+    rows = []
+    for y in range(height):
+        row = bytearray([0])
+        base = y * width * 2
+        for x in range(0, width, 2):
+            y0, u, y1, v = data[base + x * 2: base + x * 2 + 4]
+            for yy in (y0, y1):
+                c = 1.164 * (yy - 16)
+                r = c + 1.596 * (v - 128)
+                g = c - 0.392 * (u - 128) - 0.813 * (v - 128)
+                b = c + 2.017 * (u - 128)
+                row += bytes(max(0, min(255, int(k))) for k in (r, g, b))
+        rows.append(bytes(row))
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (len(payload).to_bytes(4, "big") + kind + payload +
+                zlib.crc32(kind + payload).to_bytes(4, "big"))
+
+    ihdr = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 2, 0, 0, 0])
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(b"".join(rows), 6)) +
+                     chunk(b"IEND", b""))
+
+
 def cmd_events(args) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    steps = parse_pad_script(args.pad_script) if args.pad_script else []
+    shots = {int(f) for f in args.shots.split(",") if f} if args.shots else set()
+    if steps and args.user_dir == DEFAULT_USER:
+        args.user_dir = DEFAULT_USER_PIPE
+    pad = PadPipe(args.user_dir) if steps else None
     proc = launch(args)
     client = None
     lines: list[str] = []
@@ -220,6 +364,8 @@ def cmd_events(args) -> int:
     t0 = time.monotonic()
     try:
         client = gdb.GdbClient("127.0.0.1", args.port)
+        if pad is not None:
+            pad.open()
         for a in (MAIN, OS_LINK, OS_LINK_FIXED, OS_UNLINK, DVD_READ, FRAME):
             client.add_breakpoint(a)
         while True:
@@ -242,8 +388,18 @@ def cmd_events(args) -> int:
                     reason = "frames"
                     break
                 frames += 1
+                if pad is not None:
+                    pad.set(pad_buttons(steps, frames))
+                xfb = int.from_bytes(client.read_mem(VI_NEXT_FB_VAR, 4), "big") if frames in shots else 0
+                if xfb:
+                    shot = Path(f"{out.with_suffix('')}_f{frames}.png")
+                    data = client.read_mem(xfb, XFB_W * XFB_H * 2)
+                    write_xfb_png(shot, data, XFB_W, XFB_H)
+                    print(f"quadro {frames}: XFB 0x{xfb:08X} -> {shot}")
     finally:
         elapsed = time.monotonic() - t0
+        if pad is not None:
+            pad.close()
         stop(proc, client)
         out.write_text(f"# am-events v1 source=dolphin dolphin=2609a frames={frames} end={reason}\n" +
                        "".join(l + "\n" for l in lines))
@@ -260,6 +416,7 @@ def main() -> int:
     ap.add_argument("--cpu-core", type=int, default=4, help="0 Interpreter, 1 JIT64, 4 JITARM64, 5 CachedInterpreter")
     ap.add_argument("--dsp-hle", type=lambda s: s.lower() in ("1", "true", "yes"), default=True)
     ap.add_argument("--dolphin-log", default=None)
+    ap.add_argument("--video", default="Null", help="backend de vídeo do Dolphin (Null; Metal para --shots, que precisa do XFB na RAM)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("boot-state")
     b.add_argument("--out", required=True)
@@ -268,11 +425,14 @@ def main() -> int:
     t.add_argument("--call-graph", default=str(ROOT / "analysis" / "call_graph.json"))
     t.add_argument("--out", required=True)
     t.add_argument("--max-events", type=int, default=200000)
+    t.add_argument("--after-main", type=int, default=0, help="M5: continua N paradas depois de main")
     t.add_argument("--timeout", type=float, default=1800.0)
     e = sub.add_parser("events")
     e.add_argument("--out", required=True)
     e.add_argument("--frames", type=int, default=600)
     e.add_argument("--timeout", type=float, default=1800.0)
+    e.add_argument("--pad-script", default=None, help="roteiro de botões (formato de am/pad_script.h)")
+    e.add_argument("--shots", default=None, help="quadros cujo XFB vira PNG ao lado de --out (ex.: 300,800)")
     args = ap.parse_args()
     if args.cmd == "events":
         return cmd_events(args)

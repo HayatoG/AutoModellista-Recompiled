@@ -76,6 +76,9 @@ def main() -> int:
     ap.add_argument("--all-calls", action="store_true", help="não filtra por trecho (mostra o que a runtime não vê)")
     ap.add_argument("--context", type=int, default=6)
     ap.add_argument("--summary-json", default=None)
+    ap.add_argument("--prefix", action="store_true",
+                    help="M5: o trace do Dolphin vai até N eventos depois de main; compara só esse prefixo do da "
+                         "runtime e não exige que terminem em main")
     args = ap.parse_args()
 
     dol = Dol(Path(args.dol))
@@ -89,6 +92,10 @@ def main() -> int:
     rt = read_trace(Path(args.runtime))
     d_calls, _, d = normalize(dt.events, dol.read32, allowed, chunks)
     r_calls, r_out, r = normalize(rt.events, dol.read32, allowed, chunks)
+    if args.prefix:
+        # O último evento do Dolphin pode ser uma repetição cortada no meio: compara até o penúltimo.
+        d = d[:-1]
+        r = r[:len(d)]
     if chunks is not None:
         print(f"filtro: chamadas entre trechos diferentes ({len(chunks)} trechos no C gerado)")
 
@@ -140,6 +147,8 @@ def main() -> int:
             print(f"{mark} {'':5s} R: {rl}")
     if args.summary_json:
         Path(args.summary_json).write_text(json.dumps(summary, indent=1) + "\n")
+    if args.prefix:
+        return 0 if first is None else 1
     return 0 if first is None and d_main and r_main else 1
 
 

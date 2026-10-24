@@ -33,8 +33,9 @@ Derivados de `analysis/call_graph.json` (chamadas diretas) e de cargas de consta
 | 9 | fn_80048BD8 | laço chamado por main | 1216 bytes, 17 chamadas |
 | 10 | main | boot | dtk |
 | 11 | fn_800D276C | VIWaitForRetrace | OSDisableInterrupts + laço com fn_800C89FC + OSRestoreInterrupts |
-| 12 | fn_800D345C | VISetNextFrameBuffer | chamada no fim de cada frame, módulo vi.c |
-| 13 | fn_800D35F8 | VISetBlack (revisado) | chamada com 1 antes de VIFlush no encerramento |
+| 12 | fn_800D345C | VIFlush (revisado no M5) | junta as máscaras de registradores pendentes do VI; sem argumento (REA/Ghidra) |
+| 13 | fn_800D35F8 | VISetBlack (revisado) | chamada com 1 antes de VIFlush no encerramento; no Dolphin r3 = 1 |
+| 13a | fn_800D358C | VISetNextFrameBuffer (M5) | guarda o XFB em 0x8026E648 (o VIFlush copia); chamada por fn_8004FAA8/fn_8004FBA8 (REA/Ghidra) |
 | 14 | fn_800D2C34 | VIConfigure | 2 KB, módulo vi.c |
 
 Funções que carregam a constante deg→rad (`0.017453292`) — candidatas a câmera/física de rotação:
