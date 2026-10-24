@@ -219,9 +219,24 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** três cartões de logo (Claude, OpenAI, OpenCode) entram como jogadores escalados; cada um puxa uma linha até sua tarefa num quadro. Em volta de cada tarefa, uma “caixa” de vidro se fecha (o isolamento). No erro do Codex, a caixa dele pisca em vermelho, um bilhete “faltou o caminho” cola na tela e some; o contador de testes sobe de 0 a 38 três vezes. Fecha com os três logs rolando juntos em tela dividida.
 
-### 4.8 Quanto custou até aqui (tokens e tempo)
+### 4.8 M6: o primeiro quadro
 
-**Fala:** “E quanto de IA foi isso? Até agora, uns 463 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 2,4 milhões de tokens, algo como uns 20 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, e o maior consumo até aqui foi o M5, o sistema operacional e o disco: três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos.”
+**Fala:** “Até aqui o jogo rodava às cegas. No M6 a runtime aprendeu a desenhar. O GameCube não tem uma placa de vídeo como a do PC: o jogo manda uma fila de comandos pro chip gráfico, com vértices, texturas e receitas de como misturar as cores. O plano era traduzir isso direto pra GPU do Mac. Mas o agente fez outra escolha, e eu concordei: primeiro desenhar tudo na CPU, copiando a lógica do modo software do Dolphin. O motivo é o gabarito. O jogo desenha numa memória de imagem e depois copia o quadro pronto pra RAM, do jeito que o console faz. Se a runtime fizer igual, a imagem dela e a do Dolphin são o mesmo dado, e dá pra comparar pixel a pixel. E deu: no quadro 1.250, o logo da Capcom. Nenhum pixel com diferença visível; o que muda fica só no contorno das letras. Saiu certo na primeira execução completa. Teve dois detalhes de bastidor. O mesmo código C desenhava um pouco diferente no Mac M e no PC x86, porque o compilador junta uma multiplicação e uma soma numa instrução só onde pode, e isso muda o arredondamento; desligando essa fusão, os dois ficaram idênticos. E a cópia da imagem pra RAM tinha que seguir o shader do Dolphin de hardware, não o do modo software, porque é o de hardware que o gabarito roda. O preço: desenhar na CPU é umas dez vezes mais lento. O caminho até a largada em Suzuka, que levava um minuto, agora leva nove e meio. Mas o jogo não sente: os 551 eventos de disco e de módulo continuam idênticos aos do Dolphin.”
+
+**Na tela:**
+
+- Lado a lado: a captura da runtime e a do Dolphin no quadro 1250, o logo da Capcom nas duas.
+- A saída real do `verify_m6.sh`: `PSNR 46.37 dB, erro médio 0.213, máximo 25, pixels com diferença > 24: 0.0%`, o mesmo para x86\_64, a janela contra a captura com `99.0 dB`, e o `== OK`.
+- O mapa de diferença do quadro 1250: tela preta com só o contorno das letras aceso.
+- Um diagrama do caminho da imagem: fila de comandos → vértices → texturas → mistura de cores (TEV) → memória de imagem (EFB) → cópia para a RAM (XFB) → janela.
+- A largada em Suzuka desenhada pela runtime ao lado do Dolphin, com o visual de cel-shading, e a legenda “câmera em outra posição: tempo de jogo, não desenho”.
+- Os tempos: 1.260 quadros em 29 s no arm64 e \~55 s no x86\_64; a rota até a largada em 9 min 31 s com desenho, contra 57 s sem.
+
+**Motion:** a fila de comandos entra como uma esteira de cartões pela esquerda; cada estação do diagrama acende quando o cartão passa, e no fim a janela “revela” o logo de cima para baixo, como se a cópia para o XFB fosse escrevendo as linhas. Depois, a captura do Dolphin desliza por cima da da runtime com opacidade em 50%: as letras se sobrepõem sem fantasma, e o número “46,37 dB” sobe ao lado. Na parte do FMA, duas cópias do logo (arm64 e x86) piscam um pixel diferente em vermelho até a chave “sem fusão” ser desligada e o vermelho sumir. Fecha com um relógio de 57 s esticando até 9 min 31 s, enquanto o contador “551 eventos = 551” fica parado e verde.
+
+### 4.9 Quanto custou até aqui (tokens e tempo)
+
+**Fala:** “E quanto de IA foi isso? Até agora, uns 525 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 2,7 milhões de tokens, algo como uns 22 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, e o maior consumo até aqui foi o M5, o sistema operacional e o disco: três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. E o primeiro quadro na tela, o M6, levou 54 minutos de IA.”
 
 **Na tela:**
 
@@ -236,24 +251,27 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M5 OS e disco (parte 3, até a largada) | Opus | 28 min | 98 mil | 21,4 M |
 | Builds x86\_64/Debug | Codex (GPT-6 Luna) | 12 min | 15 mil | 5,5 M |
 | Matching do decomp (6 funções) | opencode (DeepSeek V4.1 Flash) | 20 min | 30 mil | 4,9 M |
-| Sessão principal | Opus | 10h+ | 275 mil | 59,3 M |
+| M6 primeiro quadro | Opus | 54 min | 249 mil | 54,8 M |
+| Sessão principal | Opus | 11h+ | 310 mil | 66,3 M |
 
-**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “463 M processados · 2,4 M escritos”. Atualizar os números na edição final.
+**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “525 M processados · 2,7 M escritos”. Atualizar os números na edição final.
 
 ## Cap. 5 — Onde estamos e o que vem
 
-**Fala:** “Hoje o Auto Modellista liga no meu computador sem emulador, inicializa o sistema, lê o disco, atravessa os menus e larga numa corrida. Só que tela, ainda nada: tudo isso aconteceu às cegas, guiado por um roteiro de botões; o próximo passo é ensinar a runtime a desenhar, traduzindo o chip gráfico do GameCube pra Metal, Vulkan e DirectX. É a parte mais difícil, porque o visual de desenho animado do jogo depende de truques de hardware. Quando o logo da Capcom aparecer pela primeira vez na janela, sai o próximo vídeo. Se você quer ver isso, já sabe.”
+**Fala:** “Hoje o Auto Modellista liga no meu computador sem emulador, inicializa o sistema, lê o disco, atravessa os menus, larga numa corrida e desenha tudo isso numa janela, igual ao Dolphin. Ainda não dá pra jogar: o controle ainda vem de um roteiro, não tem som, e o desenho é feito na CPU, devagar. O próximo passo é o M7: menus jogáveis com o controle de verdade, áudio e os vídeos da abertura. E aí tem a pergunta que mais me interessa: como o jogo faz aquele contorno preto de desenho animado. Até a largada, ele não usa os truques de imagem que eu temia; a pista é que ele desenha o carro duas vezes, uma um pouco maior e de costas. Quando der pra pegar o controle e dar uma volta, sai o próximo vídeo. Se você quer ver isso, já sabe.”
 
 **Na tela:**
 
-- Timeline dos marcos M3 a M10 com os concluídos marcados e o M6 piscando como “próximo”.
-- Lado a lado: janela preta da runtime x abertura no Dolphin, com a legenda “por enquanto”.
+- Timeline dos marcos M3 a M10 com M3–M6 concluídos e o M7 piscando como “próximo”.
+- Lado a lado: a largada em Suzuka na runtime e no Dolphin.
+- Os números do estudo do cel-shading: 0 cópias para textura, neblina em 92% dos desenhos, 1,6 milhão de triângulos descartados pela face, com a legenda “hipótese, a confirmar”.
 - Encerramento com o mosaico de carros e o nome do canal.
 
 **Motion:**
 
-- Timeline horizontal desenhando da esquerda para a direita; os marcos concluídos ganham um check verde ao passar; no M6 a linha para e um cursor pisca.
-- Na frase “quando o logo aparecer”: a janela preta acende num flash branco curto e corta para o card “próximo vídeo”.
+- Timeline horizontal desenhando da esquerda para a direita; os marcos concluídos ganham um check verde ao passar; no M7 a linha para e um cursor pisca.
+- Na frase do contorno: um carro em wireframe ganha uma cópia levemente inflada atrás de si, que vira o traço preto.
+- Na frase “quando der pra pegar o controle”: um controle de GameCube acende e corta para o card “próximo vídeo”.
 - Card final com o handle do canal e um botão de inscrição animado discreto.
 
 ## Registro de atualizações
@@ -264,3 +282,4 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | 23/10/2026 (tarde) | 4.6 o SSD que sumiu duas vezes (causa provável `disksleep`, correções); 3.4 Ghidra e 3.5 REA deixam de ser “a gravar”: primeiro uso real do REA no M5 (pré-carregador na ARAM, ligador, trocas de módulo, endereço de VI corrigido); 4.7 três IAs de três empresas em paralelo (Codex nas builds, opencode no decomp, isolamento); 4.8 tokens com M5 parte 2, Codex e opencode |
 | 23/10/2026 (noite) | 4.6 terceira queda do SSD com `disksleep 0` (hipótese do repouso de disco descartada; suspeita no USB), reinício e retomada pelo `RETOMAR.md`; 3.5 caminho real pelos menus até a seleção de pista |
 | 23/10/2026 (M5 concluído) | 4.5 vira “do disco à largada” (roteiro de botões, tempo do DVD, relógio fixo, bug do endereço real; saída do `verify_m5.sh`); 3.5 resto do caminho até a largada; 4.6 remontagem automática e o log do kernel; 4.7 resultado do opencode conferido; 4.8 tokens com o M5 completo; Cap. 5 atualizado |
+| 24/10/2026 (M6 concluído) | 4.8 nova: “M6: o primeiro quadro” (GX em software, logo da Capcom igual ao Dolphin, FMA entre arquiteturas, shader da cópia para o XFB, custo de desenhar); a cena de tokens vira 4.9, com o M6 e a sessão principal atualizados; Cap. 5 reescrito (M6 feito, M7 próximo, pista do contorno do cel-shading) |
