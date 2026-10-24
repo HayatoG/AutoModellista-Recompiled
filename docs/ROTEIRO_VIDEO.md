@@ -236,7 +236,7 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 ### 4.9 Quanto custou até aqui (tokens e tempo)
 
-**Fala:** “E quanto de IA foi isso? Até agora, uns 525 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 2,7 milhões de tokens, algo como uns 22 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, e o maior consumo até aqui foi o M5, o sistema operacional e o disco: três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. E o primeiro quadro na tela, o M6, levou 54 minutos de IA.”
+**Fala:** “E quanto de IA foi isso? Até agora, uns 525 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 2,7 milhões de tokens, algo como uns 22 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, e o maior consumo até aqui foi o M5, o sistema operacional e o disco: três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. E o primeiro quadro na tela, o M6, levou 54 minutos de IA. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48. No relógio da parede foram dois dias, com noite de sono no meio.”
 
 **Na tela:**
 
@@ -254,7 +254,17 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M6 primeiro quadro | Opus | 54 min | 249 mil | 54,8 M |
 | Sessão principal | Opus | 11h+ | 310 mil | 66,3 M |
 
-**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “525 M processados · 2,7 M escritos”. Atualizar os números na edição final.
+Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
+
+| Marco | Trabalho acumulado | Calendário |
+| --- | --- | --- |
+| M0–M2 ferramentas e recompilação | 4h34 | 24h55 |
+| M3 esqueleto | 5h23 | 34h50 |
+| M4 boot | 7h07 | 36h34 |
+| M5 menus até a largada | 10h43 | 45h52 |
+| M6 primeiro quadro | 11h48 | 47h17 |
+
+**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “525 M processados · 2,7 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”); embaixo, uma régua mais longa e cinza mostra o calendário (47h17), com faixas de noite escurecidas. Atualizar os números na edição final.
 
 ## Cap. 5 — Onde estamos e o que vem
 
@@ -283,3 +293,4 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | 23/10/2026 (noite) | 4.6 terceira queda do SSD com `disksleep 0` (hipótese do repouso de disco descartada; suspeita no USB), reinício e retomada pelo `RETOMAR.md`; 3.5 caminho real pelos menus até a seleção de pista |
 | 23/10/2026 (M5 concluído) | 4.5 vira “do disco à largada” (roteiro de botões, tempo do DVD, relógio fixo, bug do endereço real; saída do `verify_m5.sh`); 3.5 resto do caminho até a largada; 4.6 remontagem automática e o log do kernel; 4.7 resultado do opencode conferido; 4.8 tokens com o M5 completo; Cap. 5 atualizado |
 | 24/10/2026 (M6 concluído) | 4.8 nova: “M6: o primeiro quadro” (GX em software, logo da Capcom igual ao Dolphin, FMA entre arquiteturas, shader da cópia para o XFB, custo de desenhar); a cena de tokens vira 4.9, com o M6 e a sessão principal atualizados; Cap. 5 reescrito (M6 feito, M7 próximo, pista do contorno do cel-shading) |
+| 24/10/2026 (tempo acumulado) | 4.9 ganha o tempo de desenvolvimento até cada marco (trabalho de IA e calendário, `scripts/tempo_dev.py`), na fala, na tela e no motion |

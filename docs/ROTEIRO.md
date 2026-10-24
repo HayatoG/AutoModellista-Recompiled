@@ -115,6 +115,21 @@ Até 24/10 à 01:20 (horário de Brasília), o projeto processou cerca de 525 mi
 - Codex e opencode não aparecem no `/usage` do Claude: os números vêm do log JSON de cada CLI (`/Volumes/AMRecomp/logs/paralelos/`); não consomem a cota do Claude.
 - Fonte: `scripts/usage_report.py` sobre os registros em `~/.claude/projects/`; o comando `/usage` do Claude Code mostra o consumo da conta.
 
+### Tempo de desenvolvimento até cada marco
+
+Do primeiro registro (22/10, 01:58) até cada marco. **Calendário** é o relógio corrido, com sono e pausas. **Trabalho** soma só os trechos em que alguma IA estava respondendo: uma pausa de mais de 15 min entre respostas não conta, e IAs em paralelo contam uma vez só.
+
+| Marco | Concluído em | Calendário | Trabalho |
+| --- | --- | --- | --- |
+| M0–M2 ferramentas, ISO, recompilação | 23/10 02:54 | 24h55 | 4h34 |
+| M3 esqueleto | 23/10 12:49 | 34h50 | 5h23 |
+| M4 boot até `main` | 23/10 14:33 | 36h34 | 7h07 |
+| M5 OS e disco | 23/10 23:51 | 45h52 | 10h43 |
+| M6 primeiro quadro | 24/10 01:16 | 47h17 | 11h48 |
+
+- Fonte: `scripts/tempo_dev.py` sobre os registros do Claude Code (port, decomp e agentes do decomp). Com limite de 10 min, o M6 fica em 10h21; com 30 min, em 13h24.
+- Não entram o Codex e o opencode (rodaram em paralelo com o Claude, então não mudariam o total) nem o tempo do usuário fora das sessões.
+
 ## Problemas e lições
 
 O problema mais caro não foi técnico do jogo: foi um log sem limite que encheu o disco do Mac.
