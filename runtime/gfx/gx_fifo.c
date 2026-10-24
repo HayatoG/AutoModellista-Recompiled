@@ -107,11 +107,9 @@ static void load_bp(u32 value) {
         if (s_gx.render && !(s_gx.skip && gx_efb_copy_is_xfb())) {
             gx_raster_flush(); /* a cópia lê o EFB: nenhum triângulo pode ficar para trás */
             if (gx_gpu_active()) {
-                gx_gpu_sync(); /* M8: o EFB da GPU vem para a CPU, que faz a cópia */
-            }
-            gx_efb_copy();
-            if (gx_gpu_active() && gx_efb_copy_clears()) {
-                gx_gpu_efb_changed();
+                gx_gpu_copy(); /* M8: o EFB da GPU vem para a CPU, que faz a cópia; a limpeza fica na GPU */
+            } else {
+                gx_efb_copy();
             }
         }
         return;

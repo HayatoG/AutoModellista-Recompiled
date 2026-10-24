@@ -97,5 +97,7 @@ void gx_bp_tev_konst(u32 n, s16 *rgba);
 
 /* Bytes da TMEM a partir de `offset` (TLUTs e texturas pré-carregadas); NULL se passar do fim. */
 const u8 *gx_bp_tmem(u32 offset, u32 size);
+/* M8: quantas cargas na TMEM (TLUT e pré-carga) já houve; muda a cada uma. */
+u64 gx_bp_tmem_writes(void);
 
 #endif /* AM_GX_BP_H */

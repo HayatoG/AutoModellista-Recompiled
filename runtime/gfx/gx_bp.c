@@ -15,6 +15,7 @@ static struct {
     s16 tev_color[4][4];
     s16 tev_konst[4][4];
     u8 tmem[GX_TMEM_SIZE];
+    u64 tmem_writes; /* M8: conta as cargas na TMEM (o cache de texturas só refaz o hash da TLUT quando muda) */
 } s_bp;
 
 void gx_bp_reset(void) {
@@ -64,7 +65,12 @@ static void tev_color_write(u8 reg, u32 v) {
 }
 
 /* O que passar do fim da TMEM é descartado. */
+u64 gx_bp_tmem_writes(void) {
+    return s_bp.tmem_writes;
+}
+
 static void copy_to_tmem(u32 tmem_offset, u32 src, u32 size) {
+    s_bp.tmem_writes++;
     if (tmem_offset >= GX_TMEM_SIZE) {
         return;
     }

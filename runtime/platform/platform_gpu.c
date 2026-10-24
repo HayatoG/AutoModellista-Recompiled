@@ -22,6 +22,8 @@ static struct {
     SDL_GPUTransferBuffer *upload;
     u32 upload_cap;
     SDL_GPUTransferBuffer *download;
+    u64 wait_ns; /* tempo esperando a GPU nas leituras do EFB */
+    u64 readbacks;
     char name[128];
     char error[256];
 } s_gpu;
@@ -114,6 +116,11 @@ const char *platform_gpu_name(void) {
     return s_gpu.name;
 }
 
+u64 platform_gpu_wait_us(u64 *readbacks) {
+    *readbacks = s_gpu.readbacks;
+    return s_gpu.wait_ns / 1000U;
+}
+
 static bool ensure_upload(u32 bytes) {
     if (bytes <= s_gpu.upload_cap) {
         return true;
@@ -184,7 +191,7 @@ static bool upload(SDL_GPUCommandBuffer *cmd, const GpuBatch *b) {
     if (vbytes != 0U) {
         const SDL_GPUTransferBufferLocation src = {.transfer_buffer = s_gpu.upload, .offset = 0};
         const SDL_GPUBufferRegion dst = {.buffer = s_gpu.vertices, .offset = 0, .size = vbytes};
-        SDL_UploadToGPUBuffer(copy, &src, &dst, false);
+        SDL_UploadToGPUBuffer(copy, &src, &dst, true); /* o lote anterior pode estar lendo: troca de buffer */
     }
     at = vbytes;
     for (u32 i = 0; i < b->upload_count; i++) {
@@ -245,14 +252,20 @@ bool platform_gpu_run(const GpuBatch *b) {
         return false;
     }
     render(cmd, b);
+    if (b->efb_color_out == NULL) { /* lote parcial: a GPU desenha enquanto a CPU segue */
+        return SDL_SubmitGPUCommandBuffer(cmd) || fail("SDL_SubmitGPUCommandBuffer");
+    }
+    const u32 top = b->readback_top;
+    const u32 rows = b->readback_bottom > top ? b->readback_bottom - top : 0U;
+    const u32 bytes = rows * GPU_EFB_WIDTH * 4U;
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
-    for (u32 k = 0; k < 2U; k++) {
+    for (u32 k = 0; k < (b->efb_depth_out != NULL ? 2U : 1U) && rows != 0U; k++) {
         const SDL_GPUTextureRegion src = {
-            .texture = k == 0U ? s_gpu.efb_color : s_gpu.efb_depth, .w = GPU_EFB_WIDTH, .h = GPU_EFB_HEIGHT, .d = 1};
+            .texture = k == 0U ? s_gpu.efb_color : s_gpu.efb_depth, .y = top, .w = GPU_EFB_WIDTH, .h = rows, .d = 1};
         const SDL_GPUTextureTransferInfo dst = {.transfer_buffer = s_gpu.download,
                                                 .offset = k * EFB_BYTES,
                                                 .pixels_per_row = GPU_EFB_WIDTH,
-                                                .rows_per_layer = GPU_EFB_HEIGHT};
+                                                .rows_per_layer = rows};
         SDL_DownloadFromGPUTexture(copy, &src, &dst);
     }
     SDL_EndGPUCopyPass(copy);
@@ -260,7 +273,10 @@ bool platform_gpu_run(const GpuBatch *b) {
     if (fence == NULL) {
         return fail("SDL_SubmitGPUCommandBufferAndAcquireFence");
     }
+    const u64 t0 = SDL_GetTicksNS();
     const bool ok = SDL_WaitForGPUFences(s_gpu.device, true, &fence, 1);
+    s_gpu.wait_ns += SDL_GetTicksNS() - t0;
+    s_gpu.readbacks++;
     SDL_ReleaseGPUFence(s_gpu.device, fence);
     if (!ok) {
         return fail("SDL_WaitForGPUFences");
@@ -269,8 +285,11 @@ bool platform_gpu_run(const GpuBatch *b) {
     if (map == NULL) {
         return fail("SDL_MapGPUTransferBuffer (leitura)");
     }
-    memcpy(b->efb_color_out, map, EFB_BYTES);
-    memcpy(b->efb_depth_out, map + EFB_BYTES, EFB_BYTES);
+    const size_t at = (size_t)top * GPU_EFB_WIDTH;
+    memcpy(b->efb_color_out + at, map, bytes);
+    if (b->efb_depth_out != NULL) {
+        memcpy(b->efb_depth_out + at, map + EFB_BYTES, bytes);
+    }
     SDL_UnmapGPUTransferBuffer(s_gpu.device, s_gpu.download);
     return true;
 }

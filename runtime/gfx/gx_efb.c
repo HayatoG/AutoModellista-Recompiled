@@ -607,6 +607,41 @@ bool gx_efb_copy_is_xfb(void) {
 }
 
 void gx_efb_copy(void) {
+    gx_efb_copy_ex(true);
+}
+
+bool gx_efb_copy_rows(u32 *top, u32 *bottom, bool *depth) {
+    const u32 copy = gx_bp_reg(GX_BP_COPY_EXECUTE);
+    CopyParams p = copy_params(copy);
+    if (p.left >= GX_EFB_WIDTH || p.top >= GX_EFB_HEIGHT) {
+        return false;
+    }
+    /* O filtro vertical lê uma linha acima e uma abaixo. */
+    *top = p.top > 0U ? p.top - 1U : 0U;
+    *bottom = p.bottom + 1U < GX_EFB_HEIGHT ? p.bottom + 1U : GX_EFB_HEIGHT;
+    *depth = p.depth;
+    return true;
+}
+
+bool gx_efb_clear_params(GxEfbClear *c) {
+    const CopyParams p = copy_params(gx_bp_reg(GX_BP_COPY_EXECUTE));
+    const u32 ar = gx_bp_reg(GX_BP_CLEAR_AR);
+    const u32 gb = gx_bp_reg(GX_BP_CLEAR_GB);
+    const u32 mode = gx_bp_reg(GX_BP_BLENDMODE);
+    *c = (GxEfbClear){.left = p.left,
+                      .top = p.top,
+                      .right = p.right < GX_EFB_WIDTH ? p.right : GX_EFB_WIDTH,
+                      .bottom = p.bottom < GX_EFB_HEIGHT ? p.bottom : GX_EFB_HEIGHT,
+                      .rgba = {(u8)ar, (u8)(gb >> 8), (u8)gb, (u8)(ar >> 8)},
+                      .z = gx_bp_reg(GX_BP_CLEAR_Z) & 0xFFFFFFU,
+                      .color = ((mode >> 3) & 1U) != 0U,
+                      .alpha = ((mode >> 4) & 1U) != 0U,
+                      .z_update = ((gx_bp_reg(GX_BP_ZMODE) >> 4) & 1U) != 0U,
+                      .format = pixel_format()};
+    return c->left < c->right && c->top < c->bottom;
+}
+
+void gx_efb_copy_ex(bool do_clear) {
     const u32 copy = gx_bp_reg(GX_BP_COPY_EXECUTE);
     CopyParams p = copy_params(copy);
     if (p.right > GX_EFB_WIDTH || p.bottom > GX_EFB_HEIGHT) { /* BPStructs.cpp: cópia maior que o EFB */
@@ -626,7 +661,7 @@ void gx_efb_copy(void) {
             copy_to_texture(&p, copy, dest, stride);
         }
     }
-    if ((copy & COPY_CLEAR) != 0U) {
+    if (do_clear && (copy & COPY_CLEAR) != 0U) {
         clear(&p);
     }
 }

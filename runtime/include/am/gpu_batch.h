@@ -69,9 +69,15 @@ typedef struct GpuBatch {
     /* Se não NULL, o EFB da GPU é substituído por estes antes de desenhar (a CPU limpou ou mudou o EFB). */
     const u32 *efb_color_in;
     const u32 *efb_depth_in;
-    /* Destino da leitura do EFB depois dos desenhos (GPU_EFB_WIDTH * GPU_EFB_HEIGHT cada). */
+    /* Destino da leitura do EFB depois dos desenhos (GPU_EFB_WIDTH * GPU_EFB_HEIGHT cada). NULL = lote parcial:
+     * enviado sem esperar a GPU (os desenhos continuam no lote seguinte, na mesma ordem). */
     u32 *efb_color_out;
-    u32 *efb_depth_out;
+    u32 *efb_depth_out; /* NULL = sem ler o Z (a cópia é de cor) */
+    u32 readback_top;   /* linhas [readback_top, readback_bottom) */
+    u32 readback_bottom;
 } GpuBatch;
+
+/* GpuDrawUniforms.flags */
+#define GPU_FLAG_CLEAR 1U /* limpeza do EFB: cor em regs[0..3], Z em ztex_bias, máscaras em blend/zmode */
 
 #endif /* AM_GPU_BATCH_H */

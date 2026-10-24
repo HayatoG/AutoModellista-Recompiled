@@ -380,7 +380,11 @@ static void sample_mip(const TexUnit *u, s32 s, s32 t, u32 mip, bool linear, u8 
  * uma vez e reaproveitado enquanto a memória dele não for escrita (contadores por página de am/mem.h) e a TLUT for a
  * mesma (hash do conteúdo). Os texels são os mesmos de gx_tex_decode_texel, então a imagem não muda. Texturas na TMEM
  * (pré-carregadas) e grandes demais ficam fora. */
-#define TEX_CACHE_ENTRIES    96U
+/* M8: 1024 entradas com índice por endereço (a corrida usa mais texturas que as 96 do M7 e decodificava de novo a
+ * cada quadro) e um teto de memória decodificada. */
+#define TEX_CACHE_ENTRIES    1024U
+#define TEX_CACHE_BUCKETS    2048U
+#define TEX_CACHE_MAX_BYTES  (384U * 1024U * 1024U)
 #define TEX_CACHE_MAX_TEXELS (1024U * 1024U)
 
 typedef struct TexCacheEntry {
@@ -396,15 +400,32 @@ typedef struct TexCacheEntry {
     u64 written;
     u64 last_use;
     u64 serial;
+    u64 content; /* hash dos bytes da textura (e da TLUT) quando decodificada */
     u32 texels;
+    u32 bucket;
+    u16 next; /* próxima entrada do mesmo balde (índice + 1; 0 = fim) */
     u8 *rgba;
     u32 offset[GX_TEX_CACHE_LEVELS];
 } TexCacheEntry;
 
+#define TLUT_MEMO 8U
+typedef struct TlutMemo {
+    u64 gen;
+    const u8 *ptr;
+    u32 size;
+    u64 hash;
+} TlutMemo;
+
 static struct {
     TexUnit units[GX_TEXMAP_MAX];
+    TlutMemo tlut_memo[TLUT_MEMO];
+    u32 tlut_next;
     TexCacheEntry cache[TEX_CACHE_ENTRIES];
+    u16 heads[TEX_CACHE_BUCKETS];
+    u32 count;
+    u64 bytes;
     u64 clock;
+    u64 prepare_clock; /* relógio no início do gx_tex_prepare: o que o desenho atual usa não sai do cache */
     u64 serial;
     bool cache_on;
     GxTexCacheStats stats;
@@ -433,10 +454,19 @@ const GxTexCacheStats *gx_tex_cache_stats(void) {
     return &s_tex.stats;
 }
 
-static u64 fnv(const u8 *p, u32 size) {
-    u64 h = 1469598103934665603ULL;
-    for (u32 i = 0; i < size; i++) {
-        h = (h ^ (p != NULL ? p[i] : 0U)) * 1099511628211ULL;
+/* M8: hash rápido de 8 em 8 bytes (o contador de escritas é por página de 4 KiB: dados vizinhos escritos invalidam a
+ * textura sem mudá-la; o hash confirma antes de decodificar de novo). */
+static u64 hash_bytes(const u8 *p, u32 size) {
+    u64 h = 0x9E3779B97F4A7C15ULL ^ size;
+    u32 i = 0;
+    for (; i + 8U <= size; i += 8U) {
+        u64 v;
+        memcpy(&v, p + i, sizeof(v));
+        h = (h ^ v) * 0xFF51AFD7ED558CCDULL;
+        h ^= h >> 32;
+    }
+    for (; i < size; i++) {
+        h = (h ^ p[i]) * 0x100000001B3ULL;
     }
     return h;
 }
@@ -463,6 +493,7 @@ static bool cache_fill(TexCacheEntry *e, const TexUnit *u) {
     if (buf == NULL) {
         return false;
     }
+    s_tex.bytes = s_tex.bytes - ((u64)e->texels * 4U) + total;
     e->rgba = buf;
     e->serial = ++s_tex.serial;
     e->texels = total / 4U;
@@ -502,6 +533,82 @@ static u32 levels_needed(u32 texmap, const TexUnit *u) {
     return n > GX_TEX_CACHE_LEVELS ? GX_TEX_CACHE_LEVELS : n;
 }
 
+static u32 bucket_of(u32 addr) {
+    return ((addr >> 5) * 2654435761U) >> 21; /* 11 bits: TEX_CACHE_BUCKETS */
+}
+
+/* Tira a entrada do balde dela (se estiver em algum). */
+static void cache_unlink(TexCacheEntry *e) {
+    const u16 me = (u16)((e - s_tex.cache) + 1);
+    for (u16 *link = &s_tex.heads[e->bucket]; *link != 0U; link = &s_tex.cache[*link - 1U].next) {
+        if (*link == me) {
+            *link = e->next;
+            e->next = 0;
+            return;
+        }
+    }
+}
+
+/* Uma entrada livre, senão a usada há mais tempo. */
+static TexCacheEntry *cache_victim(void) {
+    if (s_tex.count < TEX_CACHE_ENTRIES) {
+        TexCacheEntry *e = &s_tex.cache[s_tex.count++];
+        e->bucket = 0;
+        e->next = 0;
+        cache_unlink(e);
+        return e;
+    }
+    TexCacheEntry *victim = &s_tex.cache[0];
+    for (u32 i = 0; i < TEX_CACHE_ENTRIES; i++) {
+        TexCacheEntry *e = &s_tex.cache[i];
+        if (!e->used) {
+            return e;
+        }
+        if (e->last_use < victim->last_use) {
+            victim = e;
+        }
+    }
+    return victim;
+}
+
+/* Acima do teto de memória, libera as usadas há mais tempo (menos a que acabou de entrar). */
+static void cache_trim(const TexCacheEntry *keep) {
+    while (s_tex.bytes > TEX_CACHE_MAX_BYTES) {
+        TexCacheEntry *lru = NULL;
+        for (u32 i = 0; i < s_tex.count; i++) {
+            TexCacheEntry *e = &s_tex.cache[i];
+            if (e->used && e != keep && e->rgba != NULL && e->last_use < s_tex.prepare_clock &&
+                (lru == NULL || e->last_use < lru->last_use)) {
+                lru = e;
+            }
+        }
+        if (lru == NULL) {
+            return;
+        }
+        free(lru->rgba);
+        lru->rgba = NULL;
+        s_tex.bytes -= (u64)lru->texels * 4U;
+        lru->texels = 0;
+        lru->used = false;
+    }
+}
+
+/* Hash da TLUT, memorizado por (posição, tamanho) enquanto a TMEM não recebe carga nova: o menu e a corrida desenham
+ * centenas de vezes por quadro com a mesma paleta. */
+static u64 tlut_hash_of(const TexUnit *u) {
+    const u32 size = u->src.tlut_size < tlut_bytes(u->format) ? u->src.tlut_size : tlut_bytes(u->format);
+    const u64 gen = gx_bp_tmem_writes();
+    for (u32 i = 0; i < TLUT_MEMO; i++) {
+        const TlutMemo *m = &s_tex.tlut_memo[i];
+        if (m->gen == gen && m->ptr == u->src.tlut && m->size == size) {
+            return m->hash;
+        }
+    }
+    TlutMemo *m = &s_tex.tlut_memo[s_tex.tlut_next++ % TLUT_MEMO];
+    *m = (TlutMemo){gen, u->src.tlut, size, u->src.tlut != NULL ? hash_bytes(u->src.tlut, size) : 0U};
+    return m->hash;
+}
+
 static void cache_lookup(u32 texmap, TexUnit *u) {
     const u32 levels = levels_needed(texmap, u);
     const u32 addr = (gx_bp_tex_reg(GX_BP_TX_SETIMAGE3, texmap) << 5) & 0x01FFFFFFU;
@@ -510,26 +617,38 @@ static void cache_lookup(u32 texmap, TexUnit *u) {
     u32 lh;
     level_source(u, levels - 1U, &last, &lw, &lh);
     const u32 bytes = (u32)(last.data - u->src.data) + gx_tex_level_size(u->format, lw + 1U, lh + 1U);
-    const u64 tlut_hash =
-        paletted(u->format)
-            ? fnv(u->src.tlut, (u->src.tlut_size < tlut_bytes(u->format) ? u->src.tlut_size : tlut_bytes(u->format)))
-            : 0U;
+    const u64 tlut_hash = paletted(u->format) ? tlut_hash_of(u) : 0U;
     const u64 written = mem_written_sum(addr, bytes);
-    TexCacheEntry *victim = &s_tex.cache[0];
-    for (u32 i = 0; i < TEX_CACHE_ENTRIES; i++) {
-        TexCacheEntry *e = &s_tex.cache[i];
-        if (e->used && e->addr == addr && e->format == u->format && e->wm1 == u->width_minus_1 &&
-            e->hm1 == u->height_minus_1 && e->levels >= levels && e->tlut_hash == tlut_hash &&
-            e->tlut_format == u->src.tlut_format && e->written == written) {
+    const u32 b = bucket_of(addr);
+    TexCacheEntry *stale = NULL;
+    for (u32 i = s_tex.heads[b]; i != 0U; i = s_tex.cache[i - 1U].next) {
+        TexCacheEntry *e = &s_tex.cache[i - 1U];
+        if (!e->used || e->addr != addr || e->format != u->format || e->wm1 != u->width_minus_1 ||
+            e->hm1 != u->height_minus_1) {
+            continue;
+        }
+        if (e->tlut_hash != tlut_hash || e->tlut_format != u->src.tlut_format) {
+            continue; /* a mesma imagem com outra paleta convive no cache */
+        }
+        if (e->levels >= levels &&
+            (e->written == written ||
+             (e->bytes == bytes && e->content == hash_bytes(u->src.data, bytes < u->src.size ? bytes : u->src.size)))) {
+            e->written = written;
             e->last_use = ++s_tex.clock;
             s_tex.stats.hits++;
             cache_attach(u, e);
             return;
         }
-        if (victim->used && (!e->used || e->last_use < victim->last_use)) {
-            victim = e; /* a primeira livre, senão a usada há mais tempo */
-        }
+        stale = e; /* a mesma textura com conteúdo velho (ou menos níveis): decodifica no lugar dela */
     }
+    TexCacheEntry *victim = stale != NULL ? stale : cache_victim();
+    if (victim != stale) {
+        cache_unlink(victim);
+        victim->bucket = b;
+        victim->next = s_tex.heads[b];
+        s_tex.heads[b] = (u16)((victim - s_tex.cache) + 1);
+    }
+    const u16 next = victim->next;
     *victim = (TexCacheEntry){.used = true,
                               .addr = addr,
                               .bytes = bytes,
@@ -541,10 +660,15 @@ static void cache_lookup(u32 texmap, TexUnit *u) {
                               .tlut_hash = tlut_hash,
                               .written = written,
                               .last_use = ++s_tex.clock,
+                              .texels = victim->texels,
+                              .bucket = b,
+                              .next = next,
                               .rgba = victim->rgba};
     s_tex.stats.misses++;
+    victim->content = hash_bytes(u->src.data, bytes < u->src.size ? bytes : u->src.size);
     if (cache_fill(victim, u)) {
         cache_attach(u, victim);
+        cache_trim(victim);
     } else {
         victim->used = false;
     }
@@ -569,6 +693,7 @@ static u32 used_texmaps(void) {
 }
 
 void gx_tex_prepare(void) {
+    s_tex.prepare_clock = s_tex.clock + 1U;
     const u32 used = s_tex.cache_on ? used_texmaps() : 0U;
     for (u32 i = 0; i < GX_TEXMAP_MAX; i++) {
         TexUnit *u = &s_tex.units[i];

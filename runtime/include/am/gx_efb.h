@@ -59,6 +59,19 @@ void gx_efb_blend(u32 x, u32 y, const u8 *rgba);
 
 /* BP 0x52: cópia (XFB ou textura) e limpeza, com os parâmetros dos registradores de BP. */
 void gx_efb_copy(void);
+/* M8: a cópia sem a limpeza (o backend de GPU limpa o EFB dele). */
+void gx_efb_copy_ex(bool do_clear);
+/* M8: linhas do EFB que a cópia pedida agora lê (com o filtro vertical) e se a fonte é o Z. false = fora do EFB. */
+bool gx_efb_copy_rows(u32 *top, u32 *bottom, bool *depth);
+/* M8: a limpeza que a cópia pedida agora faz (área, cor, Z, máscaras e formato), para fazê-la na GPU. */
+typedef struct GxEfbClear {
+    u32 left, top, right, bottom;
+    u8 rgba[4];
+    u32 z;
+    bool color, alpha, z_update;
+    u32 format;
+} GxEfbClear;
+bool gx_efb_clear_params(GxEfbClear *c);
 /* A cópia pedida agora (BP COPY_EXECUTE) é para o XFB. */
 bool gx_efb_copy_is_xfb(void);
 /* A cópia pedida agora limpa o EFB depois (COPY_EXECUTE.clear). */

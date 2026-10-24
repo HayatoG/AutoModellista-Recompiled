@@ -52,6 +52,9 @@
  * menos que o jogo tenha copiado o EFB para textura nos últimos 120 quadros. */
 #define GAME_RUN_SKIP_BEHIND_NS 16683350LL
 #define GAME_RUN_SKIP_MAX       4U
+/* M8: com a GPU o quadro desenhado custa pouco mais que o pulado (~21 ms contra ~12 ms na corrida, arm64): pular um
+ * de cada vez já segura o ritmo e desenha o dobro de quadros que a sequência de 4 do software. */
+#define GAME_RUN_SKIP_MAX_GPU   1U
 #define GAME_RUN_SKIP_TEX_GUARD 120U
 
 typedef struct Shot {
@@ -285,7 +288,7 @@ static void decide_skip(s64 behind) {
     }
     const bool guard = s_run.tex_copy_frame != 0U && s_run.frames - s_run.tex_copy_frame < GAME_RUN_SKIP_TEX_GUARD;
     const bool skip = s_run.config.frameskip && behind > GAME_RUN_SKIP_BEHIND_NS &&
-                      s_run.skipped_in_row < GAME_RUN_SKIP_MAX && !guard;
+                      s_run.skipped_in_row < (s_run.config.gpu ? GAME_RUN_SKIP_MAX_GPU : GAME_RUN_SKIP_MAX) && !guard;
     s_run.skipping = skip;
     s_run.skipped_in_row = skip ? s_run.skipped_in_row + 1U : 0U;
     s_run.skipped += skip ? 1U : 0U;
@@ -627,11 +630,16 @@ static void report_gx(void) {
     report_gx_features(su, efb);
     if (gx_gpu_active()) {
         const GxGpuStats *g = gx_gpu_stats();
-        AM_LOG_INFO("GX GPU: %" PRIu64 " lotes, %" PRIu64 " desenhos, %" PRIu64 " triângulos; %" PRIu64
-                    " texturas enviadas (%" PRIu64 " texels), buffer de texels recomeçado %" PRIu64
-                    " vez(es); sem suporte: %" PRIu64 " desenhos com indireto, %" PRIu64 " com zfreeze",
-                    g->batches, g->draws, g->triangles, g->texture_uploads, g->uploaded_texels, g->arena_resets,
-                    g->indirect_draws, g->zfreeze_draws);
+        AM_LOG_INFO("GX GPU: %" PRIu64 " lotes (%" PRIu64 " parciais), %" PRIu64 " desenhos, %" PRIu64
+                    " triângulos; %" PRIu64 " texturas enviadas (%" PRIu64
+                    " texels), buffer de texels recomeçado %" PRIu64 " vez(es); sem suporte: %" PRIu64
+                    " desenhos com indireto, %" PRIu64 " com zfreeze",
+                    g->batches, g->partial_batches, g->draws, g->triangles, g->texture_uploads, g->uploaded_texels,
+                    g->arena_resets, g->indirect_draws, g->zfreeze_draws);
+        u64 readbacks = 0;
+        const u64 wait_us = platform_gpu_wait_us(&readbacks);
+        AM_LOG_INFO("GX GPU: %" PRIu64 " leituras do EFB, espera média pela GPU de %" PRIu64 " µs", readbacks,
+                    readbacks != 0U ? wait_us / readbacks : 0U);
     }
 }
 

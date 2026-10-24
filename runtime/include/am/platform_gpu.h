@@ -13,5 +13,7 @@ bool platform_gpu_run(const GpuBatch *batch);
 void platform_gpu_shutdown(void);
 /* Nome do driver ("metal"...) e do aparelho, para o log. */
 const char *platform_gpu_name(void);
+/* Tempo total (µs) esperando a GPU terminar nas leituras do EFB e quantas leituras houve. */
+u64 platform_gpu_wait_us(u64 *readbacks);
 
 #endif /* AM_PLATFORM_GPU_H */

@@ -91,7 +91,11 @@ static void arena_clear(void) {
     s_gpu.stats.arena_resets++;
 }
 
-static void submit(void) {
+/* Desenhos por lote parcial: a GPU começa a desenhar o quadro enquanto a CPU emula o resto dele, e a espera na
+ * cópia do EFB fica só com a última parte. */
+#define PARTIAL_DRAWS 192U
+
+static void submit_rows(bool readback, u32 top, u32 bottom, bool depth_too) {
     u32 *color = gx_efb_color_buffer();
     u32 *depth = gx_efb_depth_buffer();
     const GpuBatch b = {.vertices = s_gpu.verts,
@@ -102,8 +106,10 @@ static void submit(void) {
                         .upload_count = s_gpu.upload_count,
                         .efb_color_in = s_gpu.efb_dirty ? color : NULL,
                         .efb_depth_in = s_gpu.efb_dirty ? depth : NULL,
-                        .efb_color_out = color,
-                        .efb_depth_out = depth};
+                        .efb_color_out = readback ? color : NULL,
+                        .efb_depth_out = readback && depth_too ? depth : NULL,
+                        .readback_top = top,
+                        .readback_bottom = bottom};
     if (!s_gpu.run(&b)) {
         am_fatal("GX GPU: o lote de %u desenhos falhou na GPU", s_gpu.draw_count);
     }
@@ -113,6 +119,10 @@ static void submit(void) {
     s_gpu.upload_count = 0;
     s_gpu.staging_used = 0;
     s_gpu.efb_dirty = false;
+}
+
+static void submit_lot(bool readback) {
+    submit_rows(readback, 0, GPU_EFB_HEIGHT, true);
 }
 
 /* Posição da decodificação no buffer de texels; envia se for nova. Sem espaço: desenha o lote e recomeça o buffer. */
@@ -128,7 +138,7 @@ static u32 arena_place(const GxTexGpuUnit *t) {
         }
     }
     if (s_gpu.arena_used + t->texels > GPU_ARENA_TEXELS || s_gpu.upload_count + 1U >= ARENA_SLOTS / 2U) {
-        submit(); /* os desenhos já gravados usam o buffer como está */
+        submit_lot(false); /* os desenhos já gravados usam o buffer como está */
         arena_clear();
         return arena_place(t);
     }
@@ -240,6 +250,10 @@ static GpuDraw *draw_for_rect(u32 r);
 
 void gx_gpu_begin_draw(void) {
     gx_gpu_end_draw();
+    if (s_gpu.draw_count >= PARTIAL_DRAWS) {
+        submit_lot(false);
+        s_gpu.stats.partial_batches++;
+    }
     memset(&s_gpu.u, 0, sizeof(s_gpu.u));
     fill_tev(&s_gpu.u);
     fill_textures(&s_gpu.u);
@@ -326,9 +340,55 @@ void gx_gpu_end_draw(void) {
 
 void gx_gpu_sync(void) {
     gx_gpu_end_draw();
-    submit();
+    submit_lot(true);
 }
 
-void gx_gpu_efb_changed(void) {
-    s_gpu.efb_dirty = true;
+/* Limpeza na GPU: um retângulo com o shader no modo de limpeza (as mesmas máscaras do ClearEfb de gx_efb.c). */
+static void push_clear(const GxEfbClear *c) {
+    s_gpu.draws = grow(s_gpu.draws, &s_gpu.draw_cap, s_gpu.draw_count + 1U, sizeof(GpuDraw));
+    GpuDraw *d = &s_gpu.draws[s_gpu.draw_count++];
+    memset(d, 0, sizeof(*d));
+    d->first_vertex = s_gpu.vert_count;
+    d->vertex_count = 6;
+    d->scissor[0] = (s32)c->left;
+    d->scissor[1] = (s32)c->top;
+    d->scissor[2] = (s32)(c->right - c->left);
+    d->scissor[3] = (s32)(c->bottom - c->top);
+    d->u.flags = GPU_FLAG_CLEAR;
+    d->u.stages = 1;
+    for (u32 i = 0; i < 4U; i++) {
+        d->u.regs[i] = c->rgba[i];
+    }
+    d->u.ztex_bias = c->z;
+    d->u.blend = (c->color ? 1U << 3 : 0U) | (c->alpha ? 1U << 4 : 0U);
+    d->u.zmode = c->z_update ? 1U << 4 : 0U;
+    d->u.pe_control = c->format;
+    const f32 x0 = (f32)c->left;
+    const f32 y0 = (f32)c->top;
+    const f32 x1 = (f32)c->right;
+    const f32 y1 = (f32)c->bottom;
+    const f32 corners[6][2] = {{x0, y0}, {x1, y0}, {x0, y1}, {x1, y0}, {x1, y1}, {x0, y1}};
+    s_gpu.verts = grow(s_gpu.verts, &s_gpu.vert_cap, s_gpu.vert_count + 6U, sizeof(GpuVertex));
+    for (u32 i = 0; i < 6U; i++) {
+        GpuVertex *v = &s_gpu.verts[s_gpu.vert_count++];
+        memset(v, 0, sizeof(*v));
+        v->pos[0] = corners[i][0];
+        v->pos[1] = corners[i][1];
+        v->pos[3] = 1.0F;
+    }
+}
+
+void gx_gpu_copy(void) {
+    gx_gpu_end_draw();
+    u32 top = 0;
+    u32 bottom = 0;
+    bool depth = false;
+    const bool rows = gx_efb_copy_rows(&top, &bottom, &depth);
+    submit_rows(true, top, rows ? bottom : 0U, depth);
+    gx_efb_copy_ex(false);
+    GxEfbClear c;
+    if (gx_efb_copy_clears() && gx_efb_clear_params(&c)) {
+        push_clear(&c);
+    }
+    s_gpu.stats.copies++;
 }

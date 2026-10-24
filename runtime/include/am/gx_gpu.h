@@ -2,8 +2,8 @@
 /* M8: backend de GX na GPU (--gfx gpu). O caminho até o vértice transformado (FIFO, vertex loader, XF, recorte,
  * descarte pela face) é o mesmo do software; daí em diante, em vez do rasterizador e do TEV da CPU, cada desenho vira
  * um comando com os vértices em pixels do EFB e o estado do TEV/PE num uniform (am/gpu_batch.h), e a GPU desenha com o
- * ubershader. Numa cópia do EFB o lote vai para a GPU, o EFB volta para a CPU e a cópia (XFB ou textura) e a limpeza
- * rodam no código do software (gx_efb.c); o EFB limpo volta para a GPU no lote seguinte.
+ * ubershader. Numa cópia do EFB o lote vai para a GPU, as linhas copiadas voltam para a CPU e a cópia (XFB ou textura)
+ * roda no código do software (gx_efb.c); a limpeza vira um desenho na GPU.
  *
  * Fora do que a GPU faz: estágios indiretos (o estágio usa a coordenada sem deslocamento) e zfreeze (o Z interpolado
  * do próprio triângulo); os dois ficam contados em GxGpuStats. */
@@ -16,6 +16,8 @@
 
 typedef struct GxGpuStats {
     u64 batches;
+    u64 partial_batches; /* enviados no meio do quadro, sem esperar a GPU */
+    u64 copies;
     u64 draws;
     u64 triangles;
     u64 texture_uploads;
@@ -36,10 +38,11 @@ void gx_gpu_reset(void);
 void gx_gpu_begin_draw(void);
 void gx_gpu_triangle(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2);
 void gx_gpu_end_draw(void);
-/* Antes de uma cópia do EFB: desenha o que falta e traz o EFB da GPU para a CPU (gx_efb.c). */
+/* Desenha o que falta e traz o EFB inteiro da GPU para a CPU (gx_efb.c). */
 void gx_gpu_sync(void);
-/* Depois de uma cópia com limpeza: o EFB da CPU mudou e tem de voltar para a GPU. */
-void gx_gpu_efb_changed(void);
+/* BP 0x52 com o backend ativo: desenha o que falta, traz só as linhas que a cópia lê (e o Z se a fonte for o Z),
+ * faz a cópia na CPU e põe a limpeza no lote seguinte, na GPU. */
+void gx_gpu_copy(void);
 
 const GxGpuStats *gx_gpu_stats(void);
 

@@ -470,6 +470,14 @@ fragment FOut gx_fs(VOut in [[stage_in]], uint dst_c [[color(0)]], uint dst_z [[
     FOut o;
     o.color = dst_c;
     o.depth = dst_z;
+    if ((d.flags & 1u) != 0u) { // limpeza da cópia (ClearEfb): cor em regs, Z em ztex_bias, máscaras em blend/zmode
+        const bool color = ((d.blend >> 3) & 1u) != 0u;
+        const bool alpha = ((d.blend >> 4) & 1u) != 0u;
+        const uint4 c = uint4(uint(d.regs[0]), uint(d.regs[1]), uint(d.regs[2]), uint(d.regs[3]));
+        o.color = (color || alpha) ? efb_store(d.pe_control & 7u, dst_c, c, color, alpha) : dst_c;
+        o.depth = ((d.zmode >> 4) & 1u) != 0u ? d.ztex_bias : dst_z;
+        return o;
+    }
     const uint2 p = uint2(in.position.xy);
     // Coordenadas de textura em texels (com a escala do SU já aplicada na CPU) e o LOD do bloco 2x2: as derivadas
     // saem antes de qualquer desvio que dependa do pixel.
