@@ -51,9 +51,9 @@ Pixels com diferença > 24: GPU x Dolphin 0,31% a 0,48%; soft x Dolphin 1,2% a 1
 
 Os mapas de diferença mostram só ruído fino na arquibancada (textura de multidão), nas faixas do céu e no hodômetro; **não
 há borda clara de contorno no carro, no muro ou nas placas**, ou seja, o contorno preto está no mesmo lugar e com a mesma
-espessura nos três. O software fica uns 4 dB atrás da GPU contra o Dolphin porque emula o dither do pixel do hardware
-(RGBA6) e o Dolphin/Metal não, o que espalha erro de 1 a 8 níveis em áreas de textura detalhada; é diferença já presente
-no M7/M8 (largada) e não ligada ao cel-shading. As posições coincidem mesmo com os ~2 campos de diferença no tempo
+espessura nos três. O software fica uns 4 dB atrás da GPU contra o Dolphin; o erro se concentra em áreas de textura fina
+(HIPÓTESE, não conferida: dither/arredondamento do pixel RGBA6 do software); a diferença já existia na largada
+(M7/M8) e não está ligada ao cel-shading. As posições coincidem mesmo com os ~2 campos de diferença no tempo
 emulado da carga da pista (placar de tempo do HUD e posição do carro iguais nas duas imagens): nenhuma captura precisou
 ser descartada por divergência de cena.
 
@@ -102,13 +102,12 @@ cópias de EFB em efeitos de replay ou de menu; os contadores acima não cobrem 
 - Nenhum arquivo da runtime foi alterado; o golden `tests/golden/m8_corrida.json` **não muda** (o roteiro padrão continua
   em 6400 quadros). Se a sessão principal quiser fixar este trecho no golden, os valores são: contadores da coluna "0 a
   8400" da tabela acima e os 7 PSNR da seção 3.
-- Tempo: GPU 8400 quadros em cerca de 3 min; software, cerca de 16 min a 9 quadros/s (arm64 Release); Dolphin cerca de
-  10 min.
+- Tempo: GPU 8400 quadros em cerca de 3 min; software, cerca de 16 min a 9 quadros/s (arm64 Release); Dolphin: fila do lock mais a execução.
 
 ## 7. Lições para o vídeo
 
 - Os números do M6 viraram previsão que a corrida de verdade confirmou: "zero cópias de EFB" aguentou 22 s de corrida.
-- O erro maior do software contra o Dolphin é o dither de hardware (que o Dolphin não faz), não o contorno: olhar o mapa
+- O erro maior do software contra o Dolphin está em texturas finas (provável dither), não no contorno: olhar o mapa
   de diferença ampliado diz mais que o PSNR.
 - Um `$q:e` em zsh vira modificador de variável: nomes de captura em loop precisam de `${q}`.
 - O oráculo é um recurso compartilhado: com quatro agentes, a fila do `lockf` e um Dolphin morto por sinal custaram
