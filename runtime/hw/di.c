@@ -83,8 +83,8 @@ static void dma_from_disc(u64 offset, u32 mar, u32 length) {
         const GuestAddr dst = MEM_CACHED_BASE | (mar + done);
         u8 *host = mem_host_ptr(dst, n);
         if (host != NULL) {
+            mem_mark_written((mar + done) & 0x03FFFFFFU, n); /* antes da cópia: a cópia na escrita do GX (mem.h) */
             memcpy(host, s_bounce, n);
-            mem_mark_written((mar + done) & 0x03FFFFFFU, n);
         } else {
             for (u32 i = 0; i < n; i++) {
                 mem_write8(NULL, dst + i, s_bounce[i]);

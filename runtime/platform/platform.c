@@ -4,6 +4,10 @@
 #include <string.h>
 
 #include <SDL3/SDL.h>
+#ifdef __APPLE__
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif
 
 static struct {
     bool ready;
@@ -84,9 +88,33 @@ static int SDLCALL pool_thread(void *arg) {
     return 0;
 }
 
+/* M8 parte 2b: no macOS, threads novas têm QoS padrão e o escalonador as põe nos núcleos de eficiência quando há
+ * disputa; a do GX e os trabalhadores andam junto com a CPU emulada (que é a thread principal, interativa). */
+typedef struct ThreadStart {
+    PlatformThreadFn fn;
+    void *user;
+} ThreadStart;
+
+static int thread_trampoline(void *arg) {
+    const ThreadStart start = *(const ThreadStart *)arg;
+    SDL_free(arg);
+#ifdef __APPLE__
+    (void)pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+    return start.fn(start.user);
+}
+
 void *platform_thread_start(const char *name, PlatformThreadFn fn, void *user) {
-    SDL_Thread *t = SDL_CreateThread(fn, name, user);
+    ThreadStart *start = SDL_malloc(sizeof(*start));
+    if (start == NULL) {
+        set_error("sem memória para a thread");
+        return NULL;
+    }
+    start->fn = fn;
+    start->user = user;
+    SDL_Thread *t = SDL_CreateThread(thread_trampoline, name, start);
     if (t == NULL) {
+        SDL_free(start);
         set_error(SDL_GetError());
     }
     return t;

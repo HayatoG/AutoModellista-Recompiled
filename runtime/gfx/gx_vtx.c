@@ -207,12 +207,10 @@ static u32 read_index(Reader *r, u32 type) {
     return (hi << 8) | read8(r);
 }
 
-/* Copia `size` bytes do elemento `index` do array (memória do guest, big-endian) para `buf`. */
+/* Copia `size` bytes do elemento `index` do array (memória do guest, big-endian) para `buf`; com a thread do GX, como
+ * estava no fim da época do desenho (mem.h). */
 static void fetch(u32 array, u32 index, u8 *buf, u32 size) {
-    const GuestAddr base = MEM_CACHED_BASE | gx_vtx_array_addr(array, index);
-    for (u32 i = 0; i < size; i++) {
-        buf[i] = mem_read8(NULL, base + i);
-    }
+    mem_gx_read(MEM_CACHED_BASE | gx_vtx_array_addr(array, index), buf, size);
 }
 
 /* Componente em big-endian no formato `format`, sem escala (inteiros) ou como f32. */

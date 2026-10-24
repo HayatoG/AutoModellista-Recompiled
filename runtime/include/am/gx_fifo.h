@@ -84,7 +84,10 @@ typedef struct GxFifoThreadApi {
     void (*cond_signal)(void *cond);
     u64 (*ticks_ns)(void);
 } GxFifoThreadApi;
-bool gx_fifo_thread_start(const GxFifoThreadApi *api);
+/* `depth` (parte 2b): quantos eventos (DrawDone, tokens) o GX pode ficar atrás da CPU, com a cópia na escrita de
+ * mem.h; 0 = a CPU espera o GX em cada evento (parte 2a; obrigatório com o software, que lê texturas da memória
+ * durante o desenho). */
+bool gx_fifo_thread_start(const GxFifoThreadApi *api, u32 depth);
 /* Termina o que está na fila e para a thread (gx_fifo_reset também para). */
 void gx_fifo_thread_stop(void);
 bool gx_fifo_threaded(void);
@@ -93,5 +96,11 @@ void gx_fifo_sync(void);
 /* Sincronizações pedidas, quantas encontraram o GX ainda trabalhando e o tempo de relógio esperado por motivo
  * (0 = DrawDone, 1 = token, 2 = leitura de fora: XFB, estatísticas). */
 void gx_fifo_thread_counters(u64 *syncs, u64 *waits, u64 wait_ns[3]);
+/* Tempo de relógio que a thread do GX passou trabalhando (o resto ela esperou a CPU). */
+u64 gx_fifo_thread_busy_ns(void);
+/* Janela com a thread do GX: pede que o GX converta o XFB em RGBA quando chegar a este ponto do fluxo, sem a CPU
+ * esperar (false sem a thread: o chamador converte). gx_fifo_xfb_latest copia a última conversão pronta. */
+bool gx_fifo_present_xfb(GuestAddr addr, u32 width, u32 height, u32 stride);
+bool gx_fifo_xfb_latest(u8 *rgba, u32 width, u32 height);
 
 #endif /* AM_GX_FIFO_H */

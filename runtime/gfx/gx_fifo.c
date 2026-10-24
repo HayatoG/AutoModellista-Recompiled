@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "am/gx_fifo.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "am/gx_efb.h"
@@ -296,15 +297,13 @@ static void run_display_list(u32 addr, u32 size) {
     memset(&dl, 0, sizeof(dl));
     dl.phase = GX_PHASE_OPCODE;
     dl.in_display_list = true;
-    u8 chunk[256];
+    u8 chunk[4096];
     s_gx.stats.display_lists++;
     const GuestAddr base = MEM_CACHED_BASE | (addr & 0x03FFFFFFU);
     for (u32 off = 0; off < size; off += (u32)sizeof(chunk)) {
         const u32 n = size - off < (u32)sizeof(chunk) ? size - off : (u32)sizeof(chunk);
-        for (u32 k = 0; k < n; k++) {
-            chunk[k] = mem_read8(NULL, base + off + k);
-        }
-        (void)parse(&dl, chunk, n); /* dentro de uma lista, CALL_DL é fatal em execute: nunca para no meio */
+        mem_gx_read(base + off, chunk, n); /* com a thread do GX, a lista como estava no fim da época (mem.h) */
+        (void)parse(&dl, chunk, n);        /* dentro de uma lista, CALL_DL é fatal em execute: nunca para no meio */
     }
     if (dl.phase != GX_PHASE_OPCODE) {
         am_fatal("GX: display list em 0x%08X (%u bytes) termina no meio de um comando (opcode 0x%02X)", addr, size,
@@ -331,17 +330,28 @@ static void feed_direct(const u8 *data, u32 size) {
  * BP (para os eventos) e as display lists, pulando vértices e palavras de XF. Os bytes vão para uma fila de blocos;
  * a thread do GX os consome com o leitor completo (feed_direct), que faz todo o resto (vertex loader, XF, montagem,
  * rasterização ou GPU, cópias do EFB). Os eventos que o jogo enxerga (DrawDone, tokens) são disparados pela thread da
- * CPU no mesmo byte de antes, depois de esperar a thread do GX terminar tudo o que veio antes deles: o tempo emulado
- * não muda, e quando o jogo reaproveita memória (o que só faz depois desses eventos) o GX já a leu. Quem lê o que o
- * GX escreveu fora deles (o XFB da janela e das capturas, as estatísticas) chama gx_fifo_sync antes. */
+ * CPU no mesmo byte de antes, então o tempo emulado não muda.
+ *
+ * Parte 2b: a CPU não espera o GX nesses eventos. Cada evento fecha uma época do fluxo; a CPU só espera o GX terminar
+ * a época de `depth` eventos atrás, e a memória que o GX lê (display lists, matrizes e vértices por índice, texturas,
+ * TLUT) vem da cópia na escrita de mem.h, como estava no fim da época do comando. Com `depth` 0 (o software, que
+ * amostra texturas da memória durante o desenho), a CPU espera tudo, como na parte 2a. A janela recebe o XFB pela
+ * fila (gx_fifo_present_xfb); quem lê o que o GX escreveu fora disso (capturas, estatísticas) chama gx_fifo_sync. */
 
 #define GX_Q_BLOCK  32768U
 #define GX_Q_BLOCKS 32U /* 1 MiB em voo, no máximo */
 
 typedef struct GxQBlock {
     u32 size;
+    u32 epoch;
     bool render;
     bool skip;
+    bool closes;  /* último bloco da época: depois dele, o GX terminou a época */
+    bool present; /* depois dele, o XFB em xfb_addr vai para a janela */
+    GuestAddr xfb_addr;
+    u32 xfb_width;
+    u32 xfb_height;
+    u32 xfb_stride;
     u8 data[GX_Q_BLOCK];
 } GxQBlock;
 
@@ -361,15 +371,23 @@ static struct {
     GxFifoThreadApi api;
     void *thread;
     void *lock;
-    void *wake; /* a thread do GX espera bloco */
-    void *done; /* a thread da CPU espera a fila andar */
+    void *wake;      /* a thread do GX espera bloco */
+    void *done_cond; /* a thread da CPU espera a fila andar */
     GxFifoSink sink;
-    u32 head;  /* com a trava: primeiro bloco publicado */
-    u32 count; /* com a trava: blocos publicados ainda não terminados (inclui o que o GX está lendo) */
-    u32 tail;  /* só a CPU: bloco sendo enchido */
+    u32 head;       /* com a trava: primeiro bloco publicado */
+    u32 count;      /* com a trava: blocos publicados ainda não terminados (inclui o que o GX está lendo) */
+    u32 tail;       /* só a CPU: bloco sendo enchido */
+    u32 depth;      /* épocas que o GX pode ficar atrás */
+    u32 epoch;      /* só a CPU: época atual */
+    u32 done_epoch; /* com a trava: o GX terminou tudo até esta época */
+    u8 *xfb_front;  /* com a trava: último XFB pronto para a janela, em RGBA */
+    u8 *xfb_back;   /* só o GX */
+    u32 xfb_bytes;
+    bool xfb_ready;
     u64 syncs;
     u64 waits;      /* sincronizações em que o GX ainda tinha trabalho */
     u64 wait_ns[3]; /* tempo de relógio esperando, por motivo (DrawDone, token, leitura de fora) */
+    u64 busy_ns;    /* só o GX: tempo de relógio trabalhando nos blocos */
     u32 reason;
     GxScan scan;
     u32 vcd_lo;
@@ -400,11 +418,31 @@ static int gx_thread_main(void *user) {
         s_q.api.unlock(s_q.lock);
         s_gx.render = b->render;
         s_gx.skip = b->skip;
+        const u64 t0 = s_q.api.ticks_ns();
+        if (mem_cow_active()) {
+            mem_cow_gx_epoch(b->epoch);
+        }
         feed_direct(b->data, b->size);
+        if (b->present) {
+            gx_efb_xfb_to_rgba(b->xfb_addr, b->xfb_width, b->xfb_height, b->xfb_stride, s_q.xfb_back);
+        }
+        if (b->closes && mem_cow_active()) {
+            mem_cow_gx_done(b->epoch);
+        }
+        s_q.busy_ns += s_q.api.ticks_ns() - t0;
         s_q.api.lock(s_q.lock);
+        if (b->present) {
+            u8 *t = s_q.xfb_front;
+            s_q.xfb_front = s_q.xfb_back;
+            s_q.xfb_back = t;
+            s_q.xfb_ready = true;
+        }
+        if (b->closes) {
+            s_q.done_epoch = b->epoch;
+        }
         s_q.head = (s_q.head + 1U) % GX_Q_BLOCKS;
         s_q.count--;
-        s_q.api.cond_signal(s_q.done);
+        s_q.api.cond_signal(s_q.done_cond);
     }
     s_q.api.unlock(s_q.lock);
     return 0;
@@ -415,9 +453,10 @@ static void queue_publish(void) {
     GxQBlock *cur = &s_q.blocks[s_q.tail];
     const bool render = cur->render;
     const bool skip = cur->skip;
+    cur->epoch = s_q.epoch;
     s_q.api.lock(s_q.lock);
     while (s_q.count >= GX_Q_BLOCKS - 1U) {
-        s_q.api.cond_wait(s_q.done, s_q.lock);
+        s_q.api.cond_wait(s_q.done_cond, s_q.lock);
     }
     s_q.count++;
     s_q.api.cond_signal(s_q.wake);
@@ -427,6 +466,13 @@ static void queue_publish(void) {
     next->size = 0;
     next->render = render;
     next->skip = skip;
+    next->closes = false;
+    next->present = false;
+}
+
+/* O bloco que a CPU está enchendo tem algo para o GX (bytes ou uma ação). */
+static bool block_pending(const GxQBlock *b) {
+    return b->size != 0U || b->closes || b->present;
 }
 
 static void queue_flags(bool render, bool skip) {
@@ -437,7 +483,7 @@ static void queue_flags(bool render, bool skip) {
     if (cur->render == render && cur->skip == skip) {
         return;
     }
-    if (cur->size != 0U) {
+    if (block_pending(cur)) {
         queue_publish();
         cur = &s_q.blocks[s_q.tail];
     }
@@ -465,7 +511,7 @@ void gx_fifo_sync(void) {
         return;
     }
     s_q.syncs++;
-    if (s_q.blocks[s_q.tail].size != 0U) {
+    if (block_pending(&s_q.blocks[s_q.tail])) {
         queue_publish();
     }
     s_q.api.lock(s_q.lock);
@@ -473,7 +519,7 @@ void gx_fifo_sync(void) {
         s_q.waits++;
         const u64 t0 = s_q.api.ticks_ns();
         while (s_q.count != 0U) {
-            s_q.api.cond_wait(s_q.done, s_q.lock);
+            s_q.api.cond_wait(s_q.done_cond, s_q.lock);
         }
         s_q.wait_ns[s_q.reason] += s_q.api.ticks_ns() - t0;
     }
@@ -481,10 +527,40 @@ void gx_fifo_sync(void) {
     s_q.api.unlock(s_q.lock);
 }
 
+u64 gx_fifo_thread_busy_ns(void) {
+    s_q.api.lock(s_q.lock);
+    const u64 ns = s_q.busy_ns;
+    s_q.api.unlock(s_q.lock);
+    return ns;
+}
+
 void gx_fifo_thread_counters(u64 *syncs, u64 *waits, u64 wait_ns[3]) {
     *syncs = s_q.syncs;
     *waits = s_q.waits;
     memcpy(wait_ns, s_q.wait_ns, sizeof(s_q.wait_ns));
+}
+
+/* Evento que o jogo enxerga: fecha a época atual e espera o GX terminar a de `depth` eventos atrás (com depth 0, a
+ * atual: tudo). Daí em diante a CPU pode reescrever a memória que o GX ainda vai ler; a cópia na escrita cuida. */
+static void epoch_close(u32 reason) {
+    s_q.syncs++;
+    s_q.blocks[s_q.tail].closes = true;
+    queue_publish();
+    const u32 k = s_q.epoch;
+    s_q.api.lock(s_q.lock);
+    if (k > s_q.depth && s_q.done_epoch < k - s_q.depth) {
+        s_q.waits++;
+        const u64 t0 = s_q.api.ticks_ns();
+        while (s_q.done_epoch < k - s_q.depth) {
+            s_q.api.cond_wait(s_q.done_cond, s_q.lock);
+        }
+        s_q.wait_ns[reason] += s_q.api.ticks_ns() - t0;
+    }
+    s_q.api.unlock(s_q.lock);
+    s_q.epoch++;
+    if (mem_cow_active()) {
+        mem_cow_next_epoch();
+    }
 }
 
 /* BP na cópia da CPU: a mesma máscara de gx_bp_write, só para achar os eventos. */
@@ -498,14 +574,12 @@ static void scan_bp(u32 value) {
     if (reg == GX_BP_MASK) {
         s_q.bp_mask = newval & 0xFFFFFFU;
     } else if (reg == GX_BP_SETDRAWDONE && (newval & 0xFFU) == 0x02U) {
-        s_q.reason = 0U;
-        gx_fifo_sync();
+        epoch_close(0U);
         if (s_q.sink.draw_done != NULL) {
             s_q.sink.draw_done();
         }
     } else if (reg == GX_BP_PE_TOKEN || reg == GX_BP_PE_TOKEN_INT) {
-        s_q.reason = 1U;
-        gx_fifo_sync();
+        epoch_close(1U);
         if (s_q.sink.token != NULL) {
             s_q.sink.token((u16)value, reg == GX_BP_PE_TOKEN_INT);
         }
@@ -590,6 +664,9 @@ static void scan_display_list(u32 addr, u32 size) {
     dl.phase = GX_PHASE_OPCODE;
     dl.in_display_list = true;
     const GuestAddr base = MEM_CACHED_BASE | (addr & 0x03FFFFFFU);
+    u8 chunk[4096];
+    u32 have = 0; /* bytes de chunk válidos, a partir de chunk_at */
+    u32 chunk_at = 0;
     u32 off = 0;
     while (off < size) {
         if (dl.phase == GX_PHASE_SKIP) {
@@ -601,7 +678,12 @@ static void scan_display_list(u32 addr, u32 size) {
             }
             continue;
         }
-        scan_byte(&dl, mem_read8(NULL, base + off));
+        if (off < chunk_at || off >= chunk_at + have) {
+            chunk_at = off;
+            have = size - off < (u32)sizeof(chunk) ? size - off : (u32)sizeof(chunk);
+            mem_read_bytes(base + off, chunk, have);
+        }
+        scan_byte(&dl, chunk[off - chunk_at]);
         off++;
     }
 }
@@ -632,20 +714,26 @@ void gx_fifo_feed(const u8 *data, u32 size) {
     scan_feed(data, size);
 }
 
-bool gx_fifo_thread_start(const GxFifoThreadApi *api) {
+bool gx_fifo_thread_start(const GxFifoThreadApi *api, u32 depth) {
     AM_ASSERT(!s_q.on && s_gx.stats.bytes == 0U, "thread do GX ligada depois de o fluxo começar");
+    AM_ASSERT(depth <= MEM_COW_MAX_DEPTH, "thread do GX: profundidade %u", depth);
     memset(&s_q, 0, sizeof(s_q));
     s_q.api = *api;
+    s_q.depth = depth;
+    s_q.epoch = 1U;
+    if (depth != 0U && !mem_cow_start(depth)) {
+        return false;
+    }
     s_q.bp_mask = 0xFFFFFFU;
     s_q.reason = 2U;
     s_q.scan.phase = GX_PHASE_OPCODE;
     s_q.lock = api->lock_create();
     s_q.wake = api->cond_create();
-    s_q.done = api->cond_create();
+    s_q.done_cond = api->cond_create();
     s_q.sink = s_gx.sink;
     s_q.blocks[0].render = s_gx.render_cpu;
     s_q.blocks[0].skip = s_gx.skip_cpu;
-    if (s_q.lock != NULL && s_q.wake != NULL && s_q.done != NULL) {
+    if (s_q.lock != NULL && s_q.wake != NULL && s_q.done_cond != NULL) {
         s_q.thread = api->thread_start("gx-fifo", gx_thread_main, NULL);
     }
     if (s_q.thread == NULL) {
@@ -667,8 +755,15 @@ static void thread_stop(void) {
         s_q.api.thread_join(s_q.thread);
         s_gx.sink = s_q.sink;
     }
-    if (s_q.done != NULL) {
-        s_q.api.cond_destroy(s_q.done);
+    mem_cow_stop();
+    free(s_q.xfb_front);
+    free(s_q.xfb_back);
+    s_q.xfb_front = NULL;
+    s_q.xfb_back = NULL;
+    s_q.xfb_bytes = 0;
+    s_q.xfb_ready = false;
+    if (s_q.done_cond != NULL) {
+        s_q.api.cond_destroy(s_q.done_cond);
     }
     if (s_q.wake != NULL) {
         s_q.api.cond_destroy(s_q.wake);
@@ -680,9 +775,50 @@ static void thread_stop(void) {
     s_q.thread = NULL;
     s_q.lock = NULL;
     s_q.wake = NULL;
-    s_q.done = NULL;
+    s_q.done_cond = NULL;
 }
 
 void gx_fifo_thread_stop(void) {
     thread_stop();
+}
+
+bool gx_fifo_present_xfb(GuestAddr addr, u32 width, u32 height, u32 stride) {
+    if (!s_q.on) {
+        return false;
+    }
+    const u32 bytes = width * height * 4U;
+    if (bytes > s_q.xfb_bytes) {
+        gx_fifo_sync(); /* o GX não está usando os buffers */
+        u8 *front = realloc(s_q.xfb_front, bytes);
+        u8 *back = front != NULL ? realloc(s_q.xfb_back, bytes) : NULL;
+        if (front == NULL || back == NULL) {
+            am_fatal("GX: sem memória para o XFB da janela (%u bytes)", bytes);
+        }
+        s_q.xfb_front = front;
+        s_q.xfb_back = back;
+        s_q.xfb_bytes = bytes;
+        s_q.xfb_ready = false;
+    }
+    GxQBlock *cur = &s_q.blocks[s_q.tail];
+    cur->present = true;
+    cur->xfb_addr = addr;
+    cur->xfb_width = width;
+    cur->xfb_height = height;
+    cur->xfb_stride = stride;
+    queue_publish();
+    return true;
+}
+
+bool gx_fifo_xfb_latest(u8 *rgba, u32 width, u32 height) {
+    bool ok = false;
+    if (!s_q.on) {
+        return false;
+    }
+    s_q.api.lock(s_q.lock);
+    if (s_q.xfb_ready && width * height * 4U <= s_q.xfb_bytes) {
+        memcpy(rgba, s_q.xfb_front, (size_t)width * height * 4U);
+        ok = true;
+    }
+    s_q.api.unlock(s_q.lock);
+    return ok;
 }
