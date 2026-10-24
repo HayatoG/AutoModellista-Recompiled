@@ -13,6 +13,10 @@ const char *platform_last_error(void);
 /* Lê o arquivo inteiro. Devolve NULL (e platform_last_error) em falha; liberar com platform_free_file. */
 u8 *platform_load_file(const char *path, size_t *size);
 void platform_free_file(u8 *data);
+/* Grava o arquivo inteiro (por um temporário e rename). false em falha (platform_last_error). */
+bool platform_save_file(const char *path, const u8 *data, size_t size);
+/* Diretório de dados do usuário (fora do repositório; criado se faltar), com a barra final. */
+bool platform_user_dir(char *out, size_t size);
 
 /* Cria o diretório (e os pais que faltarem); true se já existe. */
 bool platform_make_dir(const char *path);

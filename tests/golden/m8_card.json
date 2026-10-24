@@ -1,0 +1,41 @@
+{
+ "saved_card_sha256": "aab0d7a842743f924647ebb081f330f205a55ebe6af1587d281910e054130410",
+ "saved": {
+  "files": [
+   {
+    "blocks": 19
+   }
+  ],
+  "free_blocks": 40
+ },
+ "save_run": {
+  "commands": 9871,
+  "dma_read_bytes": 41472,
+  "dma_reads": 81,
+  "array_bytes": 567,
+  "dma_write_bytes": 409600,
+  "dma_writes": 3200,
+  "page_programs": 3200,
+  "program_bytes": 0,
+  "sector_erases": 50
+ },
+ "load_run": {
+  "commands": 1045,
+  "dma_read_bytes": 331264,
+  "dma_reads": 647,
+  "array_bytes": 4529,
+  "dma_write_bytes": 16384,
+  "dma_writes": 128,
+  "page_programs": 128,
+  "program_bytes": 0,
+  "sector_erases": 2
+ },
+ "saved_screen_sha256": "f3fa5ebfc9177a24c1117c3ebed3281fca0587d3437580d71a478f3c51799213",
+ "loaded_screen_sha256": "ec5d4e48d496fd244eb6f1b29bdc7c020a02f88a38d80013d4335b722f69b257",
+ "dolphin": {
+  "same_size": true,
+  "bytes_differ": 0,
+  "blocks_differ": [],
+  "identical": true
+ }
+}

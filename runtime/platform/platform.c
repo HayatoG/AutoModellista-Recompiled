@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "am/platform.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -257,6 +258,32 @@ u8 *platform_load_file(const char *path, size_t *size) {
         set_error(SDL_GetError());
     }
     return (u8 *)data;
+}
+
+bool platform_save_file(const char *path, const u8 *data, size_t size) {
+    /* Grava num arquivo ao lado e renomeia: uma queda no meio não estraga o save que já existia. */
+    char tmp[1100];
+    const int n = snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    if (n < 0 || (size_t)n >= sizeof(tmp)) {
+        set_error("caminho longo demais");
+        return false;
+    }
+    if (!SDL_SaveFile(tmp, data, size) || !SDL_RenamePath(tmp, path)) {
+        set_error(SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
+bool platform_user_dir(char *out, size_t size) {
+    char *dir = SDL_GetPrefPath("automodellista", "AutoModellista");
+    if (dir == NULL) {
+        set_error(SDL_GetError());
+        return false;
+    }
+    const int n = snprintf(out, size, "%s", dir);
+    SDL_free(dir);
+    return n > 0 && (size_t)n < size;
 }
 
 void platform_free_file(u8 *data) {

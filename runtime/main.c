@@ -46,6 +46,10 @@
  *                              imagens iguais
  *   --gx-threads <n>           M7: trabalhadores do rasterizador (padrão 0 = um por núcleo; 1 = sem threads). A
  *                              imagem é a mesma com qualquer número (am/gx_raster.h)
+ *   --memcard <arq.raw|none>   M8: memory card do slot A, imagem .raw do Dolphin (4 Mbit, 59 blocos; criada e
+ *                              formatada se o arquivo não existir). Padrão: em modo interativo (janela sem
+ *                              --pad-script) MemoryCardA.raw no diretório de dados do usuário; nos outros, sem
+ *                              cartão ("No Memory Card" no boot), para os roteiros e os golden não mudarem
  *   --verbose                  log de depuração (acessos MMIO, UART)
  *
  * Caminhos relativos de --trace/--dump-boot-state são resolvidos em $AM_LOG_DIR quando definido (os scripts usam
@@ -68,6 +72,7 @@
 #include "am/hook.h"
 #include "am/log.h"
 #include "am/mem.h"
+#include "am/memcard.h"
 #include "am/platform.h"
 #include "am/ppc_sys.h"
 #include "am/recomp.h"
@@ -103,6 +108,7 @@ typedef struct Options {
     const char *timebase_out;
     const char *profile;
     const char *probes;
+    const char *memcard;
     bool gfx_off;
     bool gfx_gpu;
     bool stop_given;
@@ -218,6 +224,8 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->probes = value;
     } else if (strcmp(name, "--gx-depth") == 0 && parse_u64(value, &n) && n <= 6U) {
         o->gx_depth = n;
+    } else if (strcmp(name, "--memcard") == 0) {
+        o->memcard = value;
     } else if (strcmp(name, "--gx-threads") == 0 && parse_u64(value, &n) && n <= 16U) {
         o->gx_threads = n;
     } else if (strcmp(name, "--max-steps") == 0 && parse_u64(value, &n)) {
@@ -509,6 +517,73 @@ static GameRunConfig run_config(const Options *o, RunPaths *p) {
                            .probes = o->probes};
 }
 
+/* Memory card do slot A (docs/M8_PARTE2B_CARD.md): o arquivo escolhido, ou o padrão do modo interativo. Grava de volta
+ * o que o jogo escreveu ao fechar (ou num am_fatal, pelo atexit). */
+static struct {
+    char path[1024];
+    bool active;
+} s_card;
+
+static void card_flush(void) {
+    size_t size = 0;
+    const u8 *image = memcard_image(&size);
+    if (!s_card.active || image == NULL || !memcard_take_dirty()) {
+        return;
+    }
+    if (platform_save_file(s_card.path, image, size)) {
+        AM_LOG_INFO("memory card gravado em %s", s_card.path);
+    } else {
+        AM_LOG_ERROR("não consegui gravar o memory card %s: %s", s_card.path, platform_last_error());
+    }
+}
+
+static bool card_resolve_path(const Options *o, bool interactive) {
+    const char *arg = o->memcard;
+    if ((arg == NULL && !interactive) || (arg != NULL && strcmp(arg, "none") == 0)) {
+        return false;
+    }
+    if (arg != NULL) {
+        (void)snprintf(s_card.path, sizeof(s_card.path), "%s", arg);
+        return true;
+    }
+    char dir[900];
+    if (!platform_user_dir(dir, sizeof(dir))) {
+        AM_LOG_WARN("sem diretório de dados (%s): jogando sem memory card", platform_last_error());
+        return false;
+    }
+    (void)snprintf(s_card.path, sizeof(s_card.path), "%sMemoryCardA.raw", dir);
+    return true;
+}
+
+/* Carrega o .raw (ou cria um cartão formatado de 4 Mbit se o arquivo não existe). false = erro já informado. */
+static bool card_setup(const Options *o, bool interactive) {
+    memcard_eject();
+    s_card.active = false;
+    if (!card_resolve_path(o, interactive)) {
+        return true;
+    }
+    size_t size = 0;
+    u8 *bytes = platform_load_file(s_card.path, &size);
+    bool ok;
+    if (bytes != NULL) {
+        ok = memcard_load(bytes, size);
+        platform_free_file(bytes);
+        if (!ok) {
+            AM_LOG_ERROR("%s não é um cartão (%zu bytes; esperados 4 a 128 Mbit)", s_card.path, size);
+            return false;
+        }
+        AM_LOG_INFO("memory card %s: %u Mbit", s_card.path, memcard_mbit());
+    } else {
+        ok = memcard_create(MEMCARD_DEFAULT_MBIT, o->rtc_seconds);
+        AM_LOG_INFO("memory card novo (%u Mbit) em %s", MEMCARD_DEFAULT_MBIT, s_card.path);
+    }
+    s_card.active = ok;
+    if (ok) {
+        (void)atexit(card_flush);
+    }
+    return ok;
+}
+
 static int run_boot(CPUState *cpu, const Options *o) {
     if (!recomp_is_generated()) {
         AM_LOG_ERROR("--sys exige o C gerado (compile com AM_WITH_GENERATED=ON)");
@@ -519,6 +594,9 @@ static int run_boot(CPUState *cpu, const Options *o) {
     int status = EXIT_FAILURE;
     RunPaths paths;
     const GameRunConfig run = run_config(o, &paths);
+    if (!card_setup(o, o->window_scale != 0U && o->pad_script == NULL)) {
+        return EXIT_FAILURE;
+    }
     if (load_sys(o->sys_dir, &files) && prepare(cpu, o, &files, &dol) && game_run_init(&run) &&
         check_hooks(&files, &dol)) {
         char dump_buf[1024];
@@ -545,6 +623,7 @@ static int run_boot(CPUState *cpu, const Options *o) {
         }
     }
     game_run_shutdown();
+    card_flush();
     hook_clear();
     free_sys(&files);
     return status;
