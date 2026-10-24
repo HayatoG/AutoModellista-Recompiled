@@ -255,10 +255,10 @@ void exi_card_dma(bool write, u32 addr, u32 size) {
         s_stats.dma_write_bytes += size;
         transfer_in(size, MC_TRANSFER_RATE_WRITE);
     } else {
+        mem_mark_written(addr & 0x03FFFFFFU, size); /* antes da cópia: a cópia na escrita do GX (mem.h) */
         memcard_read(s_mc.address, size, host);
         s_stats.dma_reads++;
         s_stats.dma_read_bytes += size;
-        mem_mark_written(addr & 0x03FFFFFFU, size);
         transfer_in(size, MC_TRANSFER_RATE_READ);
     }
 }
