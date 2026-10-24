@@ -24,6 +24,11 @@ typedef struct GxSetupStats {
     u64 vertices;
     u64 culled;   /* triângulos descartados pela face */
     u64 rejected; /* triângulos inteiramente fora do volume de visão */
+    /* Recursos do TEV por desenho (estudo do cel-shading, PLANO_PORT_C.md §7). */
+    u64 ztex_draws;     /* textura de Z ligada */
+    u64 fog_draws;      /* neblina ligada */
+    u64 indirect_draws; /* com estágios indiretos */
+    u32 max_stages;     /* maior número de estágios do TEV num desenho */
 } GxSetupStats;
 
 void gx_setup_reset(void);

@@ -485,6 +485,20 @@ static void write_texel(GuestAddr block, BlockLayout l, u32 s, u32 t, u32 v) {
     }
 }
 
+static void note_kind(u32 fmt, u32 w, u32 h, bool half, bool depth) {
+    GxEfbStats *st = &s_efb.stats;
+    for (u32 i = 0; i < st->kind_count; i++) {
+        GxEfbCopyKind *k = &st->kinds[i];
+        if (k->format == fmt && k->width == w && k->height == h && k->half == half && k->depth == depth) {
+            k->count++;
+            return;
+        }
+    }
+    if (st->kind_count < GX_EFB_COPY_KINDS) {
+        st->kinds[st->kind_count++] = (GxEfbCopyKind){fmt, w, h, half, depth, 1};
+    }
+}
+
 static void copy_to_texture(const CopyParams *p, u32 copy, u32 dest, u32 stride) {
     const u32 fmt = (((copy >> 3) & 15U) / 2U) + ((((copy >> 3) & 15U) & 1U) * 8U); /* tp_realFormat */
     const bool half = (copy & COPY_HALF_SCALE) != 0U;
@@ -517,6 +531,8 @@ static void copy_to_texture(const CopyParams *p, u32 copy, u32 dest, u32 stride)
     }
     s_efb.stats.texture_copies++;
     s_efb.stats.copy_formats |= 1U << fmt;
+    s_efb.stats.depth_copies += p->depth ? 1U : 0U;
+    note_kind(fmt, p->right - p->left, p->bottom - p->top, half, p->depth);
 }
 
 /* ClearEfb: a área da cópia, respeitando as máscaras de escrita de cor/alfa/Z. */

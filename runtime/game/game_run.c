@@ -371,7 +371,7 @@ void game_run_report(void) {
                 dsp_audio_dma_interrupts());
     const GxFifoStats *gx = gx_fifo_stats();
     AM_LOG_INFO("GX: %" PRIu64 " bytes no gather pipe, %" PRIu64 " comandos, %" PRIu64 " desenhos (%" PRIu64
-                " vértices), %" PRIu64 " BP, %" PRIu64 " DrawDone, %" PRIu64 " tokens, %" PRIu64 " cópias; descartado",
+                " vértices), %" PRIu64 " BP, %" PRIu64 " DrawDone, %" PRIu64 " tokens, %" PRIu64 " cópias",
                 gather_pipe_total_bytes(), gx->commands, gx->draws, gx->vertices, gx->bp_writes, gx->draw_done,
                 gx->tokens, gx->copies);
     const GxSetupStats *su = gx_setup_stats();
@@ -385,6 +385,14 @@ void game_run_report(void) {
                 " para textura (formatos 0x%04X), %" PRIu64 " limpezas",
                 efb->xfb_copies, efb->last_xfb_addr, efb->last_xfb_width, efb->last_xfb_height, efb->texture_copies,
                 efb->copy_formats, efb->clears);
+    AM_LOG_INFO("TEV: até %u estágios num desenho; %" PRIu64 " desenhos com textura de Z, %" PRIu64
+                " com neblina, %" PRIu64 " com estágios indiretos; %" PRIu64 " cópias de Z para textura",
+                su->max_stages, su->ztex_draws, su->fog_draws, su->indirect_draws, efb->depth_copies);
+    for (u32 i = 0; i < efb->kind_count; i++) {
+        const GxEfbCopyKind *k = &efb->kinds[i];
+        AM_LOG_INFO("  cópia para textura: formato %u, %ux%u%s%s, %" PRIu64 " vez(es)", k->format, k->width, k->height,
+                    k->half ? ", meia escala" : "", k->depth ? ", de Z" : "", k->count);
+    }
     AM_LOG_INFO("exceções: externa %" PRIu64 ", decrementer %" PRIu64 ", FP indisponível %" PRIu64,
                 exception_count_of(EXCEPTION_NUM_EXTERNAL), exception_count_of(EXCEPTION_NUM_DECREMENTER),
                 exception_count_of(EXCEPTION_NUM_FP_UNAVAILABLE));

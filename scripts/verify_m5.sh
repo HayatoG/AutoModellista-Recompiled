@@ -6,7 +6,9 @@
 #     --oracle         roda o Dolphin de novo (eventos com o mesmo roteiro) em vez de usar o de $AM_LOG_DIR
 #     --update-golden  regrava tests/golden/m5_events.json com o resumo desta execução
 # Builds em $BUILD_ROOT (os mesmos do verify_m4.sh: rode os dois com AM_GENERATED_DIR=/Volumes/AMRecomp/recomp/m5),
-# logs em $AM_LOG_DIR. Nada derivado do jogo entra no repositório.
+# logs em $AM_LOG_DIR. Nada derivado do jogo entra no repositório. Desde o M6 o GX em software vem ligado; aqui roda
+# com --gfx off (só eventos; os mesmos 551 eventos com o GX ligado, docs/M6_PRIMEIRO_QUADRO.md §7) para não levar
+# ~10 min por arquitetura.
 set -euo pipefail
 ROOT=${0:A:h:h}
 GEN=${AM_GENERATED_DIR:-/Volumes/AMRecomp/recomp/m5}
@@ -53,7 +55,7 @@ for arch in arm64 x86_64; do
   ctest --test-dir $B --output-on-failure | grep -E "tests passed|tests failed"
   t0=$(date +%s)
   (cd $AM_LOG_DIR && $T 1200 $B/runtime/automodellista --sys $SYS --frames $FRAMES --pad-script "$PAD" \
-    --events runtime_events_$arch.txt --max-seconds 1100 > runtime_$arch.log 2>&1) || { tail -5 $AM_LOG_DIR/runtime_$arch.log; exit 1; }
+    --events runtime_events_$arch.txt --gfx off --max-seconds 1100 > runtime_$arch.log 2>&1) || { tail -5 $AM_LOG_DIR/runtime_$arch.log; exit 1; }
   echo "$(tail -1 $AM_LOG_DIR/runtime_$arch.log | sed 's/^\[INFO\] //') em $(( $(date +%s) - t0 )) s"
   python3 -I scripts/compare_events.py --dolphin $AM_LOG_DIR/dolphin_events.txt \
     --runtime $AM_LOG_DIR/runtime_events_$arch.txt --summary-json $AM_LOG_DIR/compare_$arch.json \

@@ -22,6 +22,18 @@
 #define GX_PIXEL_RGB565_Z16 2U
 #define GX_PIXEL_Z24        3U
 
+/* Um tipo de cópia para textura (formato, tamanho de origem, meia escala, Z), para estudar o que o jogo copia. */
+typedef struct GxEfbCopyKind {
+    u32 format; /* formato de cópia real (0..12) */
+    u32 width;
+    u32 height;
+    bool half;
+    bool depth;
+    u64 count;
+} GxEfbCopyKind;
+
+#define GX_EFB_COPY_KINDS 16U
+
 typedef struct GxEfbStats {
     u64 xfb_copies;
     u64 texture_copies;
@@ -30,6 +42,9 @@ typedef struct GxEfbStats {
     u32 last_xfb_width;
     u32 last_xfb_height;
     u32 copy_formats; /* bit n: cópia para textura no formato de cópia n */
+    u64 depth_copies;
+    GxEfbCopyKind kinds[GX_EFB_COPY_KINDS];
+    u32 kind_count; /* tipos distintos guardados (os que não couberem só entram nas contagens) */
 } GxEfbStats;
 
 void gx_efb_reset(void);

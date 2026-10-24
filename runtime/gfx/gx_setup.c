@@ -62,6 +62,12 @@ void gx_setup_begin(u32 primitive, u32 vat) {
     }
     s_setup.write = s_setup.vp[0];
     s_setup.stats.draws++;
+    const u32 gen = gx_bp_reg(GX_BP_GENMODE);
+    const u32 stages = ((gen >> 10) & 15U) + 1U;
+    s_setup.stats.max_stages = stages > s_setup.stats.max_stages ? stages : s_setup.stats.max_stages;
+    s_setup.stats.indirect_draws += ((gen >> 16) & 7U) != 0U ? 1U : 0U;
+    s_setup.stats.ztex_draws += ((gx_bp_reg(GX_BP_ZTEX2) >> 2) & 3U) != 0U ? 1U : 0U;
+    s_setup.stats.fog_draws += ((gx_bp_reg(GX_BP_FOGPARAM3) >> 21) & 7U) != 0U ? 1U : 0U;
     s_setup.texgens = gx_xf_num_texgens();
     for (u32 n = 0; n < GX_TEXCOORD_MAX; n++) { /* TCInfo.scale_minus_1 + 1 (SU_SSIZE/TSIZE) */
         s_setup.tex_scale[n][0] = (f32)((gx_bp_reg((u8)(GX_BP_SU_SSIZE + (2U * n))) & 0xFFFFU) + 1U);
