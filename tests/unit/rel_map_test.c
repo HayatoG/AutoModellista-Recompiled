@@ -103,6 +103,25 @@ TEST(map_resolve_and_reverse) {
     EXPECT_TRUE(!rel_map_resolve(0x01800200U, 4, &phys));
 }
 
+/* Bug do M5: menu.rel e game.rel ocupam o mesmo endereço real um depois do outro. Sem tirar o menu da tradução
+ * real -> virtual no OSUnlink, um salto para o game.rel pelo endereço real caía no código do menu, e o OSUnlink do
+ * menu01 recebia a base virtual do menu00. */
+TEST(unlinked_module_leaves_reverse_map) {
+    rel_map_reset();
+    EXPECT_TRUE(rel_map_add(2, VIRT + 0x70000U, 0x1000, REAL));
+    EXPECT_TRUE(rel_map_retire(2));
+    EXPECT_TRUE(rel_map_add(1, VIRT, 0x1000, REAL));
+    GuestAddr v = 0;
+    EXPECT_TRUE(rel_map_real_to_virtual(REAL + 0x20U, &v));
+    EXPECT_EQ(v, VIRT + 0x20U);
+    u32 phys = 0; /* a janela virtual antiga ainda resolve (o SDK termina o Unlink por ela) */
+    EXPECT_TRUE(rel_map_resolve(0x01870010U, 4, &phys));
+    EXPECT_TRUE(rel_map_add(2, VIRT + 0x70000U, 0x1000, REAL + 0x4000U)); /* religado: volta à tradução */
+    EXPECT_TRUE(rel_map_real_to_virtual(REAL + 0x4000U, &v));
+    EXPECT_EQ(v, VIRT + 0x70000U);
+    EXPECT_TRUE(!rel_map_retire(9));
+}
+
 TEST(link_fixed_rewrites_arguments_and_shrinks_on_return) {
     rel_map_reset();
     hook_clear();
@@ -195,6 +214,7 @@ TEST(hooks_and_reachability) {
 int main(void) {
     EXPECT_TRUE(mem_init());
     RUN_TEST(map_resolve_and_reverse);
+    RUN_TEST(unlinked_module_leaves_reverse_map);
     RUN_TEST(link_fixed_rewrites_arguments_and_shrinks_on_return);
     RUN_TEST(hooks_and_reachability);
     mem_shutdown();

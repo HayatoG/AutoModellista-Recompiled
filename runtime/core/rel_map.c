@@ -49,7 +49,16 @@ bool rel_map_add(u32 id, GuestAddr virt, u32 size, GuestAddr real) {
         }
         slot = &s_rel.map[s_rel.count++];
     }
-    *slot = (RelMapping){.id = id, .virt = virt, .real = real, .size = size};
+    *slot = (RelMapping){.id = id, .virt = virt, .real = real, .size = size, .retired = false};
+    return true;
+}
+
+bool rel_map_retire(u32 id) {
+    RelMapping *m = find_id(id);
+    if (m == NULL) {
+        return false;
+    }
+    m->retired = true;
     return true;
 }
 
@@ -81,7 +90,7 @@ bool rel_map_real_to_virtual(GuestAddr real, GuestAddr *virt) {
     for (u32 i = 0; i < s_rel.count; i++) {
         const RelMapping *m = &s_rel.map[i];
         const u32 mp = phys_of(m->real);
-        if (rp >= mp && rp - mp < m->size) {
+        if (!m->retired && rp >= mp && rp - mp < m->size) {
             *virt = m->virt + (rp - mp);
             return true;
         }

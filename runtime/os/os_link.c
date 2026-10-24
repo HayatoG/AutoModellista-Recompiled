@@ -212,6 +212,8 @@ static HookAction hook_unlink(CPUState *cpu, void *user) {
     if (m == NULL || !rel_map_real_to_virtual(real, &virt)) {
         am_fatal("OSUnlink: 0x%08X (id %u) não é um módulo ligado", real, id);
     }
+    /* O Unlink do SDK procura pelo endereço que o OSLink devolveu (o virtual); depois disso o real é de outro. */
+    AM_ASSERT(rel_map_retire(id), "OSUnlink: módulo %u sem janela", id);
     cpu->gpr[3] = virt;
     record(m, true, real, virt, 0, 0, 0);
     AM_LOG_INFO("OSUnlink: módulo %s (id %u) real 0x%08X, base virtual 0x%08X", m->name, id, real, virt);

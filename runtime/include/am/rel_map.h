@@ -29,9 +29,13 @@ bool rel_map_add(u32 id, GuestAddr virt, u32 size, GuestAddr real);
 /* Encolhe o mapeamento do módulo (depois do OSLinkFixed as tabelas de relocação viram heap). */
 bool rel_map_shrink(u32 id, u32 size);
 
+/* OSUnlink: o módulo sai da tradução real -> virtual (a memória real vai ser de outro módulo; menu e game.rel usam o
+ * mesmo endereço). A janela virtual continua resolvendo para o mesmo real até o id ser ligado de novo. */
+bool rel_map_retire(u32 id);
+
 /* Físico da janela -> físico real, se [phys, phys+size) está inteiro dentro de um módulo. */
 bool rel_map_resolve(u32 phys, u32 size, u32 *real_phys);
-/* pc real (dentro de um módulo ligado) -> pc virtual. */
+/* pc real (dentro de um módulo ligado e não descarregado) -> pc virtual. */
 bool rel_map_real_to_virtual(GuestAddr real, GuestAddr *virt);
 
 typedef struct RelMapping {
@@ -39,6 +43,7 @@ typedef struct RelMapping {
     GuestAddr virt;
     GuestAddr real;
     u32 size;
+    bool retired;
 } RelMapping;
 
 u32 rel_map_count(void);
