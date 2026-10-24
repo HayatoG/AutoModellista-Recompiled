@@ -59,9 +59,15 @@ static struct {
     bool transfer_pending;
     u64 transfer_cycle;
 } s_mc;
+static ExiCardStats s_stats;
+
+const ExiCardStats *exi_card_stats(void) {
+    return &s_stats;
+}
 
 void exi_card_reset(void) {
     memset(&s_mc, 0, sizeof(s_mc));
+    memset(&s_stats, 0, sizeof(s_stats));
     s_mc.present = memcard_present();
     if (!s_mc.present) {
         return;
@@ -94,6 +100,7 @@ void exi_card_set_cs(u32 cs) {
     case MC_SECTOR_ERASE:
         if (s_mc.position > 2U) {
             memcard_clear_block(s_mc.address & (s_mc.card_size - 1U));
+            s_stats.sector_erases++;
             s_mc.status |= MC_STATUS_BUSY;
             s_mc.status &= ~MC_STATUS_READY;
             cmd_done_later(MC_CMD_DONE_CYCLES);
@@ -102,6 +109,7 @@ void exi_card_set_cs(u32 cs) {
     case MC_CHIP_ERASE:
         if (s_mc.position > 2U) {
             memcard_clear_all();
+            s_stats.chip_erases++;
             s_mc.status &= ~MC_STATUS_BUSY;
         }
         break;
@@ -109,6 +117,8 @@ void exi_card_set_cs(u32 cs) {
         if (s_mc.position >= 5U) {
             u32 count = s_mc.position - 5U;
             u32 i = 0;
+            s_stats.page_programs++;
+            s_stats.program_bytes += count;
             s_mc.status &= ~MC_STATUS_BUSY;
             while (count-- != 0U) {
                 memcard_write(s_mc.address, 1, &s_mc.program_buffer[i++]);
@@ -158,6 +168,7 @@ static u8 read_array_byte(u8 byte) {
     }
     if (pos > 1U) {
         memcard_read(s_mc.address & (s_mc.card_size - 1U), 1, &byte);
+        s_stats.array_bytes++;
         /* Depois de 9 bytes só o deslocamento dentro do setor avança; o ponteiro dá a volta. */
         if (pos >= 9U) {
             s_mc.address = (s_mc.address & ~0x1FFU) | ((s_mc.address + 1U) & 0x1FFU);
@@ -212,6 +223,7 @@ static u8 command_byte(u8 byte) {
 u8 exi_card_transfer(u8 byte) {
     if (s_mc.position == 0U) {
         s_mc.command = byte; /* o primeiro byte é o comando */
+        s_stats.commands++;
         byte = 0xFFU;
         if (s_mc.command == MC_CLEAR_STATUS) {
             s_mc.status &= ~(MC_STATUS_PROGRAMERROR | MC_STATUS_ERASEERROR);
@@ -239,9 +251,13 @@ void exi_card_dma(bool write, u32 addr, u32 size) {
     }
     if (write) {
         memcard_write(s_mc.address, size, host);
+        s_stats.dma_writes++;
+        s_stats.dma_write_bytes += size;
         transfer_in(size, MC_TRANSFER_RATE_WRITE);
     } else {
         memcard_read(s_mc.address, size, host);
+        s_stats.dma_reads++;
+        s_stats.dma_read_bytes += size;
         mem_mark_written(addr & 0x03FFFFFFU, size);
         transfer_in(size, MC_TRANSFER_RATE_READ);
     }

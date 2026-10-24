@@ -25,6 +25,21 @@ u64 exi_card_next_event_cycle(void);
 /* Primeiros MEMCARD_HEADER_BYTES do cartão, de onde sai o flash ID da SRAM (Sram.cpp: SetCardFlashID). */
 void exi_card_header(u8 *out20);
 
+/* Contadores para o relatório (nada disso entra no tempo emulado). */
+typedef struct ExiCardStats {
+    u64 commands;    /* chip selects com comando */
+    u64 array_bytes; /* bytes lidos de um em um (ReadArray imediato) */
+    u64 dma_reads;   /* DMAs cartão -> memória */
+    u64 dma_read_bytes;
+    u64 dma_writes; /* DMAs memória -> cartão */
+    u64 dma_write_bytes;
+    u64 page_programs; /* PageProgram concluídos (até 128 bytes cada) */
+    u64 program_bytes;
+    u64 sector_erases;
+    u64 chip_erases;
+} ExiCardStats;
+const ExiCardStats *exi_card_stats(void);
+
 /* Ponte para hw/exi.c. */
 void exi_channel_transfer_complete(u32 channel);
 void exi_refresh_interrupts(void);

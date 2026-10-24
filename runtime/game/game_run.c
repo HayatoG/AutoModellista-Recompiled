@@ -16,6 +16,7 @@
 #include "am/dsp.h"
 #include "am/dsp_hle.h"
 #include "am/exception.h"
+#include "am/exi_card.h"
 #include "am/game.h"
 #include "am/game_diag.h"
 #include "am/gather_pipe.h"
@@ -591,6 +592,14 @@ void game_run_report(void) {
     AM_LOG_INFO("DVD: %" PRIu64 " comandos, %" PRIu64 " leituras (%" PRIu64 " bytes, %" PRIu64
                 " de enchimento), %" PRIu64 " AudioBufferConfig",
                 di->commands, di->reads, di->read_bytes, disc->padding_bytes, di->audio_buffer_config);
+    if (exi_card_present()) {
+        const ExiCardStats *mc = exi_card_stats();
+        AM_LOG_INFO("memory card: %" PRIu64 " comandos; lido %" PRIu64 " bytes em %" PRIu64 " DMA(s) e %" PRIu64
+                    " byte(s) avulsos; gravado %" PRIu64 " bytes em %" PRIu64 " DMA(s) e %" PRIu64
+                    " PageProgram (%" PRIu64 " bytes por escrita imediata); %" PRIu64 " setores apagados",
+                    mc->commands, mc->dma_read_bytes, mc->dma_reads, mc->array_bytes, mc->dma_write_bytes,
+                    mc->dma_writes, mc->page_programs, mc->program_bytes, mc->sector_erases);
+    }
     AM_LOG_INFO("VI: %" PRIu64 " campos, XFB 0x%08X; SI: %" PRIu64
                 " leituras do controle; AI: streaming ligado %" PRIu64 " vez(es)",
                 vi_field_count(), vi_xfb_top(), si_poll_count(), ai_stream_starts());
