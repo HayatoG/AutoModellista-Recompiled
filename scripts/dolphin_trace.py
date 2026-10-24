@@ -377,6 +377,30 @@ def collect_audio_dump(args) -> None:
     print(f"áudio do Dolphin: {target} ({target.stat().st_size} bytes)")
 
 
+# M8 parte 2b: o TBL do GDB é o do último mftb. Para ter o tempo exato numa sonda, a CPU passa por um trecho posto na
+# memória baixa livre (0x80001800, entre os vetores de exceção e o DOL): "mftb r12; mtctr r11; bctr", com r11 = PC da
+# sonda. O trecho tem breakpoint, então o Dolphin executa o mftb no interpretador (CPU.cpp: ao continuar parado num
+# breakpoint, um passo no interpretador), que lê o tempo exato; o bctr volta à sonda, que para de novo. Lê-se o TB e
+# r11, r12 e CTR voltam ao que eram. ("s" do GDB não serve: com o JIT ele roda uma fatia inteira de tempo.) Custa 3
+# instruções emuladas por sonda e muda o "último mftb" que o quadro seguinte mostra.
+EXACT_TB_STUB = 0x80001800
+EXACT_TB_CODE = bytes.fromhex("7D8C42E6" "7D6903A6" "4E800420")  # mftb r12; mtctr r11; bctr
+
+
+def exact_timebase(client: gdb.GdbClient, pc: int) -> int:
+    r11, r12, ctr = client.read_reg(11), client.read_reg(12), client.read_reg(gdb.REG_CTR)
+    client.write_reg(11, pc)
+    client.write_reg(gdb.REG_PC, EXACT_TB_STUB)
+    back = stop_pc(client, client.cont())
+    if back != pc:
+        raise SystemExit(f"sonda exata: esperava voltar a {pc:08X}, parou em {back:08X}")
+    tb = (client.read_reg(gdb.REG_TBU) << 32) | client.read_reg(gdb.REG_TBL)
+    client.write_reg(11, r11)
+    client.write_reg(12, r12)
+    client.write_reg(gdb.REG_CTR, ctr)
+    return tb
+
+
 def cmd_events(args) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -432,13 +456,17 @@ def cmd_events(args) -> int:
                 tb_out.write(f"dvdirq {tb}\n")
             elif pc in probes and frames >= probe_from:
                 tb = (client.read_reg(gdb.REG_TBU) << 32) | client.read_reg(gdb.REG_TBL)
-                tb_out.write(f"probe {pc:08X} {lr:08X} {tb}\n")
+                exact = f" {exact_timebase(client, pc)}" if args.probes_exact else ""
+                tb_out.write(f"probe {pc:08X} {lr:08X} {tb}{exact}\n")
             elif pc == FRAME and lr == FRAME_RETURN:
                 if frames >= args.frames:
                     reason = "frames"
                     break
                 frames += 1
                 if probes and frames == probe_from:
+                    if args.probes_exact:
+                        client.write_mem(EXACT_TB_STUB, EXACT_TB_CODE)
+                        client.add_breakpoint(EXACT_TB_STUB)
                     for a in probes:
                         if a not in (MAIN, OS_LINK, OS_LINK_FIXED, OS_UNLINK, DVD_READ, FRAME, DVD_IRQ):
                             client.add_breakpoint(a)
@@ -500,6 +528,8 @@ def main() -> int:
     e.add_argument("--audio-dump", default=None, help="M7: grava o dspdump.wav do Dolphin neste arquivo")
     e.add_argument("--timebase-out", default=None, help="M7: grava 'quadro timebase' na entrada de cada quadro")
     e.add_argument("--probes", default=None, help="M8: 'q0:hex,hex' grava 'probe pc lr tb' a partir do quadro q0")
+    e.add_argument("--probes-exact", action="store_true",
+                   help="M8: acrescenta às sondas o timebase exato (executa um mftb; muda o 'último mftb' do jogo)")
     args = ap.parse_args()
     if args.cmd == "events":
         return cmd_events(args)
