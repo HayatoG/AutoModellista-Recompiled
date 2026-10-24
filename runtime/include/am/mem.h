@@ -55,6 +55,7 @@ u32 mem_cow_epoch(void);          /* cpu */
 void mem_cow_next_epoch(void);    /* cpu: o chamador já esperou o GX terminar a época atual - depth */
 void mem_cow_gx_done(u32 epoch);  /* gx: terminou tudo até `epoch` (inclusive) */
 void mem_cow_gx_epoch(u32 epoch); /* gx: época dos comandos que vai executar */
+u32 mem_cow_gx_current(void);     /* gx: a época de mem_cow_gx_epoch (0 desligada) */
 u64 mem_cow_copies(void);         /* páginas copiadas até agora */
 /* gx: leitura na visão da época (endereço de CPU; fora da MEM1 vai ao barramento) */
 void mem_gx_read(GuestAddr addr, u8 *dst, u32 size);

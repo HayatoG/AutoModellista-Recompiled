@@ -326,6 +326,10 @@ void mem_cow_gx_epoch(u32 epoch) {
     s_mem.cow.gx_epoch = epoch;
 }
 
+u32 mem_cow_gx_current(void) {
+    return s_mem.cow.on ? s_mem.cow.gx_epoch : 0U;
+}
+
 u64 mem_cow_copies(void) {
     return atomic_load_explicit(&s_mem.cow.copies, memory_order_relaxed);
 }

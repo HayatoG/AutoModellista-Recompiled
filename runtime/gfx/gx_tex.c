@@ -398,6 +398,8 @@ typedef struct TexCacheEntry {
     u32 tlut_format;
     u64 tlut_hash;
     u64 written;
+    u64 view_written; /* M8 parte 2b: conferida pela cópia da época view_epoch com esta soma de escritas */
+    u32 view_epoch;
     u64 last_use;
     u64 serial;
     u64 content; /* hash dos bytes da textura (e da TLUT) quando decodificada */
@@ -623,6 +625,7 @@ typedef struct TexKey {
     u64 tlut_hash;
     u64 written;
     bool trusted; /* o contador de escritas vale para os bytes lidos (falso quando vêm da cópia da época) */
+    u32 gx_epoch; /* época do GX da consulta (a cópia da época não muda dentro dela) */
 } TexKey;
 
 #define TEX_WRITTEN_UNKNOWN UINT64_MAX /* nenhuma soma real chega aqui: obriga a conferir pelo hash */
@@ -668,9 +671,12 @@ static TexCacheEntry *cache_find(const TexUnit *u, const TexKey *k, TexCacheEntr
         }
         if (e->levels >= k->levels &&
             ((k->trusted && e->written == k->written) ||
+             (!k->trusted && e->view_epoch == k->gx_epoch && e->view_written == k->written) ||
              (e->bytes == k->bytes &&
               e->content == hash_bytes(u->src.data, k->bytes < u->src.size ? k->bytes : u->src.size)))) {
             e->written = k->trusted ? k->written : TEX_WRITTEN_UNKNOWN;
+            e->view_epoch = k->trusted ? 0U : k->gx_epoch;
+            e->view_written = k->written;
             return e;
         }
         *stale = e;
@@ -699,6 +705,8 @@ static void cache_insert(TexUnit *u, const TexKey *k, TexCacheEntry *stale) {
                               .tlut_format = u->src.tlut_format,
                               .tlut_hash = k->tlut_hash,
                               .written = k->trusted ? k->written : TEX_WRITTEN_UNKNOWN,
+                              .view_written = k->written,
+                              .view_epoch = k->trusted ? 0U : k->gx_epoch,
                               .last_use = ++s_tex.clock,
                               .texels = victim->texels,
                               .bucket = k->bucket,
@@ -724,6 +732,7 @@ static void cache_lookup(u32 texmap, TexUnit *u) {
     k.tlut_hash = paletted(u->format) ? tlut_hash_of(u) : 0U;
     k.written = mem_written_sum(k.addr, k.bytes);
     k.trusted = !tex_view(texmap, u, k.addr, k.bytes); /* depois da soma: uma escrita contada já está marcada */
+    k.gx_epoch = mem_cow_gx_current();
     k.bucket = bucket_of(k.addr);
     cache_resolve(u, &k);
     if (k.trusted && !mem_gx_unchanged(k.addr, k.bytes)) {
