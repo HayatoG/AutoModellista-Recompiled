@@ -5,10 +5,12 @@
 #   - capturas do filme da abertura (q1600), "PRESS START" (q1800), menu principal (q2300) e largada (q6400) com o GX
 #     em software e na GPU, comparadas entre si e com o Dolphin (scripts/compare_shots.py);
 #   - a janela no modo de tempo real com a GPU: quadros/s do jogo e desenhados no menu e na corrida.
-#   scripts/verify_m8.sh [--oracle] [--update-golden] [--no-window]
+#   scripts/verify_m8.sh [--oracle] [--update-golden] [--no-window] [--cel]
 #     --oracle         roda o Dolphin de novo (capturas e timebase) em vez de usar os de $AM_LOG_DIR
 #     --update-golden  regrava tests/golden/m8_corrida.json com o resumo desta execução
 #     --no-window      pula as execuções com janela (sessão sem tela)
+#     --cel            M8 parte 2b: acelera e anda na pista até o quadro 8400 (soft e GPU contra o Dolphin, contagem
+#                      do GX no trecho; docs/M8_PARTE2B_CEL.md). Roda no lugar do roteiro padrão, só em arm64.
 # Builds em $BUILD_ROOT (os mesmos dos verify anteriores); logs, capturas e traces em $AM_LOG_DIR, fora do repositório.
 set -euo pipefail
 ROOT=${0:A:h:h}
@@ -24,10 +26,10 @@ PAD="320:D_LEFT:8,360:A:8,1700:START:8,2000:START:8,2600:A:8,2900:A:8,3300:A:8,3
 PAD="$PAD,4500:A:8,4800:A:8,5100:A:8,5400:A:8,5700:A:8"
 FRAMES=6400
 SHOTS=(1600 1800 2300 6400)
-ORACLE=0; UPDATE=0; WINDOW=1
+ORACLE=0; UPDATE=0; WINDOW=1; CEL=0
 for a in "$@"; do
   case $a in
-    --oracle) ORACLE=1 ;; --update-golden) UPDATE=1 ;; --no-window) WINDOW=0 ;;
+    --oracle) ORACLE=1 ;; --update-golden) UPDATE=1 ;; --no-window) WINDOW=0 ;; --cel) CEL=1 ;;
     *) echo "opção desconhecida: $a"; exit 2 ;;
   esac
 done
@@ -39,6 +41,35 @@ cd $ROOT
 echo "== clang-format"
 find runtime tests/unit -type f \( -name '*.c' -o -name '*.h' \) ! -name '*_metallib.h' -print0 \
   | xargs -0 $LLVM/clang-format --dry-run -Werror
+
+# Trecho do cel-shading (docs/M8_PARTE2B_CEL.md): acelera (A) a partir do quadro 6900 e vira à direita em 7700.
+if [[ $CEL == 1 ]]; then
+  CPAD="$PAD,6900:A:1500,7700:D_RIGHT:120"; CSHOTS=(7400 7600 7750 7850 7950 8100 8400); CF=8400
+  mkdir -p $AM_LOG_DIR/cel
+  cshots() { local s=() f; for f in $CSHOTS; do s+=("$f:cel/$1_f$f.png"); done; echo ${(j:,:)s}; }
+  if [[ $ORACLE == 1 || ! -f $AM_LOG_DIR/cel/dolphin_f$CF.png ]]; then
+    echo "== cel: Dolphin com o roteiro da corrida andando"
+    lockf /Volumes/AMRecomp/wt-builds/dolphin.lock $T 1900 python3 -I scripts/dolphin_trace.py --iso "$ISO" --video Metal \
+      --dolphin-log $AM_LOG_DIR/cel/dolphin.log events --pad-script "$CPAD" --frames $CF \
+      --shots ${(j:,:)CSHOTS} --timebase-out $AM_LOG_DIR/cel/dolphin_tb.txt --timeout 1800 \
+      --out $AM_LOG_DIR/cel/dolphin.txt | tail -1
+  fi
+  B=$BUILD_ROOT/build-arm64-release
+  for gfx in soft gpu; do
+    (cd $AM_LOG_DIR && $T 3000 $B/runtime/automodellista --sys $SYS --frames $CF --pad-script "$CPAD" --gfx $gfx \
+      --audio off --shot $(cshots $gfx) --max-seconds 2900 > cel/$gfx.log 2>&1) || { tail -5 $AM_LOG_DIR/cel/$gfx.log; exit 1; }
+    echo "  cel --gfx $gfx: $(grep -E '^\[INFO\] (GX render|TEV:)' $AM_LOG_DIR/cel/$gfx.log | sed 's/^\[INFO\] //' | tr '\n' ' ')"
+  done
+  for f in $CSHOTS; do
+    L=$AM_LOG_DIR/cel
+    python3 -I scripts/compare_shots.py $L/soft_f$f.png $L/dolphin_f$f.png --min-psnr 30 --max-bad 2 \
+      --side-by-side $L/lado_soft_dolphin_f$f.png | sed 's/^/  cel soft x Dolphin: /'
+    python3 -I scripts/compare_shots.py $L/gpu_f$f.png $L/dolphin_f$f.png --min-psnr 34 --max-bad 1 \
+      --side-by-side $L/lado_gpu_dolphin_f$f.png | sed 's/^/  cel GPU x Dolphin: /'
+  done
+  echo "== OK (cel)"
+  exit 0
+fi
 
 if [[ $ORACLE == 1 || ! -f $AM_LOG_DIR/dolphin_f${SHOTS[-1]}.png || ! -f $AM_LOG_DIR/dolphin_tb.txt ]]; then
   echo "== oráculo: Dolphin (Metal, XFB na RAM) com o roteiro da corrida, capturas e timebase"
