@@ -65,6 +65,33 @@ void gx_fifo_feed(const u8 *data, u32 size);
 /* Tamanho em bytes de um vértice com o VCD atual e o formato `vat` (0..7). Exposto para teste. */
 u32 gx_fifo_vertex_size(u32 vat);
 
+/* Com a thread do GX, sincroniza antes de devolver. */
 const GxFifoStats *gx_fifo_stats(void);
+
+/* M8: o GX numa thread própria. A thread da CPU lê o fluxo só por cima (CP, BP, display lists) e dispara os eventos
+ * de BP no mesmo ponto de antes, depois de esperar o GX terminar o que veio antes; a outra thread faz o resto. Os
+ * objetos vêm da plataforma (am/platform.h), que o núcleo não conhece. Ligar logo depois de gx_fifo_reset. */
+typedef struct GxFifoThreadApi {
+    void *(*thread_start)(const char *name, int (*fn)(void *user), void *user);
+    void (*thread_join)(void *thread);
+    void *(*lock_create)(void);
+    void (*lock_destroy)(void *lock);
+    void (*lock)(void *lock);
+    void (*unlock)(void *lock);
+    void *(*cond_create)(void);
+    void (*cond_destroy)(void *cond);
+    void (*cond_wait)(void *cond, void *lock);
+    void (*cond_signal)(void *cond);
+    u64 (*ticks_ns)(void);
+} GxFifoThreadApi;
+bool gx_fifo_thread_start(const GxFifoThreadApi *api);
+/* Termina o que está na fila e para a thread (gx_fifo_reset também para). */
+void gx_fifo_thread_stop(void);
+bool gx_fifo_threaded(void);
+/* Espera a thread do GX terminar tudo o que já foi alimentado (sem thread, nada). Antes de ler o XFB ou o EFB. */
+void gx_fifo_sync(void);
+/* Sincronizações pedidas, quantas encontraram o GX ainda trabalhando e o tempo de relógio esperado por motivo
+ * (0 = DrawDone, 1 = token, 2 = leitura de fora: XFB, estatísticas). */
+void gx_fifo_thread_counters(u64 *syncs, u64 *waits, u64 wait_ns[3]);
 
 #endif /* AM_GX_FIFO_H */

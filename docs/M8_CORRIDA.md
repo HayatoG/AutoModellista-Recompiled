@@ -211,7 +211,8 @@ Logs, capturas e traces em `/Volumes/AMRecomp/logs/m8/` (fora do git).
 - Cel-shading da corrida (cópias EFB -> textura e textura de Z) conferido contra o Dolphin, na GPU e no software.
 - Neblina e textura de Z da pista em movimento.
 - Memory card (CARD): save gravado e lido.
-- 60 quadros/s desenhados na corrida: GX numa thread própria (§4).
+- 60 quadros/s desenhados na corrida: a thread do GX está feita (§11, parte 2a); falta não esperar o GX no DrawDone
+  (parte 2b).
 - Os 2 campos restantes do tempo emulado (§2).
 
 ## 9. Pendências e o que não foi verificado
@@ -235,3 +236,64 @@ Logs, capturas e traces em `/Volumes/AMRecomp/logs/m8/` (fora do git).
   do Dolphin (que também desenha numa GPU) do que o software.
 - **O gargalo muda de lugar.** Tirar o pixel da CPU revelou um cache de texturas que decodificava a mesma textura a
   cada quadro por causa de uma página de 4 KiB vizinha; o hash do conteúdo levou 87 mil decodificações para 264.
+
+## 11. Parte 2a: o GX numa thread própria
+
+Estado: **thread do GX feita e determinística, sem ganho de quadros/s**; fica atrás de `--gx-thread on` (padrão
+off). O objetivo (60 desenhados na corrida) não foi atingido; o motivo foi medido e está abaixo.
+
+### Como funciona
+
+Como o "dual core" do Dolphin, mas com os eventos no mesmo ponto do tempo emulado de antes (`gfx/gx_fifo.c`):
+
+- a thread da CPU emulada lê o fluxo **só por cima**: opcode e cabeçalho de cada comando, uma cópia dos registradores
+  do CP que dão o tamanho do vértice (VCD e VAT, `gx_vtx_size_of`), uma cópia dos registradores do BP (com a máscara)
+  e as display lists, pulando vértices e palavras de XF sem lê-los;
+- os bytes vão para uma fila de blocos de 32 KiB (até 1 MiB em voo) que a thread do GX consome com o leitor completo
+  de antes: vertex loader, XF, montagem, rasterização ou GPU, cópias do EFB. O pulo de quadro anda pela fila junto
+  com os bytes;
+- **DrawDone e tokens** são disparados pela thread da CPU no mesmo byte de antes, depois de esperar o GX terminar tudo o
+  que veio antes deles. O tempo emulado não muda (o evento sai na mesma instrução), e quando o jogo reaproveita memória
+  que o GX lê, o que só faz depois desses eventos, o GX já a leu;
+- quem lê o que o GX escreveu fora desses pontos (o XFB da janela e das capturas, as estatísticas) sincroniza antes.
+
+Conferido (`verify_m8.sh`, arm64 e x86_64, passou; ctest 49/49; golden igual, sem regravar): com `--gx-thread on` as capturas da GPU e do software e o arquivo de timebase até o q6400 são **idênticos
+byte a byte** aos de `--gx-thread off` (`verify_m8.sh` passou a conferir isso para a GPU nos dois builds).
+
+### Por que não ganhou
+
+O log da thread (`GX thread: ... espera de N ms no DrawDone`) mostra para onde foi o tempo. Sem janela, desenhando
+todos os quadros até o q6600 (arm64): 19 804 sincronizações (3 por quadro), 14 170 com o GX ainda trabalhando, e
+**46,7 s esperando no DrawDone** contra 0,07 s nos tokens. O jogo manda o quadro quase todo em display lists (para a
+CPU, um `CALL_DL` é barato; o trabalho fica no GX) e logo em seguida pede o DrawDone e espera por ele. A CPU fica
+parada esperando o GX: na execução do `verify_m8.sh` (sozinha, até o q6400) foram 27,2 s no DrawDone em arm64 e
+36,0 s em x86_64, contra 85 s e 123 s de execução. A sobreposição é pequena e os números não se mexem:
+
+| Medição (arm64) | `--gx-thread off` | `--gx-thread on` |
+| --- | --- | --- |
+| sem janela, todos os quadros desenhados, menu / corrida (duas execuções em paralelo) | 47,4 / 41,4 | 47,5 / 41,1 |
+| janela (medição do `verify_m8.sh`), menu 2160–2400 | 60,9 / 60,0 (§4) | 59,8 / 55,0 |
+| janela, corrida 6240–6600 | 52,8 / 30,8 (§4) | 51,8 / 30,8 |
+
+Por isso o padrão continua off: ligado, a corrida fica igual e o menu, uma execução, saiu um pouco abaixo.
+
+### O que falta para ganhar (parte 2b)
+
+Para o GX andar junto com a lógica do quadro seguinte, a CPU não pode esperar no DrawDone, e então o GX passa a ler
+memória que a CPU já pode estar reescrevendo (matrizes carregadas por índice, vértices dinâmicos, display lists). Os
+caminhos possíveis, do mais simples ao mais completo:
+
+1. a thread da CPU tira na hora as cópias do que o GX vai ler da memória (as cargas indexadas do XF, as display
+   lists e os elementos dos arrays de vértices pelos índices) e as manda na fila, como o Dolphin faz com a FIFO;
+   texturas continuam lidas pelo GX, protegidas pelo contador de escritas por página;
+2. cópia na escrita: depois de um DrawDone sem espera, a primeira escrita da CPU numa página copia a página antiga
+   para o GX (exige um gancho no caminho de escrita e cuidado com a ordem de memória entre as threads).
+
+A sincronização pela fila, a leitura por cima e a conferência byte a byte já estão prontas para qualquer um dos dois.
+
+### Lições
+
+- **Medir onde a thread espera antes de otimizar.** Três sincronizações por quadro pareciam pouco; o tempo delas é
+  que conta, e quase tudo estava num único ponto, o DrawDone.
+- **Determinismo de graça vem do lugar do evento.** Disparar DrawDone e tokens na thread da CPU, no mesmo byte, deixou
+  tempo emulado e imagens idênticos sem nenhum relógio de GPU emulado; o preço é esperar o GX nesse ponto.

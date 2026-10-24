@@ -218,6 +218,7 @@ static bool capture_frame(CPUState *cpu, bool refresh) {
         }
         const u32 shown = vi_xfb_top();
         if (shown != 0U && refresh) { /* depois de um quadro pulado, o XFB é velho: fica a última imagem */
+            gx_fifo_sync();
             xfb_to_rgba(shown);
         }
         const PlatformWindowResult r =
@@ -234,6 +235,7 @@ static bool capture_frame(CPUState *cpu, bool refresh) {
                         shot->path);
             return open;
         }
+        gx_fifo_sync();
         xfb_to_rgba(xfb);
         if (!platform_save_png(shot->path, s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT)) {
             am_fatal("não consegui gravar %s: %s", shot->path, platform_last_error());
@@ -407,6 +409,17 @@ static bool init_video(const GameRunConfig *config) {
         gx_gpu_set_backend(platform_gpu_run);
         AM_LOG_INFO("GX: desenho na GPU (driver %s, ubershader TEV)", platform_gpu_name());
     }
+    if (config->render && config->gx_thread) {
+        static const GxFifoThreadApi s_api = {platform_thread_start, platform_thread_join,  platform_lock_create,
+                                              platform_lock_destroy, platform_lock,         platform_unlock,
+                                              platform_cond_create,  platform_cond_destroy, platform_cond_wait,
+                                              platform_cond_signal,  platform_ticks_ns};
+        if (!gx_fifo_thread_start(&s_api)) {
+            AM_LOG_ERROR("GX: não consegui criar a thread do GX: %s", platform_last_error());
+            return false;
+        }
+        AM_LOG_INFO("GX: numa thread própria (a CPU emulada só lê o fluxo por cima)");
+    }
     if (config->window_scale == 0U) {
         return true;
     }
@@ -508,6 +521,7 @@ void game_run_shutdown(void) {
         s_run.timebase = NULL;
     }
     dsp_set_audio_sink(NULL, NULL);
+    gx_fifo_thread_stop();
     gx_raster_set_parallel(NULL, 1);
     platform_parallel_shutdown();
     if (gx_gpu_active()) {
@@ -640,6 +654,15 @@ static void report_gx(void) {
         const u64 wait_us = platform_gpu_wait_us(&readbacks);
         AM_LOG_INFO("GX GPU: %" PRIu64 " leituras do EFB, espera média pela GPU de %" PRIu64 " µs", readbacks,
                     readbacks != 0U ? wait_us / readbacks : 0U);
+    }
+    if (gx_fifo_threaded()) {
+        u64 syncs = 0;
+        u64 waits = 0;
+        u64 wait_ns[3] = {0};
+        gx_fifo_thread_counters(&syncs, &waits, wait_ns);
+        AM_LOG_INFO("GX thread: %" PRIu64 " sincronizações, %" PRIu64 " com o GX ainda trabalhando; espera de %" PRIu64
+                    " ms no DrawDone, %" PRIu64 " ms nos tokens, %" PRIu64 " ms nas leituras do XFB",
+                    syncs, waits, wait_ns[0] / 1000000U, wait_ns[1] / 1000000U, wait_ns[2] / 1000000U);
     }
 }
 

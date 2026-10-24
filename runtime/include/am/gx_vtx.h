@@ -44,6 +44,9 @@ u32 gx_vtx_cp(u8 reg);
 
 /* Tamanho em bytes de um vértice com o VCD atual e o formato `vat` (0..7). */
 u32 gx_vtx_size(u32 vat);
+/* O mesmo tamanho a partir dos registradores (VCD baixo/alto, VAT A/B/C do formato): a thread da CPU o usa com a
+ * sua cópia do CP quando o GX roda em outra thread (gx_fifo). */
+u32 gx_vtx_size_of(u32 vcd_lo, u32 vcd_hi, u32 vat_a, u32 vat_b, u32 vat_c);
 
 /* Lê um vértice de `gx_vtx_size(vat)` bytes. `out` chega com os índices de matriz padrão (XF MatrixIndexA/B), que
  * os índices por vértice substituem. Atributos indexados são lidos da memória do guest. */

@@ -84,6 +84,50 @@ static int SDLCALL pool_thread(void *arg) {
     return 0;
 }
 
+void *platform_thread_start(const char *name, PlatformThreadFn fn, void *user) {
+    SDL_Thread *t = SDL_CreateThread(fn, name, user);
+    if (t == NULL) {
+        set_error(SDL_GetError());
+    }
+    return t;
+}
+
+void platform_thread_join(void *thread) {
+    SDL_WaitThread((SDL_Thread *)thread, NULL);
+}
+
+void *platform_lock_create(void) {
+    return SDL_CreateMutex();
+}
+
+void platform_lock_destroy(void *lock) {
+    SDL_DestroyMutex((SDL_Mutex *)lock);
+}
+
+void platform_lock(void *lock) {
+    SDL_LockMutex((SDL_Mutex *)lock);
+}
+
+void platform_unlock(void *lock) {
+    SDL_UnlockMutex((SDL_Mutex *)lock);
+}
+
+void *platform_cond_create(void) {
+    return SDL_CreateCondition();
+}
+
+void platform_cond_destroy(void *cond) {
+    SDL_DestroyCondition((SDL_Condition *)cond);
+}
+
+void platform_cond_wait(void *cond, void *lock) {
+    SDL_WaitCondition((SDL_Condition *)cond, (SDL_Mutex *)lock);
+}
+
+void platform_cond_signal(void *cond) {
+    SDL_BroadcastCondition((SDL_Condition *)cond);
+}
+
 bool platform_parallel_init(u32 workers) {
     platform_parallel_shutdown();
     if (workers > PLATFORM_MAX_WORKERS) {

@@ -23,6 +23,7 @@ typedef struct GameRunConfig {
     const char *timebase_out; /* M7: "quadro timebase" na entrada de cada quadro (dolphin_trace.py --timebase-out) */
     bool gx_tex_cache;        /* M7: cache de texturas decodificadas (padrão ligado) */
     u32 gx_threads;           /* M7: trabalhadores do rasterizador (0 = um por núcleo lógico; 1 = sem threads) */
+    bool gx_thread;           /* M8: o GX numa thread própria (am/gx_fifo.h; padrão ligado com janela) */
     const char *profile;      /* M8: NULL ou "<q0>:<q1>:<arq>" (am/game_diag.h) */
     const char *probes;       /* M8: NULL ou "<q0>:<hex>,..." (am/game_diag.h) */
 } GameRunConfig;

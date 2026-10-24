@@ -81,6 +81,16 @@ for arch in arm64 x86_64; do
       || { tail -5 $AM_LOG_DIR/runtime_${gfx}_$arch.log; exit 1; }
     echo "  --gfx $gfx: $FRAMES quadros em $(( $(date +%s) - t0 )) s"
   done
+  (cd $AM_LOG_DIR && $T 1500 $B/runtime/automodellista --sys $SYS --frames $FRAMES --pad-script "$PAD" --gfx gpu \
+    --gx-thread on --shot $(shot_args gputh_$arch) --timebase-out runtime_tb_gputh_$arch.txt --max-seconds 1400 \
+    > runtime_gputh_$arch.log 2>&1) || { tail -5 $AM_LOG_DIR/runtime_gputh_$arch.log; exit 1; }
+  for f in $SHOTS; do
+    cmp -s $AM_LOG_DIR/gputh_${arch}_f$f.png $AM_LOG_DIR/gpu_${arch}_f$f.png \
+      || { echo "  --gx-thread on: captura q$f DIFERENTE"; exit 1; }
+  done
+  cmp -s $AM_LOG_DIR/runtime_tb_gputh_$arch.txt $AM_LOG_DIR/runtime_tb_$arch.txt \
+    || { echo "  --gx-thread on: tempo emulado DIFERENTE"; exit 1; }
+  echo "  --gx-thread on: capturas da GPU e tempo emulado idênticos; $(grep -o 'GX thread: .*' $AM_LOG_DIR/runtime_gputh_$arch.log)"
   grep -E "^\[INFO\] GX GPU" $AM_LOG_DIR/runtime_gpu_$arch.log | sed 's/^\[INFO\] /  /'
   python3 -I scripts/compare_timebase.py $AM_LOG_DIR/runtime_tb_$arch.txt $AM_LOG_DIR/dolphin_tb.txt --frame $FRAMES \
     --max-lag 3 --json $AM_LOG_DIR/timebase_$arch.json | sed 's/^/  /'

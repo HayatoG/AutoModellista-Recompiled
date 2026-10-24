@@ -38,6 +38,8 @@
  *   --probes <q0>:<hex>,...    M8: a partir do quadro q0, entrada nesses endereços no --timebase-out
  *   --frameskip on|off         M7: com --realtime, não desenha até 4 quadros seguidos quando a emulação atrasa
  *                              (padrão on; o jogo segue no ritmo certo e a janela mostra a última imagem)
+ *   --gx-thread on|off         M8: o GX numa thread própria, como o "dual core" do Dolphin (padrão off: o
+ *                              jogo espera o GX no DrawDone, docs/M8_CORRIDA.md §11); tempo e imagens iguais
  *   --gx-threads <n>           M7: trabalhadores do rasterizador (padrão 0 = um por núcleo; 1 = sem threads). A
  *                              imagem é a mesma com qualquer número (am/gx_raster.h)
  *   --verbose                  log de depuração (acessos MMIO, UART)
@@ -92,6 +94,7 @@ typedef struct Options {
     u64 gx_threads;
     int gx_tex_cache; /* -1 = padrão */
     int frameskip;    /* -1 = padrão */
+    int gx_thread;    /* -1 = padrão */
     const char *timebase_out;
     const char *profile;
     const char *probes;
@@ -159,6 +162,7 @@ static bool parse_switch(Options *o, const char *name, const char *value) {
     } switches[] = {{"--audio", &o->audio},
                     {"--realtime", &o->realtime},
                     {"--frameskip", &o->frameskip},
+                    {"--gx-thread", &o->gx_thread},
                     {"--gx-tex-cache", &o->gx_tex_cache}};
     for (size_t i = 0; i < sizeof(switches) / sizeof(switches[0]); i++) {
         if (strcmp(name, switches[i].name) == 0) {
@@ -238,6 +242,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
                    .realtime = -1,
                    .gx_tex_cache = -1,
                    .frameskip = -1,
+                   .gx_thread = -1,
                    .max_seconds = 120U,
                    .same_pc_limit = CHASSIS_DEFAULT_SAME_PC_LIMIT};
     for (int i = 1; i < argc; i++) {
@@ -487,6 +492,7 @@ static GameRunConfig run_config(const Options *o, RunPaths *p) {
                            .audio_out = o->audio >= 0 ? o->audio == 1 : interactive,
                            .realtime = o->realtime >= 0 ? o->realtime == 1 : interactive,
                            .gx_threads = (u32)o->gx_threads,
+                           .gx_thread = o->gx_thread == 1,
                            .gx_tex_cache = o->gx_tex_cache != 0,
                            .frameskip = o->frameskip != 0,
                            .timebase_out = log_path(o->timebase_out, p->timebase, sizeof(p->timebase)),

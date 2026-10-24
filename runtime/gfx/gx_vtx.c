@@ -137,10 +137,7 @@ typedef struct TexFormat {
 } TexFormat;
 
 /* Coordenada de textura n no VAT (Dolphin CPMemory.h: UVAT_group0/1/2). */
-static TexFormat tex_format(u32 vat, u32 n) {
-    const u32 a = s_vtx.vat_a[vat];
-    const u32 b = s_vtx.vat_b[vat];
-    const u32 c = s_vtx.vat_c[vat];
+static TexFormat tex_format_of(u32 a, u32 b, u32 c, u32 n) {
     static const u8 s_shift_b[3] = {0, 9, 18};  /* Tex1..Tex3 em VAT_B */
     static const u8 s_shift_c[3] = {5, 14, 23}; /* Tex5..Tex7 em VAT_C */
     TexFormat f;
@@ -158,16 +155,24 @@ static TexFormat tex_format(u32 vat, u32 n) {
     return f;
 }
 
-static bool nrm_index3(u32 vat) {
-    const u32 a = s_vtx.vat_a[vat];
+static TexFormat tex_format(u32 vat, u32 n) {
+    return tex_format_of(s_vtx.vat_a[vat], s_vtx.vat_b[vat], s_vtx.vat_c[vat], n);
+}
+
+static bool nrm_index3_of(u32 a) {
     return ((a >> 9) & 1U) != 0U && ((a >> 31) & 1U) != 0U;
+}
+
+static bool nrm_index3(u32 vat) {
+    return nrm_index3_of(s_vtx.vat_a[vat]);
 }
 
 u32 gx_vtx_size(u32 vat) {
     AM_ASSERT(vat < GX_VAT_COUNT, "VAT %u", vat);
-    const u32 lo = s_vtx.vcd_lo;
-    const u32 hi = s_vtx.vcd_hi;
-    const u32 a = s_vtx.vat_a[vat];
+    return gx_vtx_size_of(s_vtx.vcd_lo, s_vtx.vcd_hi, s_vtx.vat_a[vat], s_vtx.vat_b[vat], s_vtx.vat_c[vat]);
+}
+
+u32 gx_vtx_size_of(u32 lo, u32 hi, u32 a, u32 b, u32 c) {
     u32 size = 0;
     for (u32 bit = 0; bit < 9U; bit++) { /* PosNrmMtxIdx e Tex0..7MtxIdx: 1 byte cada, sempre diretos */
         size += (lo >> bit) & 1U;
@@ -176,7 +181,7 @@ u32 gx_vtx_size(u32 vat) {
     size += attr_size((lo >> 9) & 3U, pos_elems * component_size((a >> 1) & 7U));
     const u32 nrm_type = (lo >> 11) & 3U;
     const bool nbt = ((a >> 9) & 1U) != 0U;
-    if (nrm_index3(vat) && nrm_type >= GX_ATTR_INDEX8) {
+    if (nrm_index3_of(a) && nrm_type >= GX_ATTR_INDEX8) {
         size += 3U * attr_size(nrm_type, 0U); /* NBT com um índice por vetor */
     } else {
         size += attr_size(nrm_type, (nbt ? 9U : 3U) * component_size((a >> 10) & 7U));
@@ -184,7 +189,7 @@ u32 gx_vtx_size(u32 vat) {
     size += attr_size((lo >> 13) & 3U, color_size((a >> 14) & 7U));
     size += attr_size((lo >> 15) & 3U, color_size((a >> 18) & 7U));
     for (u32 n = 0; n < GX_TEXCOORD_MAX; n++) {
-        const TexFormat f = tex_format(vat, n);
+        const TexFormat f = tex_format_of(a, b, c, n);
         size += attr_size((hi >> (n * 2U)) & 3U, (f.elements != 0U ? 2U : 1U) * component_size(f.format));
     }
     return size;

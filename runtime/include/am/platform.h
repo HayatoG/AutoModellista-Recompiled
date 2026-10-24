@@ -114,6 +114,18 @@ typedef void (*PlatformJobFn)(u32 index, u32 worker, void *user);
 bool platform_parallel_init(u32 workers);
 void platform_parallel_run(u32 jobs, PlatformJobFn job, void *user);
 void platform_parallel_shutdown(void);
+/* Thread, trava e condição (M8, thread do GX): ponteiros opacos para os objetos da SDL3; NULL = falhou. */
+typedef int (*PlatformThreadFn)(void *user);
+void *platform_thread_start(const char *name, PlatformThreadFn fn, void *user);
+void platform_thread_join(void *thread);
+void *platform_lock_create(void);
+void platform_lock_destroy(void *lock);
+void platform_lock(void *lock);
+void platform_unlock(void *lock);
+void *platform_cond_create(void);
+void platform_cond_destroy(void *cond);
+void platform_cond_wait(void *cond, void *lock);
+void platform_cond_signal(void *cond);
 /* Núcleos lógicos da máquina. */
 u32 platform_cpu_count(void);
 
