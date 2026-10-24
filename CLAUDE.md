@@ -21,7 +21,8 @@ o turno:
 - Em cada etapa, registrar **tokens e tempo** (modelo, início → fim, respostas, tokens gerados e processados) nos dois
   roteiros, com `python3 -I scripts/usage_report.py "$HOME/.claude/projects/<projeto>/**/*.jsonl"`.
 - O volume `/Volumes/AMRecomp` (imagem no SSD) pode ser desanexado pelo macOS: antes de rodar algo longo, confira
-  `ls /Volumes/AMRecomp`; para remontar, `hdiutil attach /Volumes/SSD/AMRecomp.sparsebundle`.
+  `ls /Volumes/AMRecomp`. Um agente do launchd (`scripts/instalar_montagem.sh`) remonta AMRecomp e DecompAM
+  sozinho a cada 60 s quando o SSD volta; para forçar na hora, `~/.local/bin/am-montar` (fica no disco interno).
 - Ênfase do vídeo: o "como funciona" de cada ferramenta (DolRecomp, runtime, Dolphin como oráculo, Ghidra, REA).
 - Doc e `.md` ficam em sincronia; o `.md` é commitado. Nunca mostrar código ou bytes do jogo nos roteiros.
 - Agentes em segundo plano não editam os roteiros: reportam o que fizeram, e a sessão principal escreve.
