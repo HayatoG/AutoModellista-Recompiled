@@ -1,0 +1,62 @@
+{
+ "dolphin": "2609a",
+ "criterion": "docs/M8_CORRIDA.md §5",
+ "pad_script": "320:D_LEFT:8,360:A:8,1700:START:8,2000:START:8,2600:A:8,2900:A:8,3300:A:8,3600:A:8,3900:A:8,4200:A:8,4500:A:8,4800:A:8,5100:A:8,5400:A:8,5700:A:8",
+ "frames": 6400,
+ "timebase": {
+  "frame": 6400,
+  "frames_compared": 6400,
+  "lag_fields": 2.096,
+  "lag_first_frame_fields": 0.0,
+  "max_abs_lag_fields": 2.096,
+  "ok": true
+ },
+ "soft": {
+  "1600": {
+   "psnr_db": 34.96,
+   "bad_pixels_pct": 0.837,
+   "max_abs": 194,
+   "runtime_rgb_sha256": "8f579a74ddf9aa9bb4f0930e6c069e91cd51fc40008f8a13d78e7bbf696de43e",
+   "ok": true
+  },
+  "1800": {
+   "psnr_db": 40.64,
+   "bad_pixels_pct": 0.0,
+   "max_abs": 20,
+   "runtime_rgb_sha256": "8ccc91ec3442902f3678f85218afa94e08030e1dafcc802856d46adef5aa2c72",
+   "ok": true
+  },
+  "2300": {
+   "psnr_db": 35.68,
+   "bad_pixels_pct": 0.456,
+   "max_abs": 81,
+   "runtime_rgb_sha256": "c6ad65a636f3d0a4aa71ece91f65f3061a4161f82d6f0dc39fc3a831e60071ef",
+   "ok": true
+  },
+  "6400": {
+   "psnr_db": 29.38,
+   "bad_pixels_pct": 3.027,
+   "max_abs": 216,
+   "runtime_rgb_sha256": "f8197fe9d642323a318cb3b4ba1b090b8222f16aeaa0f2e2554318a8f9314903",
+   "ok": true
+  }
+ },
+ "gpu": {
+  "1600": {
+   "vs_dolphin_ok": true,
+   "vs_soft_ok": true
+  },
+  "1800": {
+   "vs_dolphin_ok": true,
+   "vs_soft_ok": true
+  },
+  "2300": {
+   "vs_dolphin_ok": true,
+   "vs_soft_ok": true
+  },
+  "6400": {
+   "vs_dolphin_ok": true,
+   "vs_soft_ok": true
+  }
+ }
+}
