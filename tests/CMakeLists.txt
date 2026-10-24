@@ -30,6 +30,7 @@ am_add_unit_test(gx_fifo)
 am_add_unit_test(dsp_hle)
 am_add_unit_test(ax_voice)
 am_add_unit_test(pad_script)
+am_add_unit_test(dvd_timing)
 
 # Impasse isolado do jogo: as threads sintéticas esperam umas pelas outras; o chassi tem de parar com o watchdog.
 add_test(NAME sched_deadlock COMMAND sched_test deadlock)

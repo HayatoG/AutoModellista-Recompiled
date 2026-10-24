@@ -21,12 +21,15 @@ add_library(am_core STATIC
   core/timebase.c core/ppc_sys.c core/dol.c core/boot.c core/trace.c core/chassis.c core/disc.c core/rel_map.c core/hook.c
   core/pad_script.c
   os/exception.c os/os_link.c os/os_threads.c
-  hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/si.c hw/exi.c hw/vi.c
+  hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/dvd_timing.c hw/si.c hw/exi.c hw/vi.c
   hw/cp.c hw/pe.c hw/gather_pipe.c
   gfx/gx_fifo.c
   audio/dsp_hle.c audio/ax_voice.c)
 target_include_directories(am_core PUBLIC include)
 target_link_libraries(am_core PUBLIC am_ppc)
+if(NOT APPLE AND NOT WIN32)
+  target_link_libraries(am_core PUBLIC m) # hw/dvd_timing.c: sqrt, fmod
+endif()
 am_apply_strict(am_core)
 
 # --- am_recomp: o C gerado (DOL + RELs) ------------------------------------------------------------------------------

@@ -3,10 +3,9 @@
  * Os dados vêm de core/disc.c (árvore extraída). Comandos: Inquiry, Read (setor e ID do disco), Seek, RequestError,
  * StopMotor e AudioBufferConfig; o resto, inclusive o streaming de áudio (0xE1/0xE2), é am_fatal com o comando.
  *
- * Tempo: o comando termina 300 µs depois (MINIMUM_COMMAND_LATENCY_US do Dolphin) mais o tempo de transferência a
- * DI_READ_BYTES_PER_SECOND. O Dolphin calcula busca e rotação do drive (DVDMath); aqui é um modelo fixo,
- * determinístico, e a diferença aparece só no instante em que o TCINT chega. Os dados vão para a memória no fim do
- * comando. */
+ * Tempo: comandos sem leitura terminam 300 µs depois (MINIMUM_COMMAND_LATENCY_US do Dolphin); leituras seguem o
+ * modelo do drive do Dolphin (hw/dvd_timing.c: busca, rotação, velocidade CAV e buffer de 1 MiB). Os dados vão para a
+ * memória no fim do comando (o Dolphin copia bloco a bloco; o jogo só olha depois do TCINT). */
 #include "am/di.h"
 
 #include <stdint.h>
@@ -14,6 +13,7 @@
 
 #include "am/bus.h"
 #include "am/disc.h"
+#include "am/dvd_timing.h"
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/pi.h"
@@ -23,17 +23,14 @@
 
 /* DVDInterface.cpp: MINIMUM_COMMAND_LATENCY_US = 300; a 486 MHz são 145800 ciclos. */
 #define DI_COMMAND_LATENCY_CYCLES (300ULL * 486ULL)
-/* Velocidade média de leitura do drive do GameCube (CAV, ~2-3 MiB/s); modelo fixo, ver o topo do arquivo. */
-#define DI_READ_BYTES_PER_SECOND 3000000ULL
-#define DI_CPU_HZ                486000000ULL
-#define DI_BOUNCE_SIZE           0x10000U
-#define DI_CMD_READ              0xA8U
-#define DI_CMD_SEEK              0xABU
-#define DI_CMD_REQUEST_ERROR     0xE0U
-#define DI_CMD_AUDIO_STREAM      0xE1U
-#define DI_CMD_AUDIO_STATUS      0xE2U
-#define DI_CMD_STOP_MOTOR        0xE3U
-#define DI_CMD_AUDIO_BUFFER      0xE4U
+#define DI_BOUNCE_SIZE            0x10000U
+#define DI_CMD_READ               0xA8U
+#define DI_CMD_SEEK               0xABU
+#define DI_CMD_REQUEST_ERROR      0xE0U
+#define DI_CMD_AUDIO_STREAM       0xE1U
+#define DI_CMD_AUDIO_STATUS       0xE2U
+#define DI_CMD_STOP_MOTOR         0xE3U
+#define DI_CMD_AUDIO_BUFFER       0xE4U
 
 static struct {
     u32 sr;
@@ -60,6 +57,7 @@ void di_set_read_observer(DiReadObserver observer) {
 
 void di_reset(void) {
     memset(&s_di, 0, sizeof(s_di));
+    dvd_timing_reset();
     /* DVDInterface::Init + disco inserido (SetDisc/UpdateCoverStatus: CVR = 0, tampa fechada). DICFG.CONFIG = 1:
      * descrambler da ROM de boot desligado. */
     s_di.cvr = 0;
@@ -116,7 +114,7 @@ void di_update(void) {
 
 static void finish_after(u64 cycles) {
     s_di.busy = true;
-    s_di.done_cycle = timebase_cycles(NULL) + DI_COMMAND_LATENCY_CYCLES + cycles;
+    s_di.done_cycle = timebase_cycles(NULL) + cycles;
 }
 
 /* ExecuteReadCommand: DILENGTH tem de cobrir o pedido (o Dolphin corta e avisa; aqui é fatal para não esconder). */
@@ -139,7 +137,7 @@ static void start_read(u64 offset, u32 length) {
     s_di.read_pending = true;
     s_di.read_offset = offset;
     s_di.read_length = length;
-    finish_after((u64)length * DI_CPU_HZ / DI_READ_BYTES_PER_SECOND);
+    finish_after(dvd_timing_read(timebase_cycles(NULL), offset, length));
 }
 
 static void execute_command(void) {
@@ -152,7 +150,7 @@ static void execute_command(void) {
         mem_write32(NULL, buf, 0x00000002U);
         mem_write32(NULL, buf + 4U, 0x20060526U);
         mem_write32(NULL, buf + 8U, 0x41000000U);
-        finish_after(0);
+        finish_after(DI_COMMAND_LATENCY_CYCLES);
         return;
     }
     case DI_CMD_READ:
@@ -166,22 +164,22 @@ static void execute_command(void) {
         return;
     case DI_CMD_SEEK:
         s_di.stats.seeks++;
-        finish_after(0); /* o Dolphin ignora a busca */
+        finish_after(DI_COMMAND_LATENCY_CYCLES); /* o Dolphin ignora a busca */
         return;
     case DI_CMD_REQUEST_ERROR:
         s_di.imm = 0; /* drive pronto (estado 0), sem erro */
-        finish_after(0);
+        finish_after(DI_COMMAND_LATENCY_CYCLES);
         return;
     case DI_CMD_STOP_MOTOR:
         s_di.stats.stop_motor++;
-        finish_after(0);
+        finish_after(DI_COMMAND_LATENCY_CYCLES);
         return;
     case DI_CMD_AUDIO_BUFFER:
         /* O IPL e o SDK ligam ou desligam o DTK pelo byte 0x08 do cabeçalho; sem áudio do disco, só registra. */
         s_di.stats.audio_buffer_config++;
         AM_LOG_INFO("DI: AudioBufferConfig 0x%08X (DTK %s, buffer %u)", s_di.cmd[0],
                     ((s_di.cmd[0] >> 16) & 1U) != 0U ? "ligado" : "desligado", s_di.cmd[0] & 0xFU);
-        finish_after(0);
+        finish_after(DI_COMMAND_LATENCY_CYCLES);
         return;
     case DI_CMD_AUDIO_STREAM:
     case DI_CMD_AUDIO_STATUS:
