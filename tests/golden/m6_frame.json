@@ -1,0 +1,26 @@
+{
+ "dolphin": "2609a",
+ "criterion": "docs/M6_PRIMEIRO_QUADRO.md §5",
+ "pad_script": "320:D_LEFT:8,360:A:8",
+ "frames": 1260,
+ "shots": {
+  "1100": {
+   "psnr_db": 49.18,
+   "bad_pixels_pct": 0.0,
+   "max_abs": 13,
+   "lit_runtime_pct": 4.35,
+   "lit_dolphin_pct": 4.34,
+   "runtime_rgb_sha256": "40d693e0e22a66fc8d4e76a664c934a40916c2b153c77af4ff1954c052536980",
+   "ok": true
+  },
+  "1250": {
+   "psnr_db": 46.37,
+   "bad_pixels_pct": 0.0,
+   "max_abs": 25,
+   "lit_runtime_pct": 4.69,
+   "lit_dolphin_pct": 4.67,
+   "runtime_rgb_sha256": "bf1557ada7cfd7450068a9b890ccd57a980ab1549c7b558e78fd0614c8877820",
+   "ok": true
+  }
+ }
+}
