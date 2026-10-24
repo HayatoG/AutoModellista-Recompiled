@@ -21,11 +21,17 @@ for name in AMRecomp DecompAM; do
     status=2
     continue
   fi
+  # Quando o USB cai, a imagem pode continuar presa a dispositivos antigos (/dev/diskN sem volume montado) e o attach
+  # novo falha com "sistemas de arquivos não montáveis": solta esses dispositivos antes (aconteceu em 24/10, 04:10).
+  for dev in $(hdiutil info | awk -v img="$ssd/$name.sparsebundle" \
+      '$1 == "image-path" { f = ($3 == img) } f && /^\/dev\/disk[0-9]+[[:space:]]/ { print $1; f = 0 }'); do
+    hdiutil detach -force "$dev" >/dev/null 2>&1 && echo "$name: soltei $dev, preso de uma queda anterior"
+  done
   # -nobrowse não: o Finder deve mostrar o volume. -noverify pula a verificação longa da imagem.
-  if hdiutil attach -noverify "$ssd/$name.sparsebundle" >/dev/null 2>&1; then
+  if err=$(hdiutil attach -noverify "$ssd/$name.sparsebundle" 2>&1 >/dev/null); then
     echo "$name: montado agora ($(date '+%d/%m %H:%M:%S'))"
   else
-    echo "$name: falhou ao montar $ssd/$name.sparsebundle"
+    echo "$name: falhou ao montar $ssd/$name.sparsebundle: $(echo "$err" | grep -v WARNING | tail -1)"
     status=2
   fi
 done
