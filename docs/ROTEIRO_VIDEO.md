@@ -263,7 +263,20 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** as duas réguas de tempo da cena 4.9 voltam; um “2 → 7” pisca sobre o laço, e a régua da runtime estica até alcançar a do Dolphin, encaixando com um clique. Na parte da GPU, o quadro do menu se monta em blocos que saem da CPU (ícone de chip) e passam a sair da placa de vídeo; o velocímetro da cena 4.9 pula de 15 para 60 no menu e, na corrida, para em 31 com um marcador “parte 2” piscando no 60.
 
-### 4.11 Quanto custou até aqui (tokens e tempo)
+### 4.11 M8, parte 2a: a thread que não acelerou
+
+**Fala:** “A ideia parecia óbvia: o Dolphin tem um modo ‘dual core’, em que o processador do console e o chip de vídeo rodam em núcleos diferentes. A IA fez o mesmo: a CPU emulada só passa os comandos de desenho numa fila, e outra thread desenha. E tinha que continuar tudo idêntico: as mesmas imagens, o mesmo relógio, byte a byte. Isso deu certo. O que não deu foi a velocidade: a corrida continuou em 31 quadros por segundo na tela. Aí a IA mediu onde o tempo ia, e a resposta foi um ponto só. No fim de cada quadro, o jogo pergunta pro chip de vídeo ‘terminou?’ e fica esperando. Com duas threads, a CPU só passa a esperar em outro lugar. Pra ganhar de verdade, a CPU tem que seguir em frente sem esperar, e aí ela precisa copiar tudo o que o desenho ainda vai ler, que é o que o Dolphin faz. Ficou pra próxima parte. E é uma lição boa: antes de otimizar, mede onde está a espera.”
+
+**Na tela:**
+
+- Dois trilhos lado a lado, “CPU emulada” e “GX”, com os blocos de cada quadro; o bloco “DrawDone” da CPU fica esperando o fim do bloco do GX.
+- A conta real do agente: 27,2 s de espera no DrawDone em 85 s de corrida (arm64).
+- A tabela da janela: corrida 53,1 / 30,7 com a thread desligada, 51,8 / 30,8 ligada.
+- A linha do `verify_m8.sh` com `== OK` e as capturas idênticas com a thread ligada.
+
+**Motion:** os dois trilhos andam juntos; a cada fim de quadro, o trilho da CPU para e um relógio de areia aparece até o trilho do GX alcançar. Depois, uma prévia da parte 2b: o trilho da CPU segue sem parar, carregando caixinhas (as cópias) para o GX.
+
+### 4.12 Quanto custou até aqui (tokens e tempo)
 
 **Fala:** “E quanto de IA foi isso? Até agora, uns 743 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 3,4 milhões de tokens, algo como uns 28 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31. No relógio da parede foram dois dias, com noite de sono no meio.”
 
@@ -283,6 +296,7 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M6 primeiro quadro | Opus | 54 min | 249 mil | 54,8 M |
 | M7 menus, controle e som | Opus | 1h52 | 292 mil | 116,4 M |
 | M8 parte 1, relógio e GPU | Opus | 2h03 | 271 mil | 80,9 M |
+| M8 parte 2a, GX numa thread | Opus | 36 min | 55 mil | 4,8 M |
 | Sessão principal | Opus | 17h+ | 436 mil | 94,0 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
@@ -296,6 +310,7 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | M6 primeiro quadro | 11h48 | 47h17 |
 | M7 dá pra jogar pelos menus | 13h59 | 49h50 |
 | M8 parte 1, relógio e GPU | 16h31 | 52h22 |
+| M8 parte 2a, GX numa thread | 17h15 | 57h56 |
 
 **Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “743 M processados · 3,4 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”, “GPU: 16h31”); embaixo, uma régua mais longa e cinza mostra o calendário (52h22), com faixas de noite escurecidas. Atualizar os números na edição final.
 
@@ -330,3 +345,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 24/10/2026 (M7 concluído) | 4.9 nova: “M7: agora dá pra jogar” (controle, áudio do AX igual ao do Dolphin amostra por amostra, filmes sem código novo, faixas paralelas e pulo de quadros, causa da câmera da largada); a cena de tokens vira 4.10, com o M7, a sessão principal e o tempo acumulado até o M7; Cap. 5 reescrito (M7 feito, M8 próximo) |
 | 24/10/2026 (quarta e quinta quedas) | Roteiro de estudo: linha nova em Problemas (duas quedas do SSD no fechamento do M7, imagem presa a dispositivos antigos, `am-montar` corrigido); material para estender a cena 4.6 na edição |
 | 24/10/2026 (M8 parte 1) | 4.10 nova: “M8, parte 1: o relógio e a placa de vídeo” (instruções do interpretador com 0 ciclos, laço de cache 2 → 7, defasagem 1,37 s → 0,035 s, o relógio que o Dolphin mostra, shader inteiro na GPU mais perto do Dolphin que o software, menus a 60 e corrida a 31); a cena de tokens vira 4.11, com o M8 parte 1, a sessão principal e o tempo acumulado; Cap. 5 atualizado (M8 pela metade) |
+| 24/10/2026 (M8 parte 2a) | 4.11 nova: “M8, parte 2a: a thread que não acelerou” (GX numa thread, determinístico, sem ganho; a espera no DrawDone; a cópia como o Dolphin fica para a 2b); a cena de tokens vira 4.12 com a parte 2a e o tempo acumulado |
