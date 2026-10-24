@@ -3,8 +3,9 @@
  * controle, dado imediato). YAGCD 5.9; Dolphin Core/HW/EXI/EXI.cpp, EXI_Channel.{h,cpp}, EXI_DeviceIPL.{h,cpp},
  * HW/Sram.{h,cpp} (tag 2609a).
  *
- * Aparelhos no M4 (os mesmos do oráculo, scripts/dolphin_trace.py): só o IPL (canal 0, aparelho 1: SRAM, RTC e UART);
- * slots A/B e portas seriais vazios. */
+ * Aparelhos (os mesmos do oráculo, scripts/dolphin_trace.py): o IPL (canal 0, aparelho 1: SRAM, RTC e UART) e, só
+ * quando há um cartão em am/memcard.h no exi_reset, o memory card do slot A (am/exi_card.h); slot B e portas seriais
+ * vazios. */
 #ifndef AM_EXI_H
 #define AM_EXI_H
 
@@ -45,6 +46,8 @@
 #define EXI_IPL_UART_SIZE 0x50U
 
 void exi_reset(void);
+/* Eventos do cartão (fim de comando e de DMA) com prazo vencido; o chassi chama via bus_update. */
+void exi_update(void);
 /* Relógio do RTC (segundos desde 2000-01-01): o IPL o copia para sram[0..3] a cada comando, como o Dolphin. */
 void exi_set_rtc(u32 seconds);
 u64 exi_read(u32 offset, u8 size);

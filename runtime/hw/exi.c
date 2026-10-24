@@ -4,12 +4,15 @@
 #include <string.h>
 
 #include "am/bus.h"
+#include "am/exi_card.h"
 #include "am/log.h"
 #include "am/mem.h"
+#include "am/memcard.h"
 #include "am/pi.h"
 
 #define EXI_UART_TEXT_MAX 4096U
 #define EXI_IPL_DEVICE    1U /* canal 0, aparelho 1 (chip select 2) */
+#define EXI_CARD_DEVICE   0U /* canal 0, aparelho 0 (chip select 1): memory card do slot A */
 
 typedef struct ExiChannel {
     u32 status;
@@ -58,12 +61,41 @@ static void sram_init(void) {
     put16(&s_exi.sram[0x06], inv);
 }
 
+/* Sram.cpp: SetCardFlashID (slot A). O flash ID da SRAM é o do cabeçalho do cartão "desembaralhado" com o mesmo
+ * gerador congruencial que o SDK usa para embaralhá-lo (semente = horário da formatação, bytes 12..19). */
+static void sram_set_card_flash_id(const u8 *header) {
+    u64 rand = 0;
+    for (u32 i = 12U; i < 20U; i++) {
+        rand = (rand << 8) | header[i];
+    }
+    u8 csum = 0;
+    for (u32 i = 0; i < 12U; i++) {
+        rand = ((rand * 0x41C64E6DULL) + 0x3039ULL) >> 16;
+        const u8 id = (u8)(header[i] - (u8)rand);
+        s_exi.sram[0x18U + i] = id;
+        csum = (u8)(csum + id);
+        rand = ((rand * 0x41C64E6DULL) + 0x3039ULL) >> 16;
+        rand &= 0x7FFFULL;
+    }
+    s_exi.sram[0x3E] = (u8)(csum ^ 0xFFU);
+}
+
 void exi_reset(void) {
     memset(&s_exi, 0, sizeof(s_exi));
     /* CEXIChannel: canais 0 e 1 começam com EXTINT; o canal 1 com chip select 1. */
     s_exi.ch[0].status = EXI_SR_EXTINT;
     s_exi.ch[1].status = EXI_SR_EXTINT | (1U << EXI_SR_CS_SHIFT);
     sram_init();
+    exi_card_reset();
+    if (exi_card_present()) {
+        u8 header[MEMCARD_HEADER_BYTES];
+        exi_card_header(header);
+        sram_set_card_flash_id(header);
+    }
+}
+
+void exi_update(void) {
+    exi_card_update();
 }
 
 void exi_set_rtc(u32 seconds) {
@@ -93,7 +125,7 @@ static int device_of(u32 cs) {
 }
 
 static bool device_present(u32 channel, int device) {
-    return channel == 0U && device == (int)EXI_IPL_DEVICE;
+    return channel == 0U && (device == (int)EXI_IPL_DEVICE || (device == (int)EXI_CARD_DEVICE && exi_card_present()));
 }
 
 static void uart_byte(u8 c) {
@@ -150,13 +182,24 @@ static u8 ipl_transfer(u8 data) {
 }
 
 static u8 transfer(u32 channel, int device, u8 data) {
-    return device_present(channel, device) ? ipl_transfer(data) : data; /* IEXIDevice vazio não altera nada */
+    if (!device_present(channel, device)) {
+        return data; /* IEXIDevice vazio não altera nada */
+    }
+    return device == (int)EXI_CARD_DEVICE ? exi_card_transfer(data) : ipl_transfer(data);
 }
 
-/* IEXIDevice::ImmRead/ImmWrite (aparelho vazio: ImmRead dá 0; ImmReadWrite não faz nada). */
+/* IEXIDevice::ImmRead/ImmWrite (aparelho vazio: ImmRead dá 0; ImmReadWrite não faz nada). O cartão faz o DMA de uma vez
+ * só (CEXIMemoryCard::DMARead/DMAWrite) e agenda o TCINT pela velocidade dele. */
 static void run_transfer(u32 channel, int device) {
     ExiChannel *c = &s_exi.ch[channel];
     const u32 rw = (c->control >> 2) & 3U;
+    if ((c->control & EXI_CR_DMA) != 0U && device == (int)EXI_CARD_DEVICE && device_present(channel, device)) {
+        if (rw > 1U) {
+            am_fatal("EXI%u: DMA com tipo %u inválido", channel, rw);
+        }
+        exi_card_dma(rw == 1U, c->dma_addr, c->dma_len);
+        return;
+    }
     if ((c->control & EXI_CR_DMA) == 0U) {
         const u32 len = ((c->control >> 4) & 3U) + 1U;
         if (rw == 0U) {
@@ -187,9 +230,24 @@ static void run_transfer(u32 channel, int device) {
     }
 }
 
+static void update_interrupts(void);
+
+void exi_refresh_interrupts(void) {
+    update_interrupts();
+}
+
+void exi_channel_transfer_complete(u32 channel) {
+    s_exi.ch[channel].status |= EXI_SR_TCINT; /* SendTransferComplete */
+    update_interrupts();
+}
+
 static void update_interrupts(void) {
     bool cause = false;
     for (u32 i = 0; i < EXI_CHANNEL_COUNT; i++) {
+        /* CEXIChannel::IsCausingInterrupt: o aparelho 0 dos canais 0 e 1 (o cartão) é sempre consultado. */
+        if (i == 0U && exi_card_interrupt()) {
+            s_exi.ch[i].status |= EXI_SR_EXIINT;
+        }
         const u32 s = s_exi.ch[i].status;
         cause = cause || ((s & EXI_SR_EXIINT) != 0U && (s & EXI_SR_EXIINTMASK) != 0U) ||
                 ((s & EXI_SR_TCINT) != 0U && (s & EXI_SR_TCINTMASK) != 0U) ||
@@ -214,7 +272,10 @@ static void write_status(u32 channel, u32 v) {
     }
     const u32 old_cs = (s & EXI_SR_CS) >> EXI_SR_CS_SHIFT;
     const u32 new_cs = (v & EXI_SR_CS) >> EXI_SR_CS_SHIFT;
-    if (device_present(channel, device_of(old_cs ^ new_cs)) && new_cs != 0U) {
+    const int changed = device_of(old_cs ^ new_cs);
+    if (device_present(channel, changed) && changed == (int)EXI_CARD_DEVICE) {
+        exi_card_set_cs(new_cs);
+    } else if (device_present(channel, changed) && new_cs != 0U) {
         s_exi.ipl_command_bytes = 0; /* CEXIIPL::SetCS */
         s_exi.ipl_cursor = 0;
     }
@@ -234,14 +295,19 @@ static void write_control(u32 channel, u32 v) {
     }
     run_transfer(channel, device);
     c->control &= ~EXI_CR_TSTART;
-    c->status |= EXI_SR_TCINT; /* SendTransferComplete */
-    update_interrupts();
+    if (device == (int)EXI_CARD_DEVICE && device_present(channel, device)) {
+        return; /* UseDelayedTransferCompletion: o imediato não gera TCINT, o DMA gera quando o cartão termina */
+    }
+    exi_channel_transfer_complete(channel);
 }
 
 static u32 read_status(u32 channel) {
     ExiChannel *c = &s_exi.ch[channel];
-    /* EXT: aparelho 0 do canal presente (canal 2: sempre 0). Nenhum slot tem aparelho no M4. */
+    /* EXT: aparelho 0 do canal presente (canal 2: sempre 0). Só o slot A tem aparelho, e só com --memcard. */
     c->status &= ~EXI_SR_EXT;
+    if (channel == 0U && exi_card_present()) {
+        c->status |= EXI_SR_EXT;
+    }
     return c->status;
 }
 

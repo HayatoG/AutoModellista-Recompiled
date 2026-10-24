@@ -112,6 +112,12 @@ def launch(args) -> subprocess.Popen:
     ]
     for extra in args.dolphin_config:
         cmd[-2:-2] = ["-C", extra]
+    if getattr(args, "memcard", None):
+        # M8 parte 2b: memory card no slot A (EXIDeviceType::MemoryCard = 1), imagem .raw que já existe. O Dolphin
+        # reescreve o nome para <nome>.<região>[.<blocos>].raw (Config/MainSettings.cpp: GetMemcardPath): passe um
+        # caminho que já termine em ".USA.raw" para o arquivo ser o mesmo. Vem depois do SlotA=255 acima, e o último
+        # -C vale.
+        cmd[-2:-2] = ["-C", "Dolphin.Core.SlotA=1", "-C", f"Dolphin.Core.MemcardAPath={args.memcard}"]
     if getattr(args, "audio_dump", None):
         # M7: o Dolphin grava a saída da DMA de áudio (dspdump.wav) e a do streaming do disco (dtkdump.wav) em
         # <user>/Dump/Audio; DumpAudioSilent evita a pergunta de apagar arquivo existente. Antes do -e, como os outros.
@@ -480,6 +486,7 @@ def main() -> int:
     ap.add_argument("--rtc", type=int, default=0, help="relógio inicial em segundos desde 2000-01-01 (= --rtc da runtime)")
     ap.add_argument("--dolphin-config", action="append", default=[],
                     help="M7: opção extra do Dolphin, 'Sistema.Seção.Chave=valor' (repetível)")
+    ap.add_argument("--memcard", default=None, help="M8: arquivo .raw do memory card no slot A (padrão: sem cartão)")
     ap.add_argument("--video", default="Null", help="backend de vídeo do Dolphin (Null; Metal para --shots, que precisa do XFB na RAM)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("boot-state")

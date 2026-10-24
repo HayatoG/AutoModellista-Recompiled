@@ -115,6 +115,7 @@ void bus_reset(void) {
 void bus_update(void) {
     dsp_update();
     di_update();
+    exi_update();
     vi_update();
     ai_update();
 }
