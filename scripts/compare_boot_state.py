@@ -32,6 +32,11 @@ EXPECTED_REGS = {
     "r4": "sobra do apploader", "r5": "sobra do apploader", "r6": "sobra do apploader", "r7": "sobra do apploader",
     "r12": "sobra do apploader", "cr": "sobra do apploader", "srr0": "sobra do apploader (último rfi)",
     "srr1": "sobra do apploader",
+    # M8: a runtime começa com o tempo do BS2/apploader do Dolphin (BOOT_BS2_CYCLES, docs/M8_CORRIDA.md §2); o GDB do
+    # Dolphin mostra o SPR, que só um mftb/mfdec do jogo atualiza (0 e 0xFFFFFFFF no entry point).
+    "tbl": "tempo do BS2 (M8); o GDB do Dolphin mostra o SPR ainda não lido",
+    "tbu": "tempo do BS2 (M8); o GDB do Dolphin mostra o SPR ainda não lido",
+    "dec": "tempo do BS2 (M8); o GDB do Dolphin mostra o SPR ainda não lido",
 }
 
 

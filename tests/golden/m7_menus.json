@@ -41,36 +41,36 @@
    "ok": true
   },
   "3200": {
-   "psnr_db": 32.76,
-   "bad_pixels_pct": 0.879,
-   "max_abs": 243,
-   "lit_runtime_pct": 87.81,
+   "psnr_db": 36.23,
+   "bad_pixels_pct": 0.49,
+   "max_abs": 85,
+   "lit_runtime_pct": 87.82,
    "lit_dolphin_pct": 87.81,
-   "runtime_rgb_sha256": "bfdcfb98d52374e2287f661a91c28988499ce00454b2505c13061b8a2266a0f8",
+   "runtime_rgb_sha256": "22dba2bbfe0f0deeb400ef2b8f0195167c092f40ab287f6accfece28e571c842",
    "ok": true
   },
   "3500": {
-   "psnr_db": 31.43,
-   "bad_pixels_pct": 0.493,
+   "psnr_db": 31.94,
+   "bad_pixels_pct": 0.27,
    "max_abs": 254,
    "lit_runtime_pct": 87.42,
    "lit_dolphin_pct": 87.41,
-   "runtime_rgb_sha256": "e3763599489db783a182c4e5e6992ea540e3057a96b2b9599d9eb9659e721a4e",
+   "runtime_rgb_sha256": "78dbb2eea4e08d7abca3bf8765a0b23fd6315913070e02caa26b6d3cf83cebeb",
    "ok": true
   }
  },
  "audio": {
-  "seconds_runtime": 61.93,
-  "lag_ms": 8.24,
+  "seconds_runtime": 62.02,
+  "lag_ms": 0.0,
   "active": 44,
   "silent_both": 17,
   "presence_diverge": 0,
-  "pct_corr_ok": 93.2,
+  "pct_corr_ok": 100.0,
   "pct_db_ok": 100.0,
   "corr_median": 1.0,
   "db_diff_median": 0.0,
-  "db_diff_max": 0.26,
+  "db_diff_max": 0.0,
   "passed": true,
-  "runtime_pcm_sha256": "83001b3b2ff3ce62dfe6ecd021d9e57e5abd97a1b6b0444ef470028a613a0d81"
+  "runtime_pcm_sha256": "2e686f622c462fc373e0aa88cce70ddd9230766729bb13c0c16320100b812f8e"
  }
 }

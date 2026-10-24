@@ -8,8 +8,9 @@
 
 #include "../shaders/gx_ubershader_metallib.h"
 
-#define EFB_PIXELS (GPU_EFB_WIDTH * GPU_EFB_HEIGHT)
-#define EFB_BYTES  (EFB_PIXELS * 4U)
+#define EFB_PIXELS  (GPU_EFB_WIDTH * GPU_EFB_HEIGHT)
+#define EFB_BYTES   (EFB_PIXELS * 4U)
+#define EFB_BYTES_Z ((size_t)EFB_BYTES)
 
 static struct {
     SDL_GPUDevice *device;
@@ -35,8 +36,8 @@ static bool fail(const char *what) {
 }
 
 static SDL_GPUShader *shader(const char *entry, SDL_GPUShaderStage stage, u32 uniforms, u32 storage) {
-    const SDL_GPUShaderCreateInfo info = {.code_size = sizeof(GX_UBERSHADER_METALLIB),
-                                          .code = GX_UBERSHADER_METALLIB,
+    const SDL_GPUShaderCreateInfo info = {.code_size = sizeof(s_gx_ubershader_metallib),
+                                          .code = s_gx_ubershader_metallib,
                                           .entrypoint = entry,
                                           .format = SDL_GPU_SHADERFORMAT_METALLIB,
                                           .stage = stage,
@@ -183,8 +184,8 @@ static bool upload(SDL_GPUCommandBuffer *cmd, const GpuBatch *b) {
         at += b->uploads[i].texels * 4U;
     }
     if (ebytes != 0U) {
-        memcpy(map + at, b->efb_color_in, EFB_BYTES);
-        memcpy(map + at + EFB_BYTES, b->efb_depth_in, EFB_BYTES);
+        memcpy(map + at, b->efb_color_in, EFB_BYTES_Z);
+        memcpy(map + (size_t)at + EFB_BYTES_Z, b->efb_depth_in, EFB_BYTES_Z);
     }
     SDL_UnmapGPUTransferBuffer(s_gpu.device, s_gpu.upload);
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
@@ -285,10 +286,10 @@ bool platform_gpu_run(const GpuBatch *b) {
     if (map == NULL) {
         return fail("SDL_MapGPUTransferBuffer (leitura)");
     }
-    const size_t at = (size_t)top * GPU_EFB_WIDTH;
+    const size_t at = (size_t)top * (size_t)GPU_EFB_WIDTH;
     memcpy(b->efb_color_out + at, map, bytes);
     if (b->efb_depth_out != NULL) {
-        memcpy(b->efb_depth_out + at, map + EFB_BYTES, bytes);
+        memcpy(b->efb_depth_out + at, map + EFB_BYTES_Z, bytes);
     }
     SDL_UnmapGPUTransferBuffer(s_gpu.device, s_gpu.download);
     return true;

@@ -18,9 +18,14 @@ TEST(profile_sums_and_sorts) {
     EXPECT_TRUE(f != NULL);
     profile_end(f, 10U);
     EXPECT_TRUE(!profile_active());
+    if (f == NULL) {
+        return;
+    }
     char buf[512] = {0};
-    rewind(f);
-    const size_t n = fread(buf, 1, sizeof(buf) - 1U, f);
+    size_t n = 0;
+    if (fseek(f, 0, SEEK_SET) == 0) {
+        n = fread(buf, 1, sizeof(buf) - 1U, f);
+    }
     (void)fclose(f);
     EXPECT_TRUE(n > 0U);
     EXPECT_TRUE(strstr(buf, "# total 160 ciclos") != NULL);

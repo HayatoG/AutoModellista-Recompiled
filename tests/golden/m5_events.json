@@ -10,7 +10,7 @@
   "strict_reads": 91,
   "stream_files": 10,
   "stream_reads": 441,
-  "stream_reads_identical": 231,
+  "stream_reads_identical": 441,
   "stream_bad_segments": [],
   "module_frames_equal": true,
   "strict_sha256": "5ebc86e48180950207ee2a9b26aca5d294d96ff57a535f0ec27589a8b6477085",

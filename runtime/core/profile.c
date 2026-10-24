@@ -56,7 +56,10 @@ void profile_add(GuestAddr pc, GuestAddr thread, u64 cycles) {
 static int by_cycles(const void *a, const void *b) {
     const u64 x = ((const ProfileSlot *)a)->cycles;
     const u64 y = ((const ProfileSlot *)b)->cycles;
-    return x < y ? 1 : (x > y ? -1 : 0);
+    if (x < y) {
+        return 1;
+    }
+    return x > y ? -1 : 0;
 }
 
 static void dump(FILE *out, const char *title, ProfileSlot *table, u32 size, u32 top) {

@@ -22,6 +22,6 @@ rows = [", ".join(f"0x{b:02X}" for b in data[i:i + 16]) for i in range(0, len(da
 open(sys.argv[2], "w").write(
     "/* Gerado por scripts/build_shaders.sh a partir de gx_ubershader.metal: não editar. */\n"
     "/* clang-format off */\n"
-    f"static const unsigned char GX_UBERSHADER_METALLIB[{len(data)}] = {{\n    " + ",\n    ".join(rows) + "\n};\n")
+    f"static const unsigned char s_gx_ubershader_metallib[{len(data)}] = {{\n    " + ",\n    ".join(rows) + "\n};\n")
 PY
 echo "$OUT/gx_ubershader.metallib ($(wc -c < $OUT/gx_ubershader.metallib) bytes) e gx_ubershader_metallib.h"

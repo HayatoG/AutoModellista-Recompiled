@@ -139,8 +139,7 @@ static u32 arena_place(const GxTexGpuUnit *t) {
     }
     if (s_gpu.arena_used + t->texels > GPU_ARENA_TEXELS || s_gpu.upload_count + 1U >= ARENA_SLOTS / 2U) {
         submit_lot(false); /* os desenhos já gravados usam o buffer como está */
-        arena_clear();
-        return arena_place(t);
+        arena_clear();     /* o mapa recomeça vazio: a busca abaixo acha lugar */
     }
     h = (u32)(t->serial * 0x9E3779B97F4A7C15ULL >> 40);
     while (s_gpu.slots[h & (ARENA_SLOTS - 1U)].serial != 0U) {

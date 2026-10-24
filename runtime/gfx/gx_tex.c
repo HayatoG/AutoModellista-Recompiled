@@ -384,7 +384,7 @@ static void sample_mip(const TexUnit *u, s32 s, s32 t, u32 mip, bool linear, u8 
  * cada quadro) e um teto de memória decodificada. */
 #define TEX_CACHE_ENTRIES    1024U
 #define TEX_CACHE_BUCKETS    2048U
-#define TEX_CACHE_MAX_BYTES  (384U * 1024U * 1024U)
+#define TEX_CACHE_MAX_BYTES  (384ULL * 1024ULL * 1024ULL)
 #define TEX_CACHE_MAX_TEXELS (1024U * 1024U)
 
 typedef struct TexCacheEntry {
@@ -609,69 +609,94 @@ static u64 tlut_hash_of(const TexUnit *u) {
     return m->hash;
 }
 
-static void cache_lookup(u32 texmap, TexUnit *u) {
-    const u32 levels = levels_needed(texmap, u);
-    const u32 addr = (gx_bp_tex_reg(GX_BP_TX_SETIMAGE3, texmap) << 5) & 0x01FFFFFFU;
-    GxTexSource last;
-    u32 lw;
-    u32 lh;
-    level_source(u, levels - 1U, &last, &lw, &lh);
-    const u32 bytes = (u32)(last.data - u->src.data) + gx_tex_level_size(u->format, lw + 1U, lh + 1U);
-    const u64 tlut_hash = paletted(u->format) ? tlut_hash_of(u) : 0U;
-    const u64 written = mem_written_sum(addr, bytes);
-    const u32 b = bucket_of(addr);
-    TexCacheEntry *stale = NULL;
-    for (u32 i = s_tex.heads[b]; i != 0U; i = s_tex.cache[i - 1U].next) {
+/* Chave de uma consulta ao cache. */
+typedef struct TexKey {
+    u32 addr;
+    u32 bytes;
+    u32 levels;
+    u32 bucket;
+    u64 tlut_hash;
+    u64 written;
+} TexKey;
+
+/* Procura no balde; achando a mesma textura com conteúdo velho (ou menos níveis), devolve-a em *stale. */
+static TexCacheEntry *cache_find(const TexUnit *u, const TexKey *k, TexCacheEntry **stale) {
+    *stale = NULL;
+    for (u32 i = s_tex.heads[k->bucket]; i != 0U; i = s_tex.cache[i - 1U].next) {
         TexCacheEntry *e = &s_tex.cache[i - 1U];
-        if (!e->used || e->addr != addr || e->format != u->format || e->wm1 != u->width_minus_1 ||
-            e->hm1 != u->height_minus_1) {
-            continue;
+        if (!e->used || e->addr != k->addr || e->format != u->format || e->wm1 != u->width_minus_1 ||
+            e->hm1 != u->height_minus_1 || e->tlut_hash != k->tlut_hash || e->tlut_format != u->src.tlut_format) {
+            continue; /* outra textura, ou a mesma imagem com outra paleta (convivem no cache) */
         }
-        if (e->tlut_hash != tlut_hash || e->tlut_format != u->src.tlut_format) {
-            continue; /* a mesma imagem com outra paleta convive no cache */
+        if (e->levels >= k->levels &&
+            (e->written == k->written ||
+             (e->bytes == k->bytes &&
+              e->content == hash_bytes(u->src.data, k->bytes < u->src.size ? k->bytes : u->src.size)))) {
+            e->written = k->written;
+            return e;
         }
-        if (e->levels >= levels &&
-            (e->written == written ||
-             (e->bytes == bytes && e->content == hash_bytes(u->src.data, bytes < u->src.size ? bytes : u->src.size)))) {
-            e->written = written;
-            e->last_use = ++s_tex.clock;
-            s_tex.stats.hits++;
-            cache_attach(u, e);
-            return;
-        }
-        stale = e; /* a mesma textura com conteúdo velho (ou menos níveis): decodifica no lugar dela */
+        *stale = e;
     }
+    return NULL;
+}
+
+/* Decodifica numa entrada (a velha da mesma textura, senão uma livre ou a menos usada). */
+static void cache_insert(TexUnit *u, const TexKey *k, TexCacheEntry *stale) {
     TexCacheEntry *victim = stale != NULL ? stale : cache_victim();
+    AM_ASSERT(victim != NULL, "cache de texturas sem entrada");
     if (victim != stale) {
         cache_unlink(victim);
-        victim->bucket = b;
-        victim->next = s_tex.heads[b];
-        s_tex.heads[b] = (u16)((victim - s_tex.cache) + 1);
+        victim->bucket = k->bucket;
+        victim->next = s_tex.heads[k->bucket];
+        s_tex.heads[k->bucket] = (u16)((victim - s_tex.cache) + 1);
     }
     const u16 next = victim->next;
     *victim = (TexCacheEntry){.used = true,
-                              .addr = addr,
-                              .bytes = bytes,
+                              .addr = k->addr,
+                              .bytes = k->bytes,
                               .format = u->format,
                               .wm1 = u->width_minus_1,
                               .hm1 = u->height_minus_1,
-                              .levels = levels,
+                              .levels = k->levels,
                               .tlut_format = u->src.tlut_format,
-                              .tlut_hash = tlut_hash,
-                              .written = written,
+                              .tlut_hash = k->tlut_hash,
+                              .written = k->written,
                               .last_use = ++s_tex.clock,
                               .texels = victim->texels,
-                              .bucket = b,
+                              .bucket = k->bucket,
                               .next = next,
                               .rgba = victim->rgba};
     s_tex.stats.misses++;
-    victim->content = hash_bytes(u->src.data, bytes < u->src.size ? bytes : u->src.size);
+    victim->content = hash_bytes(u->src.data, k->bytes < u->src.size ? k->bytes : u->src.size);
     if (cache_fill(victim, u)) {
         cache_attach(u, victim);
         cache_trim(victim);
     } else {
         victim->used = false;
     }
+}
+
+static void cache_lookup(u32 texmap, TexUnit *u) {
+    TexKey k;
+    k.levels = levels_needed(texmap, u);
+    k.addr = (gx_bp_tex_reg(GX_BP_TX_SETIMAGE3, texmap) << 5) & 0x01FFFFFFU;
+    GxTexSource last;
+    u32 lw;
+    u32 lh;
+    level_source(u, k.levels - 1U, &last, &lw, &lh);
+    k.bytes = (u32)(last.data - u->src.data) + gx_tex_level_size(u->format, lw + 1U, lh + 1U);
+    k.tlut_hash = paletted(u->format) ? tlut_hash_of(u) : 0U;
+    k.written = mem_written_sum(k.addr, k.bytes);
+    k.bucket = bucket_of(k.addr);
+    TexCacheEntry *stale = NULL;
+    TexCacheEntry *e = cache_find(u, &k, &stale);
+    if (e != NULL) {
+        e->last_use = ++s_tex.clock;
+        s_tex.stats.hits++;
+        cache_attach(u, e);
+        return;
+    }
+    cache_insert(u, &k, stale);
 }
 
 /* Unidades que os estágios (normais e indiretos) deste desenho usam. */
@@ -738,6 +763,9 @@ static bool decode_scratch(u32 texmap, const TexUnit *u, u32 levels, GxTexGpuUni
     u32 total = 0;
     for (u32 l = 0; l < levels; l++) {
         total += (((u->width_minus_1 >> l) + 1U) * ((u->height_minus_1 >> l) + 1U)) * 4U;
+    }
+    if (total == 0U) {
+        return false;
     }
     if (total > s_tex.scratch_bytes[texmap]) {
         u8 *buf = realloc(s_tex.scratch[texmap], total);
