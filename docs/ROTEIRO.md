@@ -55,7 +55,7 @@ A decisão central foi escrever uma runtime própria em C17 sobre SDL3 e deixar 
 
 | Tipo de tarefa | Modelo | Exemplo |
 | --- | --- | --- |
-| Arquitetura, depuração contra o Dolphin, revisão | Opus | M4 (boot), M5 (OS e disco), M6 (primeiro quadro), M7 (menus) |
+| Arquitetura, depuração contra o Dolphin, revisão | Opus | M4 (boot), M5 (OS e disco), M6 (primeiro quadro), M7 (menus), M8 (tempo de CPU e GPU) |
 | Implementação com especificação clara | Sonnet | M3 (esqueleto e build) |
 | Tarefas mecânicas com verificador automático | Haiku | Matching de funções no decomp (o objdiff dá o veredito) |
 | Verificação mecânica em paralelo, fora da cota do Claude | Codex CLI (GPT-6 Luna, raciocínio baixo) | Builds x86\_64/Debug com a SDL nova (M5) |
@@ -67,12 +67,15 @@ A decisão central foi escrever uma runtime própria em C17 sobre SDL3 e deixar 
 
 **Desempenho ainda sem GPU (24/10, M7):** para dar para jogar já, o M7 acelerou o desenho em software em vez de ir para a GPU: o rasterizador divide cada quadro em faixas de linhas entre as threads (cada pixel tem um dono só, então 1 ou 10 threads dão a mesma imagem, byte a byte), as texturas decodificadas ficam em cache, e a janela em tempo real pula o desenho de até 4 quadros seguidos quando atrasa. O jogo anda a 57–60 quadros/s; a imagem dos menus atualiza 12 a 17 vezes por segundo. O perfil mostrou que metade do quadro é serial (a CPU emulada gasta \~9 ms), então mais threads não trazem os 60 quadros/s desenhados: isso é a GPU, no M8.
 
+**GPU com um shader que é o software (24/10, M8 parte 1):** o `--gfx gpu` leva o desenho para a placa de vídeo com o SDL3 GPU e Metal. Em vez de usar o blend e o teste de profundidade fixos da GPU, o EFB fica em duas imagens de inteiros que o próprio shader lê e escreve: o TEV, o alfa, o Z e o blend são feitos com a mesma aritmética inteira do software. As cópias do EFB trazem só as linhas copiadas de volta para a CPU e usam o código do software. Nesta máquina não há o SDL_shadercross, então o shader foi escrito em MSL e compilado antes, embutido no executável: por enquanto a GPU só funciona no Mac com chip Apple, e as outras plataformas usam o software. Resultado inesperado: a imagem da GPU ficou mais perto do Dolphin que a do software, provavelmente porque o oráculo também desenha numa GPU.
+
 ## Linha do tempo
 
-Em 23/10/2026, o port foi do plano até o jogo rodando nativo dos menus até a largada de uma corrida, lendo o disco e trocando módulos do mesmo jeito que o original. Na madrugada de 24/10, a runtime desenhou o primeiro quadro: o logo da Capcom, igual ao do Dolphin. Horas depois, já dava para jogar pelos menus com controle e som. Mais recente primeiro:
+Em 23/10/2026, o port foi do plano até o jogo rodando nativo dos menus até a largada de uma corrida, lendo o disco e trocando módulos do mesmo jeito que o original. Na madrugada de 24/10, a runtime desenhou o primeiro quadro: o logo da Capcom, igual ao do Dolphin. Horas depois, já dava para jogar pelos menus com controle e som, e antes do amanhecer o desenho foi para a GPU e o relógio do jogo passou a bater com o do Dolphin. Mais recente primeiro:
 
 | Data | Marco | Modelo | Resultado verificado | Commits |
 | --- | --- | --- | --- | --- |
+| 24/10 | M8 parte 1: tempo de CPU e GPU (concluída às 06:21) | Opus | Tempo emulado contra o Dolphin no quadro 6400: de 1,37 s (82 campos de vídeo) para 0,035 s (2,1 campos), idêntico em arm64 e x86\_64; a meta era menos de 1 campo. Câmera da largada contra o Dolphin: de 20,9 para 29,4 dB. Com `--gfx gpu`, 34,9 a 43,3 dB contra o Dolphin em 4 quadros. Na janela (arm64), o menu desenha 60 quadros/s (eram 12–17); a corrida anda a 53 quadros/s de jogo e desenha 31, abaixo da meta de 60. 49/49 testes; `verify_m8.sh --oracle` passa, conferido de novo pela sessão principal com o Dolphin rodando outra vez, junto com os verify do M5, M6 e M7 | `d1a1aea`, `1441024`, `a5a2a6f`, `861ac14`, `7dbcfad`, `7521641` |
 | 24/10 | M7 menus (concluído às 03:49) | Opus | A janela lê teclado e gamepad, e o jogo é navegável da abertura à largada; o som do AX sai pelo SDL3 e o `--audio-dump` grava as mesmas amostras do Dolphin, só deslocadas de alguns ms (correlação mediana 1,0, nível igual em 100% das janelas); o filme da abertura aparece com som. Menus contra o Dolphin: 31,4 a 40,6 dB em 6 quadros, menos de 1% de pixels com diferença visível. 57–60 quadros/s de jogo na janela. 47/47 testes; `verify_m7.sh` passa, conferido de novo pela sessão principal com o Dolphin rodando outra vez | `801c454`, `ff47f2b`, `14fcc48`, `297bc87`, `1efb410`, `4c5cc8e`, `b640dbf` |
 | 24/10 | M6 primeiro quadro (concluído à 01:16) | Opus | O logo da Capcom aparece numa janela SDL3 no mesmo quadro do Dolphin (fade a partir de \~1076, inteiro de \~1110 a \~1410). Quadro 1250: PSNR 46,37 dB; quadro 1100 (fade): 49,18 dB; nenhum pixel com diferença acima de 24 nos dois. Arm64 e x86\_64 dão pixels idênticos; a janela mostra exatamente o XFB (99 dB); 44/44 testes. `verify_m6.sh` passa, conferido de novo pela sessão principal com o Dolphin rodando outra vez | `51da2d6`, `d901d25`, `985f7ff`, `f30abbb`, `eaf5da1` |
 | 23/10 | Merge do opencode no decomp | (sessão principal) | 6 funções a 100% no objdiff entram na `main` do decomp por fast-forward; o `main.dol` continua com o SHA-1 certo | `9b9a66e` (decomp) |
@@ -91,15 +94,17 @@ O que cada marco provou, em uma linha:
 - **M5:** o jogo nativo atravessa os menus com o mesmo roteiro de botões do Dolphin, pede os mesmos arquivos ao disco e liga o módulo da corrida no mesmo quadro que o original.
 - **M6:** a runtime desenha a abertura do jogo sozinha, e a imagem bate com a do Dolphin pixel a pixel, dentro de um limite documentado.
 - **M7:** dá para jogar pelos menus com controle, ouvindo a música e os efeitos iguais aos do Dolphin, e o filme da abertura toca com som.
+- **M8 parte 1:** o relógio do jogo nativo anda junto com o do Dolphin até a carga da pista, e a GPU desenha os menus a 60 quadros por segundo com a imagem ainda mais perto do original.
 
 ### Tokens e tempo por etapa
 
-Até 24/10 às 03:55 (horário de Brasília), o projeto processou cerca de 654 milhões de tokens, dos quais 3,0 milhões foram texto gerado pelos modelos. Somado dos registros de cada sessão do Claude Code, contando cada resposta uma vez.
+Até 24/10 às 06:56 (horário de Brasília), o projeto processou cerca de 743 milhões de tokens, dos quais 3,4 milhões foram texto gerado pelos modelos. Somado dos registros de cada sessão do Claude Code, contando cada resposta uma vez.
 
 | Etapa | Modelo | Início → fim | Duração | Respostas | Tokens gerados | Tokens processados |
 | --- | --- | --- | --- | --- | --- | --- |
+| M8 parte 1 (tempo de CPU igual ao do Dolphin, GX na GPU, `verify_m8.sh`) | Opus 5.5 | 24/10 04:18 → 06:21 | 2h03 | 271 | 270.722 | 80,9 M |
 | M7 menus (controle, áudio do AX, desempenho, `verify_m7.sh`) | Opus 5.5 | 24/10 01:57 → 03:49 | 1h52 | 266 | 292.214 | 116,4 M |
-| Sessão principal, retomada após o reinício (commits pendentes, roteiros, remontagem automática, merge do opencode, conferência do M5, do M6 e do M7) | Opus 5.5 | 23/10 23:22 → 24/10 03:55+ | 4h33+ | 171 | 136.155 | 27,4 M |
+| Sessão principal, retomada após o reinício (commits pendentes, roteiros, remontagem automática, merge do opencode, conferência do M5, do M6, do M7 e do M8 parte 1) | Opus 5.5 | 23/10 23:22 → 24/10 06:56+ | 7h34+ | 240 | 195.674 | 42,8 M |
 | M6 primeiro quadro (GX em software, janela SDL3, comparação de capturas, `verify_m6.sh`) | Opus 5.5 | 24/10 00:22 → 01:16 | 54 min | 146 | 249.251 | 54,8 M |
 | M5 OS e disco, parte 3 (menus até a largada, tempo do DVD, `verify_m5.sh`) | Opus 5.5 | 23/10 23:23 → 23:51 | 28 min | 127 | 97.658 | 21,4 M |
 | opencode: matching do decomp (6 funções, interrompido pela queda do SSD) | DeepSeek V4.1 Flash (OpenCode Go) | 23/10 17:44 → 18:04 | 20 min | 98 passos | 30.013 (12.031 + 17.982 de raciocínio) | 4,9 M |
@@ -132,6 +137,7 @@ Do primeiro registro (22/10, 01:58) até cada marco. **Calendário** é o relóg
 | M5 OS e disco | 23/10 23:51 | 45h52 | 10h43 |
 | M6 primeiro quadro | 24/10 01:16 | 47h17 | 11h48 |
 | M7 menus | 24/10 03:49 | 49h50 | 13h59 |
+| M8 parte 1: tempo de CPU e GPU | 24/10 06:21 | 52h22 | 16h31 |
 
 - Fonte: `scripts/tempo_dev.py` sobre os registros do Claude Code (port, decomp e agentes do decomp). Com limite de 10 min, o M6 fica em 10h21; com 30 min, em 13h24 (a escolha de 15 min é da sessão principal).
 - Não entram o Codex e o opencode (rodaram em paralelo com o Claude, então não mudariam o total) nem o tempo do usuário fora das sessões.
@@ -159,7 +165,9 @@ O problema mais caro não foi técnico do jogo: foi um log sem limite que encheu
 | O mesmo C desenhava pixels diferentes em arm64 e x86\_64 (M6) | O compilador funde `a*b+c` numa instrução só (FMA) onde a arquitetura tem, e o arredondamento muda | O GX compila sem contração de ponto flutuante; agora as capturas dos dois builds são idênticas e o golden guarda o hash das duas |
 | A cópia para o XFB não batia com o Dolphin (M6) | O backend Software do Dolphin arredonda e faz a média de U/V de um jeito; o oráculo roda o backend de hardware (Metal), com outro shader | A runtime segue o shader do caminho de hardware, porque é ele que o oráculo executa: comparar com o que o oráculo de fato roda |
 | Desenhar a rota inteira do M5 levou 9 min 31 s, contra \~57 s sem desenhar (M6) | O GX em software rasteriza cada triângulo na CPU | Os 551 eventos continuam iguais aos do Dolphin (desenhar não mexe no relógio do jogo); o `verify_m5.sh` passou a rodar com `--gfx off` |
-| Os 551 eventos batiam com o Dolphin, mas a câmera da largada ficava noutra posição (M6–M7) | Nos carregamentos, o trabalho da CPU entre uma leitura e outra dura até 1,9x mais no Dolphin; no quadro 6400 o tempo emulado do Dolphin está 1,37 s (82 campos de vídeo) adiante, e a câmera anda pelo relógio, não pelos quadros | Medido com `--timebase-out` nos dois lados; não era o áudio. Igualar o custo de CPU estimado pela runtime ao que o Dolphin conta fica para o M8. Lição: animações que andam pelo relógio denunciam diferença de tempo que a contagem de eventos não vê |
+| Os 551 eventos batiam com o Dolphin, mas a câmera da largada ficava noutra posição (M6–M7) | Nos carregamentos, o trabalho da CPU entre uma leitura e outra dura até 1,9x mais no Dolphin; no quadro 6400 o tempo emulado do Dolphin está 1,37 s (82 campos de vídeo) adiante, e a câmera anda pelo relógio, não pelos quadros | Medido com `--timebase-out` nos dois lados; não era o áudio. Corrigido no M8 (veja a linha seguinte). Lição: animações que andam pelo relógio denunciam diferença de tempo que a contagem de eventos não vê |
+| O relógio do jogo nativo ficava 1,37 s atrás do Dolphin nos carregamentos (M8) | O DolRecomp manda algumas instruções para um interpretador e dava 0 ciclos a elas: o laço que limpa o cache antes de cada leitura do disco contava 2 ciclos por linha de memória em vez de 7. Menores: o Dolphin roda o apploader antes do jogo (meio campo de vídeo de diferença no começo) e o vetor de exceção feito na runtime não contava ciclos | Contar os ciclos dessas instruções pela tabela do próprio Dolphin levou de 82 para 2,5 campos; o resto, para 2,1. Lição: o que custa zero se esconde, e o oráculo também tem jeito de medir: o “timebase” que o Dolphin mostra é o da última leitura do jogo, não o tempo atual |
+| Tirar o desenho da CPU revelou um cache de texturas que decodificava 87 mil vezes as mesmas texturas até a largada (M8) | Uma escrita de outro dado na mesma página de 4 KiB invalidava a textura | Um hash do conteúdo antes de decodificar de novo: 264 decodificações. Lição: o gargalo muda de lugar quando o maior sai |
 | O decodificador de áudio ADPCM saturava em -32767 em vez de -32768 (M7) | Limite errado no código da runtime, invisível até o som ser comparado com o do Dolphin | Corrigido; o áudio passou a bater amostra por amostra |
 | Mais duas quedas do SSD no fechamento do M7 (24/10, \~04:00 e \~04:05); a imagem não remontava (“sistemas de arquivos não montáveis”) e a sessão principal ficou sem rodar comandos | O SSD saiu da USB de novo; a imagem `AMRecomp` ficou presa a dois dispositivos antigos das quedas, e o mesmo volume não monta duas vezes. A sessão foi aberta sem o `CLAUDE_CODE_TMPDIR` do `RETOMAR.md`, então a pasta temporária estava no volume | O usuário religou o cabo e soltou os dispositivos presos pelo Terminal; nada se perdeu (os roteiros estavam na imagem e foram commitados logo em seguida). O `am-montar` agora solta sozinho os dispositivos presos e mostra o erro do `hdiutil` (`2f313aa`). Lição: abrir as sessões sempre com a linha do `RETOMAR.md` |
 | Cada queda do SSD exigia remontar à mão | A imagem fica num SSD exFAT ligado por USB; quando o dispositivo some (`media is not present` no kernel), nada remonta sozinho | `~/.local/bin/am-montar` (no disco interno) + agente do launchd a cada 60 s (`c19caf3`); testado desmontando o DecompAM |
@@ -181,12 +189,12 @@ Padrões de trabalho que funcionaram:
 
 ## Perguntas em aberto e próximos passos
 
-O próximo marco é o M8: a corrida completa a 60 fps, com o desenho na GPU, o tempo de CPU igual ao do Dolphin e saves.
+O M8 está pela metade. A parte 1 (24/10, 06:21) igualou o tempo de CPU ao do Dolphin até a carga da pista e levou o desenho para a GPU. Falta a parte 2: o GX numa thread própria para desenhar a corrida a 60 quadros/s (hoje 31), o cel-shading conferido com o carro andando, os 2 campos de tempo que sobram e o save no memory card.
 
 - [x] M5: carregar `game.rel` e rodar 600 frames do laço principal em arm64 e x86\_64 (concluído em 23/10, 23:51)
 - [x] M6: FIFO da GX, vertex loader, texturas, TEV; logo da Capcom na tela (concluído em 24/10, 01:16, com GX em software em vez de ubershader)
 - [x] M7: menus jogáveis com controle, áudio (AX) e vídeos (Sofdec) (concluído em 24/10, 03:49; imagem dos menus a 12–17 quadros/s até a GPU do M8)
-- [ ] M8: corrida completa a 60 fps, cel-shading correto, saves
+- [ ] M8: corrida completa a 60 fps, cel-shading correto, saves (parte 1 concluída em 24/10, 06:21: tempo de CPU e GPU; corrida a 31 quadros/s desenhados)
 - [ ] M9: builds de Windows e Linux x86\_64 testadas de verdade
 - [ ] M10: widescreen, resolução interna, 60 fps, troca por funções decompiladas
 
@@ -196,6 +204,6 @@ Perguntas ainda sem resposta:
 - ~~Como o jogo toca os vídeos~~ Respondida no M7: SFD (MPEG-1 com áudio ADX) dentro dos `.afs`, decodificados pela biblioteca da CRI que já vem dentro do executável do jogo; o quadro vira textura do GX. Não precisou de código novo.
 - ~~Se o jogo usa streaming de áudio direto do disco~~ Respondida no M5: sim, a música é ADX lida em fluxo de dentro dos `.afs` (441 leituras de 10 arquivos até a largada).
 - Como o cel-shading usa as cópias de EFB e o z-texture, o maior risco do M6–M8. Parcial no M6: até a largada, o jogo não copia o EFB para textura nem usa textura de Z ou TEV indireto; usa neblina em 92% dos desenhos e no máximo 3 estágios de TEV, e descarta 1,6 milhão de triângulos pela face. Hipótese: o contorno é geometria (o modelo repetido um pouco maior, com a frente descartada). Falta confirmar com o carro em movimento, no replay e na garagem.
-- Por que a câmera da introdução da corrida fica em outra posição na runtime (20,9 dB contra o Dolphin, na largada em Suzuka). Respondida no M7: não é o áudio; o Dolphin gasta mais tempo de CPU nos carregamentos e chega à largada 1,37 s adiante no tempo emulado. Corrigir fica para o M8.
+- Por que a câmera da introdução da corrida fica em outra posição na runtime (20,9 dB contra o Dolphin, na largada em Suzuka). Respondida no M7: não é o áudio; o Dolphin gasta mais tempo de CPU nos carregamentos e chega à largada 1,37 s adiante no tempo emulado. Corrigido no M8 parte 1: a diferença caiu para 0,035 s e a câmera da largada foi de 20,9 para 29,4 dB contra o Dolphin.
 - Se o modo LAN (Broadband Adapter) existe mesmo na versão GameCube.
 - O CI de Linux e Windows ainda não rodou: falta um remote no GitHub.

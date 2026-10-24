@@ -249,9 +249,23 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** um controle de GameCube aparece e cada botão acende junto da tecla correspondente. No áudio, duas ondas, azul (runtime) e laranja (Dolphin), deslizam uma sobre a outra até encaixar; quando encaixam, a cor vira uma só. No desempenho, a tela do menu se fatia em faixas que acendem em cores diferentes, ao mesmo tempo; um velocímetro sobe de 9 para 20. Na câmera, as duas réguas de tempo correm lado a lado e uma escorrega para a frente a cada tela de carregamento, com o “+1,37 s” aparecendo no fim.
 
-### 4.10 Quanto custou até aqui (tokens e tempo)
+### 4.10 M8, parte 1: o relógio e a placa de vídeo
 
-**Fala:** “E quanto de IA foi isso? Até agora, uns 654 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 3 milhões de tokens, algo como uns 25 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59. No relógio da parede foram dois dias, com noite de sono no meio.”
+**Fala:** “O M8 eu dividi em duas partes. A primeira atacou os dois problemas que o M7 deixou: o relógio e a velocidade. Lembra da câmera da largada fora do lugar, porque o Dolphin chegava 1,37 segundo adiantado? A IA mediu o tempo do jogo nos dois lados, carregamento por carregamento, e achou o culpado: algumas instruções que o recompilador não traduz e manda pra um interpretador estavam custando zero ciclos de processador. Uma delas fica num laço que limpa o cache antes de cada leitura do disco. Na runtime, cada volta desse laço custava 2 ciclos; no console, 7. Multiplica isso por todos os carregamentos e dá mais de um segundo. Com a conta certa, a diferença caiu de 1,37 segundo pra 35 milésimos, e a câmera da largada voltou pro lugar. E teve um detalhe curioso: até o oráculo tem jeito de medir. O relógio que o Dolphin mostra é o da última vez que o jogo leu o relógio, não o de agora. A runtime teve que aprender a medir igual. A segunda metade foi levar o desenho pra placa de vídeo. Em vez de usar o desenho padrão da GPU, a IA escreveu um shader que faz exatamente as mesmas contas do desenho em software, em números inteiros, como o chip do GameCube. E aí aconteceu uma coisa que eu não esperava: a imagem da GPU ficou mais parecida com o Dolphin do que a do software. Os menus agora saem a 60 quadros por segundo; antes eram 15. Na corrida, ainda não: o jogo anda a 53, mas a tela mostra 31. Isso fica pra segunda parte.”
+
+**Na tela:**
+
+- Duas réguas de tempo emulado, runtime e Dolphin: antes, separadas por 1,37 s no quadro 6400; depois, juntas até a carga da pista, com só 0,035 s no fim. A linha real do `verify_m8.sh`: `defasagem no q6400: 2.096 campo(s) (0.0350 s); no q1: 0.000 … -> OK`.
+- Um contador de ciclos por volta do laço de limpeza de cache: 2 → 7.
+- A largada em Suzuka lado a lado, GPU e Dolphin (imagem `lado_gpu_dolphin_arm64_f6400.png`, 34,9 dB), e o menu principal lado a lado (39,9 dB).
+- Os números da janela: menu 60 quadros/s desenhados (antes 12–17); corrida 53 de jogo, 31 desenhados.
+- A tabela de semelhança com o Dolphin nos quatro quadros, com software e GPU lado a lado (GPU mais perto em todos).
+
+**Motion:** as duas réguas de tempo da cena 4.9 voltam; um “2 → 7” pisca sobre o laço, e a régua da runtime estica até alcançar a do Dolphin, encaixando com um clique. Na parte da GPU, o quadro do menu se monta em blocos que saem da CPU (ícone de chip) e passam a sair da placa de vídeo; o velocímetro da cena 4.9 pula de 15 para 60 no menu e, na corrida, para em 31 com um marcador “parte 2” piscando no 60.
+
+### 4.11 Quanto custou até aqui (tokens e tempo)
+
+**Fala:** “E quanto de IA foi isso? Até agora, uns 743 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 3,4 milhões de tokens, algo como uns 28 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31. No relógio da parede foram dois dias, com noite de sono no meio.”
 
 **Na tela:**
 
@@ -268,7 +282,8 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | Matching do decomp (6 funções) | opencode (DeepSeek V4.1 Flash) | 20 min | 30 mil | 4,9 M |
 | M6 primeiro quadro | Opus | 54 min | 249 mil | 54,8 M |
 | M7 menus, controle e som | Opus | 1h52 | 292 mil | 116,4 M |
-| Sessão principal | Opus | 14h+ | 377 mil | 78,6 M |
+| M8 parte 1, relógio e GPU | Opus | 2h03 | 271 mil | 80,9 M |
+| Sessão principal | Opus | 17h+ | 436 mil | 94,0 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
 
@@ -280,23 +295,24 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | M5 menus até a largada | 10h43 | 45h52 |
 | M6 primeiro quadro | 11h48 | 47h17 |
 | M7 dá pra jogar pelos menus | 13h59 | 49h50 |
+| M8 parte 1, relógio e GPU | 16h31 | 52h22 |
 
-**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “654 M processados · 3,0 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”); embaixo, uma régua mais longa e cinza mostra o calendário (49h50), com faixas de noite escurecidas. Atualizar os números na edição final.
+**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “743 M processados · 3,4 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”, “GPU: 16h31”); embaixo, uma régua mais longa e cinza mostra o calendário (52h22), com faixas de noite escurecidas. Atualizar os números na edição final.
 
 ## Cap. 5 — Onde estamos e o que vem
 
-**Fala:** “Hoje o Auto Modellista liga no meu computador sem emulador, lê o disco, toca o filme da abertura com som, e eu navego pelos menus com o controle, ouvindo a mesma música e os mesmos efeitos do console, até largar numa corrida. Ainda falta muita coisa: a imagem dos menus atualiza umas 15 vezes por segundo porque o desenho é na CPU, e o relógio do jogo ainda se adianta um pouco nos carregamentos. O próximo passo é o M8: levar o desenho pra GPU, acertar o tempo de processador com o do Dolphin e fazer a corrida inteira a 60 quadros por segundo, com save. E aí sim, confirmar como o jogo faz aquele contorno preto de desenho animado: a pista é que ele desenha o carro duas vezes, uma um pouco maior e de costas. Quando der pra fazer uma volta inteira em Suzuka, sai o próximo vídeo. Se você quer ver isso, já sabe.”
+**Fala:** “Hoje o Auto Modellista liga no meu computador sem emulador, lê o disco, toca o filme da abertura com som, e eu navego pelos menus com o controle, ouvindo a mesma música e os mesmos efeitos do console, até largar numa corrida. Os menus já saem a 60 quadros por segundo na placa de vídeo, e o relógio do jogo anda junto com o do console. Ainda falta muita coisa: na corrida a tela mostra 31 quadros por segundo, porque o desenho e o processador emulado ainda dividem o mesmo núcleo. A segunda parte do M8 separa os dois, como o Dolphin faz, pra corrida inteira sair a 60, e coloca o save no memory card. E aí sim, confirmar como o jogo faz aquele contorno preto de desenho animado: a pista é que ele desenha o carro duas vezes, uma um pouco maior e de costas. Quando der pra fazer uma volta inteira em Suzuka, sai o próximo vídeo. Se você quer ver isso, já sabe.”
 
 **Na tela:**
 
-- Timeline dos marcos M3 a M10 com M3–M7 concluídos e o M8 piscando como “próximo”.
+- Timeline dos marcos M3 a M10 com M3–M7 concluídos e o M8 pela metade (parte 1 feita, parte 2 piscando).
 - Uma gravação de tela do modo `jogar`: menu principal navegado pelo teclado, com o som.
 - Os números do estudo do cel-shading: 0 cópias para textura, neblina em 92% dos desenhos, 1,6 milhão de triângulos descartados pela face, com a legenda “hipótese, a confirmar”.
 - Encerramento com o mosaico de carros e o nome do canal.
 
 **Motion:**
 
-- Timeline horizontal desenhando da esquerda para a direita; os marcos concluídos ganham um check verde ao passar; no M8 a linha para e um cursor pisca.
+- Timeline horizontal desenhando da esquerda para a direita; os marcos concluídos ganham um check verde ao passar; no M8 a linha para no meio do marco e um cursor pisca.
 - Na frase do contorno: um carro em wireframe ganha uma cópia levemente inflada atrás de si, que vira o traço preto.
 - Na frase “uma volta inteira em Suzuka”: um contador de voltas “0/1” aparece e corta para o card “próximo vídeo”.
 - Card final com o handle do canal e um botão de inscrição animado discreto.
@@ -313,3 +329,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 24/10/2026 (tempo acumulado) | 4.9 ganha o tempo de desenvolvimento até cada marco (trabalho de IA e calendário, `scripts/tempo_dev.py`), na fala, na tela e no motion |
 | 24/10/2026 (M7 concluído) | 4.9 nova: “M7: agora dá pra jogar” (controle, áudio do AX igual ao do Dolphin amostra por amostra, filmes sem código novo, faixas paralelas e pulo de quadros, causa da câmera da largada); a cena de tokens vira 4.10, com o M7, a sessão principal e o tempo acumulado até o M7; Cap. 5 reescrito (M7 feito, M8 próximo) |
 | 24/10/2026 (quarta e quinta quedas) | Roteiro de estudo: linha nova em Problemas (duas quedas do SSD no fechamento do M7, imagem presa a dispositivos antigos, `am-montar` corrigido); material para estender a cena 4.6 na edição |
+| 24/10/2026 (M8 parte 1) | 4.10 nova: “M8, parte 1: o relógio e a placa de vídeo” (instruções do interpretador com 0 ciclos, laço de cache 2 → 7, defasagem 1,37 s → 0,035 s, o relógio que o Dolphin mostra, shader inteiro na GPU mais perto do Dolphin que o software, menus a 60 e corrida a 31); a cena de tokens vira 4.11, com o M8 parte 1, a sessão principal e o tempo acumulado; Cap. 5 atualizado (M8 pela metade) |
