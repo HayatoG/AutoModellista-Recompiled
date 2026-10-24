@@ -65,11 +65,11 @@ A decisão central foi escrever uma runtime própria em C17 sobre SDL3 e deixar 
 
 ## Linha do tempo
 
-Em 23/10/2026, o port foi do plano até o jogo rodando nativo além de `main`, carregando menus do disco do mesmo jeito que o original. Mais recente primeiro:
+Em 23/10/2026, o port foi do plano até o jogo rodando nativo dos menus até a largada de uma corrida, lendo o disco e trocando módulos do mesmo jeito que o original. Mais recente primeiro:
 
 | Data | Marco | Modelo | Resultado verificado | Commits |
 | --- | --- | --- | --- | --- |
-| 23/10 | M5 OS e disco (em andamento; parte 2 desde 17:11, retomado à noite) | Opus | Leituras de disco na mesma ordem e offsets do Dolphin; `menu.rel`, `menu00`, `menu01` e `msg_e` carregados via `OSLink`; RELs regenerados com base em 0x81800000. Parte 2: vozes do AX andando sem mixagem (teste novo com vozes sintéticas), detector de laço de quadros parado; 38/38 testes; 600 quadros em 11,4 s sem erro e 31 eventos de disco/módulos iguais ao Dolphin. Oráculo com roteiro de controle (`--pad-script` no pipe do Dolphin) e capturas da tela (`--shots`); caminho pelos menus achado até a seleção de pista | `4cd34e0`, `73cdf41`, `456174f`, `557e0f1`, `501e2cc`, `73d7e10`, `bb1131f` |
+| 23/10 | M5 OS e disco (concluído às 23:51) | Opus | Com um roteiro de controle que atravessa os menus até a largada, a runtime liga o `game.rel` no quadro 5731 e roda 669 quadros depois, sem erro, em arm64 (57 s para 6.400 quadros) e x86\_64 (81 s). Os 12 eventos de módulo caem nos mesmos quadros do Dolphin; 103 eventos estritos idênticos e na mesma ordem; 441 leituras de música ADX com a mesma contagem por trecho; 39/39 testes; `verify_m5.sh` e `verify_m4.sh` passam, conferidos de novo pela sessão principal | `4cd34e0`, `73cdf41`, `456174f`, `557e0f1`, `501e2cc`, `73d7e10`, `bb1131f`, `71330eb`, `c2d96c8`, `6be5216`, `6c8c419` |
 | 23/10 | Builds x86\_64 Release, x86\_64 Debug e arm64 Debug com SDL 3.4.18 | Codex (GPT-6 Luna) | Três builds compilam, 38/38 testes em cada; verificado de novo pela sessão principal | (sem commit: só verificação) |
 | 23/10 | SDL3 3.4.14 → 3.4.18 | (sessão principal) | 26/26 testes; boot idêntico (41.422 voltas, 6.420 chamadas) | `09deea0` |
 | 23/10 | M4 boot até `main` | Opus | Trace idêntico ao Dolphin em 1.998 eventos (2.733 com trechos de 128); arm64 e x86\_64; 26 testes | `852ba6d`, `7614f88`, `64a09b6` |
@@ -81,18 +81,20 @@ O que cada marco provou, em uma linha:
 
 - **M3:** o C gerado de todo o jogo cabe num executável só, sem conflito de símbolos entre DOL e RELs.
 - **M4:** o próprio código do jogo, recompilado, inicializa o SDK e imprime “Dolphin OS … Console Type: Development HW3”, como no console.
-- **M5 (até aqui):** o jogo nativo pede os mesmos arquivos ao disco que o original e carrega os módulos de menu.
+- **M5:** o jogo nativo atravessa os menus com o mesmo roteiro de botões do Dolphin, pede os mesmos arquivos ao disco e liga o módulo da corrida no mesmo quadro que o original.
 
 ### Tokens e tempo por etapa
 
-Até 23/10 às 16:36 (horário de Brasília), o projeto processou cerca de 389 milhões de tokens, dos quais 2,1 milhões foram texto gerado pelos modelos. Somado dos registros de cada sessão do Claude Code, contando cada resposta uma vez.
+Até 23/10 às 23:56 (horário de Brasília), o projeto processou cerca de 463 milhões de tokens, dos quais 2,4 milhões foram texto gerado pelos modelos. Somado dos registros de cada sessão do Claude Code, contando cada resposta uma vez.
 
 | Etapa | Modelo | Início → fim | Duração | Respostas | Tokens gerados | Tokens processados |
 | --- | --- | --- | --- | --- | --- | --- |
-| opencode: matching do decomp (em andamento, parcial) | DeepSeek V4.1 Flash (OpenCode Go) | 23/10 17:44 → 17:59+ | 15 min+ | 77 | 8.679 | 3,3 M |
+| Sessão principal, retomada após o reinício (commits pendentes, roteiros, remontagem automática, conferência) | Opus 5.5 | 23/10 23:22 → 23:56+ | 34 min+ | 62 | 34.810 | 8,1 M |
+| M5 OS e disco, parte 3 (menus até a largada, tempo do DVD, `verify_m5.sh`) | Opus 5.5 | 23/10 23:23 → 23:51 | 28 min | 127 | 97.658 | 21,4 M |
+| opencode: matching do decomp (6 funções, interrompido pela queda do SSD) | DeepSeek V4.1 Flash (OpenCode Go) | 23/10 17:44 → 18:04 | 20 min | 98 passos | 30.013 (12.031 + 17.982 de raciocínio) | 4,9 M |
 | Codex: builds x86\_64/Debug com SDL 3.4.18 (2 tentativas) | GPT-6 Luna | 23/10 17:44 → 17:57 | 12 min | — | 14.602 | 5,5 M |
-| M5 OS e disco, parte 2 (em andamento, parcial) | Opus 5.5 | 23/10 17:11 → 17:57+ | 46 min+ | 104 | 49.950 | 17,9 M |
-| Sessão principal, retomada após a queda do volume | Opus 5.5 | 23/10 17:08 → 17:59+ | 51 min+ | 64 | 39.013 | 8,1 M |
+| M5 OS e disco, parte 2 (parou na seleção de pista: 3ª queda do SSD) | Opus 5.5 | 23/10 17:11 → 19:06 | 1h55 | 114 | 55.951 | 20,3 M |
+| Sessão principal, retomada após a queda do volume | Opus 5.5 | 23/10 17:08 → 22:09 | 5h01 | 96 | 81.725 | 13,8 M |
 | M5 OS e disco, parte 1 (interrompida: o volume do SSD desmontou) | Opus 5.5 | 23/10 14:49 → 16:35 | 1h46 | 248 | 322.027 | 105,3 M |
 | M4 boot até `main` | Opus 5.5 | 23/10 13:01 → 14:33 | 1h32 (inclui a parada do disco cheio) | 201 | 275.489 | 74,2 M |
 | M3 esqueleto | Sonnet 5.5 | 23/10 12:26 → 12:49 | 23 min | 48 | 97.718 | 7,0 M |
@@ -123,6 +125,11 @@ O problema mais caro não foi técnico do jogo: foi um log sem limite que encheu
 | Primeira tentativa do Codex falhou em 36 s nas três builds (`DolRecomp não encontrado`) | O prompt não dizia onde está `tools/DolRecomp`, que fica fora do git e não existe na worktree | O Codex obedeceu e não tentou consertar; prompt corrigido com o caminho (só leitura) e a segunda tentativa passou. Ao isolar em worktree, listar tudo que não está no git |
 | opencode não autenticava (`Invalid API key` no 9router, 403 no provedor nvidia) | Chave do 9router inválida | Testar o modelo com uma mensagem mínima antes de lançar; usado o provedor OpenCode Go, que respondeu |
 | Volume do SSD desmontado três vezes no M5 (23/10, \~16:35, \~17:30 e \~18:05); na primeira o agente morreu após 1h46, na segunda a sessão inteira parou de rodar comandos, na terceira o agente do M5 parou na seleção de pista | O macOS desanexou a imagem `AMRecomp.sparsebundle` (SSD USB). A primeira suspeita foi `disksleep 10` (repouso de disco após 10 min), mas a terceira queda veio com `disksleep 0`: a suspeita agora é a ligação USB (cabo, porta ou energia). A pasta temporária do Claude Code também ficava no volume, então nem o `hdiutil attach` rodava | Uma edição não commitada se perdeu (o `--pad-script`, reescrito depois); o resto estava na imagem. Correções: `sudo pmset -a disksleep 0`; pasta temporária do Claude Code no disco interno (`RETOMAR.md`); regra no `CLAUDE.md` de conferir `ls /Volumes/AMRecomp` antes de execuções longas. Depois da terceira: reinício do Mac e retomada por `RETOMAR.md` + página de status; o trabalho pendente virou o commit `bb1131f` |
+| Leituras do disco fora de ordem no menu principal (evento 71: quadro 2092 no Dolphin, 2053 na runtime) | Tempo de leitura fixo na runtime (300 µs + 3 MB/s), enquanto o Dolphin simula o drive | Modelo do drive copiado do Dolphin (busca, rotação, velocidade pelo raio, buffer de 1 MiB) em `runtime/hw/dvd_timing.c`; os eventos de módulo passaram a cair no mesmo quadro |
+| Telas de “now loading” lendo arquivos diferentes nos dois lados | O Dolphin usava o relógio do Mac, e a runtime começa em 2000-01-01; provavelmente o jogo sorteia algo pelo relógio (não confirmado) | O oráculo fixa o relógio (`--rtc`); as leituras ficaram iguais e na mesma ordem. Fixar toda entrada externa do oráculo, não só o controle |
+| `OSUnlink` do `menu01` recebia o endereço do `menu00` | `menu.rel` e `game.rel` usam o mesmo endereço real, um depois do outro, e a runtime não tirava o módulo descarregado da tradução real → virtual | Corrigido com teste de regressão (`c2d96c8`); um salto para o `game.rel` cairia no código do menu |
+| Leituras de música ADX não batem byte a byte (a 1ª diferença no quadro 2121) | Cada leitura repõe o que já tocou, em setores de 2 KiB, e isso depende da fração do quadro em que a CPU olha; a runtime não tem o ciclo de CPU do Dolphin | Comparação em dois níveis: estrita para módulos e arquivos; para a música, mesma contagem de leituras por trecho |
+| Cada queda do SSD exigia remontar à mão | A imagem fica num SSD exFAT ligado por USB; quando o dispositivo some (`media is not present` no kernel), nada remonta sozinho | `~/.local/bin/am-montar` (no disco interno) + agente do launchd a cada 60 s (`c19caf3`); testado desmontando o DecompAM |
 
 Padrões de trabalho que funcionaram:
 
@@ -143,7 +150,7 @@ Padrões de trabalho que funcionaram:
 
 O próximo marco visível é o M6: a primeira imagem do jogo na tela, desenhada pela runtime.
 
-- [ ] M5: carregar `game.rel` e rodar 600 frames do laço principal em arm64 e x86\_64
+- [x] M5: carregar `game.rel` e rodar 600 frames do laço principal em arm64 e x86\_64 (concluído em 23/10, 23:51)
 - [ ] M6: FIFO da GX, vertex loader, texturas, ubershader TEV; logo da Capcom na tela
 - [ ] M7: menus jogáveis com controle, áudio (AX) e vídeos (Sofdec)
 - [ ] M8: corrida completa a 60 fps, cel-shading correto, saves
@@ -153,7 +160,7 @@ O próximo marco visível é o M6: a primeira imagem do jogo na tela, desenhada 
 Perguntas ainda sem resposta:
 
 - Qual microcódigo de DSP o jogo carrega, e se é o AX padrão.
-- Se o jogo usa streaming de áudio direto do disco (o byte 0x08 do cabeçalho está ligado).
+- ~~Se o jogo usa streaming de áudio direto do disco~~ Respondida no M5: sim, a música é ADX lida em fluxo de dentro dos `.afs` (441 leituras de 10 arquivos até a largada).
 - Como o cel-shading usa as cópias de EFB e o z-texture, o maior risco do M6–M8.
 - Se o modo LAN (Broadband Adapter) existe mesmo na versão GameCube.
 - O CI de Linux e Windows ainda não rodou: falta um remote no GitHub.
