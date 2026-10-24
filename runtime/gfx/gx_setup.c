@@ -52,7 +52,34 @@ const GxSetupStats *gx_setup_stats(void) {
     return &s_setup.stats;
 }
 
+/* Contadores de recursos por desenho (relatório do fim da execução). */
+static void note_features(u32 gen, u32 stages) {
+    GxSetupStats *st = &s_setup.stats;
+    for (u32 i = 0; i < stages; i++) {
+        const u32 order = gx_bp_reg((u8)(GX_BP_TREF + (i >> 1)));
+        const u32 o = (i & 1U) != 0U ? order >> 12 : order;
+        if (((o >> 6) & 1U) != 0U) {
+            const u32 format = (gx_bp_tex_reg(GX_BP_TX_SETIMAGE0, o & 7U) >> 20) & 0xFU;
+            st->tex_formats |= 1U << format;
+            if (format == GX_TF_C4 || format == GX_TF_C8 || format == GX_TF_C14X2) {
+                st->tlut_formats |= 1U << ((gx_bp_tex_reg(GX_BP_TX_SETTLUT, o & 7U) >> 10) & 3U);
+            }
+        }
+    }
+    const u32 blend = gx_bp_reg(GX_BP_BLENDMODE);
+    st->blend_draws += (blend & 1U) != 0U ? 1U : 0U;
+    st->logic_draws += (blend & 2U) != 0U ? 1U : 0U;
+    st->subtract_draws += (blend & 0x800U) != 0U ? 1U : 0U;
+    const u32 at = gx_bp_reg(GX_BP_ALPHACOMPARE);
+    st->alpha_tests |= (1U << ((at >> 16) & 7U)) | (1U << ((at >> 19) & 7U));
+    st->fog_types |= 1U << ((gx_bp_reg(GX_BP_FOGPARAM3) >> 21) & 7U);
+    st->stage_counts |= 1U << (stages - 1U);
+    const u32 texgens = gen & 15U;
+    st->max_texgens = texgens > st->max_texgens ? texgens : st->max_texgens;
+}
+
 void gx_setup_begin(u32 primitive, u32 vat) {
+    gx_raster_flush(); /* a fila do desenho anterior usa o estado de antes (normalmente já vazia: gx_setup_end) */
     s_setup.primitive = primitive;
     s_setup.vat = vat;
     s_setup.vertex_size = gx_vtx_size(vat);
@@ -68,6 +95,7 @@ void gx_setup_begin(u32 primitive, u32 vat) {
     s_setup.stats.indirect_draws += ((gen >> 16) & 7U) != 0U ? 1U : 0U;
     s_setup.stats.ztex_draws += ((gx_bp_reg(GX_BP_ZTEX2) >> 2) & 3U) != 0U ? 1U : 0U;
     s_setup.stats.fog_draws += ((gx_bp_reg(GX_BP_FOGPARAM3) >> 21) & 7U) != 0U ? 1U : 0U;
+    note_features(gen, stages);
     s_setup.texgens = gx_xf_num_texgens();
     for (u32 n = 0; n < GX_TEXCOORD_MAX; n++) { /* TCInfo.scale_minus_1 + 1 (SU_SSIZE/TSIZE) */
         s_setup.tex_scale[n][0] = (f32)((gx_bp_reg((u8)(GX_BP_SU_SSIZE + (2U * n))) & 0xFFFFU) + 1U);
@@ -413,6 +441,10 @@ static void setup_vertex(void) {
         vp[1] = &s_setup.verts[s_setup.counter & 1U];
         break;
     }
+}
+
+void gx_setup_end(void) {
+    gx_raster_flush();
 }
 
 void gx_setup_vertex(const u8 *data) {

@@ -3,6 +3,7 @@
  * TextureSampler::Sample/SampleMip (GPL-2.0-or-later, Dolphin Emulator Project). */
 #include "am/gx_tex.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "am/gx_bp.h"
@@ -257,6 +258,9 @@ typedef struct TexUnit {
     bool tmem;       /* cache_manually_managed: dados já na TMEM */
     GxTexSource src; /* nível 0 */
     const u8 *odd;   /* RGBA8 na TMEM: banco GB */
+    /* Níveis já decodificados em RGBA (cache abaixo); NULL = decodificar texel a texel, como o Dolphin. */
+    const u8 *cached[GX_TEX_CACHE_LEVELS];
+    u32 cached_levels;
 } TexUnit;
 
 static TexUnit tex_unit(u32 texmap) {
@@ -303,34 +307,51 @@ static void texel(const TexUnit *u, const GxTexSource *src, s32 s, s32 t, u32 wi
     gx_tex_decode_texel(out, src, (u32)s, (u32)t, width_minus_1, u->format);
 }
 
-static void sample_mip(const TexUnit *u, s32 s, s32 t, u32 mip, bool linear, u8 *out) {
-    GxTexSource src = u->src;
-    u32 wm1 = u->width_minus_1;
-    u32 hm1 = u->height_minus_1;
-    if (mip != 0U) {
-        const FormatInfo f = format_info(u->format);
-        u32 mw = wm1 + 1U;
-        u32 mh = hm1 + 1U;
-        wm1 >>= mip;
-        hm1 >>= mip;
-        s >>= (s32)mip;
-        t >>= (s32)mip;
-        for (u32 level = mip; level > 0U; level--) {
-            mw = mw > f.block_w ? mw : f.block_w;
-            mh = mh > f.block_h ? mh : f.block_h;
-            const u32 size = (mw * mh * f.nibbles) >> 1;
-            src.data = size < src.size ? src.data + size : src.data;
-            src.size = size < src.size ? src.size - size : 0U;
-            mw >>= 1;
-            mh >>= 1;
-        }
+/* Fonte e tamanho do nível `mip` (TextureSampler::SampleMip: os níveis seguem o nível 0, cada um arredondado aos
+ * blocos do formato; se passar do fim, lê zeros). */
+static void level_source(const TexUnit *u, u32 mip, GxTexSource *src, u32 *wm1, u32 *hm1) {
+    *src = u->src;
+    *wm1 = u->width_minus_1;
+    *hm1 = u->height_minus_1;
+    if (mip == 0U) {
+        return;
     }
+    const FormatInfo f = format_info(u->format);
+    u32 mw = *wm1 + 1U;
+    u32 mh = *hm1 + 1U;
+    *wm1 >>= mip;
+    *hm1 >>= mip;
+    for (u32 level = mip; level > 0U; level--) {
+        mw = mw > f.block_w ? mw : f.block_w;
+        mh = mh > f.block_h ? mh : f.block_h;
+        const u32 size = (mw * mh * f.nibbles) >> 1;
+        src->data = size < src->size ? src->data + size : src->data;
+        src->size = size < src->size ? src->size - size : 0U;
+        mw >>= 1;
+        mh >>= 1;
+    }
+}
+
+static void fetch(const TexUnit *u, const u8 *cached, const GxTexSource *src, s32 s, s32 t, u32 wm1, u8 *out) {
+    if (cached != NULL) {
+        memcpy(out, cached + ((((size_t)t * (wm1 + 1U)) + (size_t)s) * 4U), 4U);
+        return;
+    }
+    texel(u, src, s, t, wm1, out);
+}
+
+static void sample_mip(const TexUnit *u, s32 s, s32 t, u32 mip, bool linear, u8 *out) {
+    GxTexSource src;
+    u32 wm1;
+    u32 hm1;
+    level_source(u, mip, &src, &wm1, &hm1);
+    const u8 *cached = mip < u->cached_levels ? u->cached[mip] : NULL;
     const u32 wrap_s = u->mode0 & 3U;
     const u32 wrap_t = (u->mode0 >> 2) & 3U;
     const s32 w = (s32)wm1 + 1;
     const s32 h = (s32)hm1 + 1;
     if (!linear) {
-        texel(u, &src, wrap(s >> 7, wrap_s, w), wrap(t >> 7, wrap_t, h), wm1, out);
+        fetch(u, cached, &src, wrap(s >> 7, wrap_s, w), wrap(t >> 7, wrap_t, h), wm1, out);
         return;
     }
     s -= 64;
@@ -342,10 +363,10 @@ static void sample_mip(const TexUnit *u, s32 s, s32 t, u32 mip, bool linear, u8 
     const u32 fs = (u32)s & 0x7FU;
     const u32 ft = (u32)t & 0x7FU;
     u8 c[4][4];
-    texel(u, &src, s0, t0, wm1, c[0]);
-    texel(u, &src, s1, t0, wm1, c[1]);
-    texel(u, &src, s0, t1, wm1, c[2]);
-    texel(u, &src, s1, t1, wm1, c[3]);
+    fetch(u, cached, &src, s0, t0, wm1, c[0]);
+    fetch(u, cached, &src, s1, t0, wm1, c[1]);
+    fetch(u, cached, &src, s0, t1, wm1, c[2]);
+    fetch(u, cached, &src, s1, t1, wm1, c[3]);
     for (u32 i = 0; i < 4U; i++) {
         const u32 v = ((u32)c[0][i] * (128U - fs) * (128U - ft)) + ((u32)c[1][i] * fs * (128U - ft)) +
                       ((u32)c[2][i] * (128U - fs) * ft) + ((u32)c[3][i] * fs * ft);
@@ -353,13 +374,190 @@ static void sample_mip(const TexUnit *u, s32 s, s32 t, u32 mip, bool linear, u8 
     }
 }
 
+/* Cache de texturas decodificadas (M7, desempenho): cada nível usado por um desenho é decodificado inteiro para RGBA
+ * uma vez e reaproveitado enquanto a memória dele não for escrita (contadores por página de am/mem.h) e a TLUT for a
+ * mesma (hash do conteúdo). Os texels são os mesmos de gx_tex_decode_texel, então a imagem não muda. Texturas na TMEM
+ * (pré-carregadas) e grandes demais ficam fora. */
+#define TEX_CACHE_ENTRIES    96U
+#define TEX_CACHE_MAX_TEXELS (1024U * 1024U)
+
+typedef struct TexCacheEntry {
+    bool used;
+    u32 addr;
+    u32 bytes;
+    u32 format;
+    u32 wm1;
+    u32 hm1;
+    u32 levels;
+    u32 tlut_format;
+    u64 tlut_hash;
+    u64 written;
+    u64 last_use;
+    u8 *rgba;
+    u32 offset[GX_TEX_CACHE_LEVELS];
+} TexCacheEntry;
+
 static struct {
     TexUnit units[GX_TEXMAP_MAX];
-} s_tex;
+    TexCacheEntry cache[TEX_CACHE_ENTRIES];
+    u64 clock;
+    bool cache_on;
+    GxTexCacheStats stats;
+} s_tex = {.cache_on = true};
+
+void gx_tex_set_cache(bool on) {
+    gx_tex_cache_clear();
+    s_tex.cache_on = on;
+}
+
+void gx_tex_cache_clear(void) {
+    for (u32 i = 0; i < TEX_CACHE_ENTRIES; i++) {
+        free(s_tex.cache[i].rgba);
+    }
+    memset(s_tex.cache, 0, sizeof(s_tex.cache));
+}
+
+const GxTexCacheStats *gx_tex_cache_stats(void) {
+    return &s_tex.stats;
+}
+
+static u64 fnv(const u8 *p, u32 size) {
+    u64 h = 1469598103934665603ULL;
+    for (u32 i = 0; i < size; i++) {
+        h = (h ^ (p != NULL ? p[i] : 0U)) * 1099511628211ULL;
+    }
+    return h;
+}
+
+static bool paletted(u32 format) {
+    return format == GX_TF_C4 || format == GX_TF_C8 || format == GX_TF_C14X2;
+}
+
+static u32 tlut_bytes(u32 format) {
+    return format == GX_TF_C4 ? 32U : (format == GX_TF_C8 ? 512U : 32768U);
+}
+
+/* Decodifica `levels` níveis numa entrada (já com a chave preenchida). */
+static bool cache_fill(TexCacheEntry *e, const TexUnit *u) {
+    u32 total = 0;
+    for (u32 l = 0; l < e->levels; l++) {
+        e->offset[l] = total;
+        total += (((u->width_minus_1 >> l) + 1U) * ((u->height_minus_1 >> l) + 1U)) * 4U;
+    }
+    u8 *buf = realloc(e->rgba, total);
+    if (buf == NULL) {
+        return false;
+    }
+    e->rgba = buf;
+    for (u32 l = 0; l < e->levels; l++) {
+        GxTexSource src;
+        u32 wm1;
+        u32 hm1;
+        level_source(u, l, &src, &wm1, &hm1);
+        u8 *out = buf + e->offset[l];
+        for (u32 t = 0; t <= hm1; t++) {
+            for (u32 s = 0; s <= wm1; s++) {
+                gx_tex_decode_texel(out, &src, s, t, wm1, u->format);
+                out += 4;
+            }
+        }
+        s_tex.stats.decoded_texels += (u64)(wm1 + 1U) * (hm1 + 1U);
+    }
+    return true;
+}
+
+static void cache_attach(TexUnit *u, const TexCacheEntry *e) {
+    u->cached_levels = e->levels;
+    for (u32 l = 0; l < e->levels; l++) {
+        u->cached[l] = e->rgba + e->offset[l];
+    }
+}
+
+/* Níveis que um desenho pode amostrar: só o 0 sem mipmap; senão até o LOD máximo (+1 do filtro linear). */
+static u32 levels_needed(u32 texmap, const TexUnit *u) {
+    if (((u->mode0 >> 5) & 3U) == MIP_NONE) {
+        return 1U;
+    }
+    const u32 max_lod = (gx_bp_tex_reg(GX_BP_TX_SETMODE1, texmap) >> 8) & 0xFFU;
+    const u32 n = (max_lod >> 4) + 2U;
+    return n > GX_TEX_CACHE_LEVELS ? GX_TEX_CACHE_LEVELS : n;
+}
+
+static void cache_lookup(u32 texmap, TexUnit *u) {
+    const u32 levels = levels_needed(texmap, u);
+    const u32 addr = (gx_bp_tex_reg(GX_BP_TX_SETIMAGE3, texmap) << 5) & 0x01FFFFFFU;
+    GxTexSource last;
+    u32 lw;
+    u32 lh;
+    level_source(u, levels - 1U, &last, &lw, &lh);
+    const u32 bytes = (u32)(last.data - u->src.data) + gx_tex_level_size(u->format, lw + 1U, lh + 1U);
+    const u64 tlut_hash =
+        paletted(u->format)
+            ? fnv(u->src.tlut, (u->src.tlut_size < tlut_bytes(u->format) ? u->src.tlut_size : tlut_bytes(u->format)))
+            : 0U;
+    const u64 written = mem_written_sum(addr, bytes);
+    TexCacheEntry *victim = &s_tex.cache[0];
+    for (u32 i = 0; i < TEX_CACHE_ENTRIES; i++) {
+        TexCacheEntry *e = &s_tex.cache[i];
+        if (e->used && e->addr == addr && e->format == u->format && e->wm1 == u->width_minus_1 &&
+            e->hm1 == u->height_minus_1 && e->levels >= levels && e->tlut_hash == tlut_hash &&
+            e->tlut_format == u->src.tlut_format && e->written == written) {
+            e->last_use = ++s_tex.clock;
+            s_tex.stats.hits++;
+            cache_attach(u, e);
+            return;
+        }
+        if (victim->used && (!e->used || e->last_use < victim->last_use)) {
+            victim = e; /* a primeira livre, senão a usada há mais tempo */
+        }
+    }
+    *victim = (TexCacheEntry){.used = true,
+                              .addr = addr,
+                              .bytes = bytes,
+                              .format = u->format,
+                              .wm1 = u->width_minus_1,
+                              .hm1 = u->height_minus_1,
+                              .levels = levels,
+                              .tlut_format = u->src.tlut_format,
+                              .tlut_hash = tlut_hash,
+                              .written = written,
+                              .last_use = ++s_tex.clock,
+                              .rgba = victim->rgba};
+    s_tex.stats.misses++;
+    if (cache_fill(victim, u)) {
+        cache_attach(u, victim);
+    } else {
+        victim->used = false;
+    }
+}
+
+/* Unidades que os estágios (normais e indiretos) deste desenho usam. */
+static u32 used_texmaps(void) {
+    const u32 gen = gx_bp_reg(GX_BP_GENMODE);
+    const u32 stages = ((gen >> 10) & 15U) + 1U;
+    u32 mask = 0;
+    for (u32 i = 0; i < stages; i++) {
+        const u32 order = gx_bp_reg((u8)(GX_BP_TREF + (i >> 1)));
+        const u32 o = (i & 1U) != 0U ? order >> 12 : order;
+        mask |= ((o >> 6) & 1U) != 0U ? 1U << (o & 7U) : 0U;
+    }
+    const u32 ind = (gen >> 16) & 7U;
+    const u32 iref = gx_bp_reg(GX_BP_IREF);
+    for (u32 i = 0; i < ind && i < 4U; i++) {
+        mask |= 1U << ((iref >> (6U * i)) & 7U);
+    }
+    return mask;
+}
 
 void gx_tex_prepare(void) {
+    const u32 used = s_tex.cache_on ? used_texmaps() : 0U;
     for (u32 i = 0; i < GX_TEXMAP_MAX; i++) {
-        s_tex.units[i] = tex_unit(i);
+        TexUnit *u = &s_tex.units[i];
+        *u = tex_unit(i);
+        if ((used & (1U << i)) != 0U && !u->tmem && u->src.data != NULL &&
+            (u->width_minus_1 + 1U) * (u->height_minus_1 + 1U) <= TEX_CACHE_MAX_TEXELS) {
+            cache_lookup(i, u);
+        }
     }
 }
 

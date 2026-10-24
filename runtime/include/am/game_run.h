@@ -7,17 +7,21 @@
 #include "am/types.h"
 
 typedef struct GameRunConfig {
-    const char *disc_root;  /* contém sys/ e files/ */
-    u64 frames;             /* 0 = sem parada por quadros */
-    const char *events;     /* NULL ou arquivo do log de eventos (mesmo formato de dolphin_trace.py events) */
-    const char *pad_script; /* NULL ou roteiro de botões (am/pad_script.h) */
-    bool render;            /* M6: rasterizar e copiar o EFB (--gfx soft) ou só contar (--gfx off) */
-    const char *shots;      /* NULL ou "quadro:arquivo.png,...": XFB do quadro em PNG (como dolphin_trace --shots) */
-    u32 window_scale;       /* 0 = sem janela; senão a janela SDL3 mostra o XFB com esse fator */
-    const char *audio_dump; /* NULL ou WAV com a saída da DMA de áudio (am/audio_dump.h) */
-    u64 audio_dump_max_mb;  /* teto do --audio-dump */
-    bool audio_out;         /* M7: tocar o som pelo dispositivo padrão */
-    bool realtime;          /* M7: segurar o tempo emulado no ritmo do relógio real */
+    const char *disc_root;    /* contém sys/ e files/ */
+    u64 frames;               /* 0 = sem parada por quadros */
+    const char *events;       /* NULL ou arquivo do log de eventos (mesmo formato de dolphin_trace.py events) */
+    const char *pad_script;   /* NULL ou roteiro de botões (am/pad_script.h) */
+    bool render;              /* M6: rasterizar e copiar o EFB (--gfx soft) ou só contar (--gfx off) */
+    const char *shots;        /* NULL ou "quadro:arquivo.png,...": XFB do quadro em PNG (como dolphin_trace --shots) */
+    u32 window_scale;         /* 0 = sem janela; senão a janela SDL3 mostra o XFB com esse fator */
+    const char *audio_dump;   /* NULL ou WAV com a saída da DMA de áudio (am/audio_dump.h) */
+    u64 audio_dump_max_mb;    /* teto do --audio-dump */
+    bool audio_out;           /* M7: tocar o som pelo dispositivo padrão */
+    bool realtime;            /* M7: segurar o tempo emulado no ritmo do relógio real */
+    bool frameskip;           /* M7: com realtime, pular o desenho de quadros quando atrasado */
+    const char *timebase_out; /* M7: "quadro timebase" na entrada de cada quadro (dolphin_trace.py --timebase-out) */
+    bool gx_tex_cache;        /* M7: cache de texturas decodificadas (padrão ligado) */
+    u32 gx_threads;           /* M7: trabalhadores do rasterizador (0 = um por núcleo lógico; 1 = sem threads) */
 } GameRunConfig;
 
 /* Abre o disco, registra os ganchos (OSLink, quadros) e confere que todos passam pelo chassi. */

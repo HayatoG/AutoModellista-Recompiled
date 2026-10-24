@@ -29,12 +29,24 @@ typedef struct GxSetupStats {
     u64 fog_draws;      /* neblina ligada */
     u64 indirect_draws; /* com estágios indiretos */
     u32 max_stages;     /* maior número de estágios do TEV num desenho */
+    /* M7: o que os menus usam. */
+    u32 tex_formats;    /* bit n: textura no formato n (GX_TF_*) amostrada por algum estágio */
+    u32 tlut_formats;   /* bit n: TLUT no formato n nas texturas C4/C8/C14X2 */
+    u64 blend_draws;    /* BLENDMODE com blend ligado */
+    u64 logic_draws;    /* BLENDMODE com operação lógica */
+    u64 subtract_draws; /* blend por subtração */
+    u32 alpha_tests;    /* bit n: operação de comparação n (0..7) usada no teste de alfa (comp0 ou comp1) */
+    u32 max_texgens;    /* maior número de coordenadas de textura */
+    u32 fog_types;      /* bit n: neblina do tipo n (FOGPARAM3.fsel; 2 linear, 4..7 exponenciais) */
+    u32 stage_counts;   /* bit n: desenhos com n + 1 estágios de TEV */
 } GxSetupStats;
 
 void gx_setup_reset(void);
 
 /* Começa um desenho (lê o estado de BP/XF de todo o pipeline) com a primitiva e o VAT do opcode. */
 void gx_setup_begin(u32 primitive, u32 vat);
+/* Fim do desenho: rasteriza o que ficou na fila (am/gx_raster.h, modo paralelo). */
+void gx_setup_end(void);
 /* Um vértice com gx_vtx_size(vat) bytes, no formato do fluxo. */
 void gx_setup_vertex(const u8 *data);
 

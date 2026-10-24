@@ -23,6 +23,7 @@
 #include "am/gx_fifo.h"
 #include "am/gx_raster.h"
 #include "am/gx_setup.h"
+#include "am/gx_tex.h"
 #include "am/hook.h"
 #include "am/log.h"
 #include "am/mem.h"
@@ -44,6 +45,11 @@
 #define GAME_RUN_PACE_AHEAD_NS  60000000ULL
 #define GAME_RUN_PACE_BEHIND_NS 250000000ULL
 #define GAME_RUN_CPU_HZ         486000000ULL
+/* Pulo de quadros (M7): atrasado mais que um campo de VI, o próximo quadro não é desenhado (no máximo 4 seguidos), a
+ * menos que o jogo tenha copiado o EFB para textura nos últimos 120 quadros. */
+#define GAME_RUN_SKIP_BEHIND_NS 16683350LL
+#define GAME_RUN_SKIP_MAX       4U
+#define GAME_RUN_SKIP_TEX_GUARD 120U
 
 typedef struct Shot {
     u64 frame;
@@ -63,6 +69,7 @@ static struct {
     RelFile rels[GAME_RUN_REL_CACHE];
     u32 rel_count;
     FILE *events;
+    FILE *timebase;
     PadScript pad;
     bool live_input;     /* sem --pad-script e com janela: teclado e gamepad (M7) */
     u64 fields_at_frame; /* campos de VI quando o último quadro começou */
@@ -75,7 +82,13 @@ static struct {
     u64 pace_cycles0;
     u64 pace_wall0;
     u64 pace_rebases; /* vezes em que a emulação ficou para trás do relógio */
+    bool skipping;    /* o quadro em andamento não está sendo desenhado */
+    u32 skipped_in_row;
+    u64 skipped;
+    u64 tex_copies_seen;
+    u64 tex_copy_frame; /* último quadro com cópia do EFB para textura */
     u64 audio_frames;
+    u64 log_ms; /* relógio na última linha de progresso (quadros/s de verdade) */
     u8 rgba[GAME_XFB_WIDTH * GAME_XFB_HEIGHT * 4U];
 } s_run;
 
@@ -94,6 +107,9 @@ static void event_line(const char *fmt, ...) {
 }
 
 static void on_di_read(u64 offset, u32 length, u32 dst) {
+    if (s_run.timebase != NULL) {
+        (void)fprintf(s_run.timebase, "read 0x%09" PRIX64 " 0x%X %" PRIu64 "\n", offset, length, timebase_read(NULL));
+    }
     event_line("di_read frame=%" PRIu64 " offset=0x%09" PRIX64 " length=0x%X dst=0x%08X", s_run.frames, offset, length,
                dst & 0x03FFFFFFU);
 }
@@ -108,6 +124,13 @@ static HookAction on_main(CPUState *cpu, void *user) {
     (void)cpu;
     (void)user;
     event_line("main");
+    return HOOK_CONTINUE;
+}
+
+/* __DVDInterruptHandler: com --timebase-out, o instante de cada interrupção do DVD (o mesmo do oráculo). */
+static HookAction on_dvd_irq(CPUState *cpu, void *user) {
+    (void)user;
+    (void)fprintf(s_run.timebase, "dvdirq %" PRIu64 "\n", timebase_read(cpu));
     return HOOK_CONTINUE;
 }
 
@@ -170,7 +193,7 @@ static void xfb_to_rgba(GuestAddr addr) {
 /* Início do quadro: atualiza a janela com o XFB que o VI está mostrando e grava as capturas pedidas (o XFB que
  * VISetNextFrameBuffer recebeu por último, como o oráculo); com janela, a captura também grava o que a janela
  * desenhou (<arquivo>_janela.png). Devolve false se a janela foi fechada. */
-static bool capture_frame(CPUState *cpu) {
+static bool capture_frame(CPUState *cpu, bool refresh) {
     const Shot *shot = NULL;
     for (u32 i = 0; i < s_run.shot_count; i++) {
         if (s_run.shots[i].frame == s_run.frames) {
@@ -185,7 +208,7 @@ static bool capture_frame(CPUState *cpu) {
                            shot->path);
         }
         const u32 shown = vi_xfb_top();
-        if (shown != 0U) {
+        if (shown != 0U && refresh) { /* depois de um quadro pulado, o XFB é velho: fica a última imagem */
             xfb_to_rgba(shown);
         }
         const PlatformWindowResult r =
@@ -221,25 +244,46 @@ static void on_audio(const s16 *lr, u32 frames, void *user) {
     }
 }
 
-/* Segura a emulação no ritmo do relógio: o tempo emulado são os ciclos estimados da CPU a 486 MHz. */
-static void pace(void) {
+/* Segura a emulação no ritmo do relógio: o tempo emulado são os ciclos estimados da CPU a 486 MHz. Devolve quanto a
+ * emulação está atrás do relógio (ns; negativo = adiantada). */
+static s64 pace(void) {
     const u64 cycles = timebase_cycles(NULL);
     const u64 now = platform_ticks_ns();
     if (!s_run.pace_started) {
         s_run.pace_started = true;
         s_run.pace_cycles0 = cycles;
         s_run.pace_wall0 = now;
-        return;
+        return 0;
     }
     const u64 emu_ns = (cycles - s_run.pace_cycles0) * 1000000000ULL / GAME_RUN_CPU_HZ;
     const u64 wall_ns = now - s_run.pace_wall0;
     if (emu_ns > wall_ns + GAME_RUN_PACE_AHEAD_NS) {
         platform_sleep_ns(emu_ns - wall_ns - GAME_RUN_PACE_AHEAD_NS);
-    } else if (wall_ns > emu_ns + GAME_RUN_PACE_BEHIND_NS) {
+        return 0;
+    }
+    if (wall_ns > emu_ns + GAME_RUN_PACE_BEHIND_NS) {
         s_run.pace_cycles0 = cycles;
         s_run.pace_wall0 = now;
         s_run.pace_rebases++;
+        return 0;
     }
+    return (s64)wall_ns - (s64)emu_ns;
+}
+
+/* Decide se o próximo quadro é desenhado (só com --realtime e --frameskip). */
+static void decide_skip(s64 behind) {
+    const u64 tex_copies = gx_efb_stats()->texture_copies;
+    if (tex_copies != s_run.tex_copies_seen) {
+        s_run.tex_copies_seen = tex_copies;
+        s_run.tex_copy_frame = s_run.frames;
+    }
+    const bool guard = s_run.tex_copy_frame != 0U && s_run.frames - s_run.tex_copy_frame < GAME_RUN_SKIP_TEX_GUARD;
+    const bool skip = s_run.config.frameskip && behind > GAME_RUN_SKIP_BEHIND_NS &&
+                      s_run.skipped_in_row < GAME_RUN_SKIP_MAX && !guard;
+    s_run.skipping = skip;
+    s_run.skipped_in_row = skip ? s_run.skipped_in_row + 1U : 0U;
+    s_run.skipped += skip ? 1U : 0U;
+    gx_fifo_set_skip(skip);
 }
 
 /* Controle do quadro: o roteiro (--pad-script) tem prioridade; sem ele, com janela, o teclado e o gamepad. */
@@ -267,17 +311,26 @@ static HookAction on_frame(CPUState *cpu, void *user) {
     }
     s_run.frames++;
     s_run.fields_at_frame = vi_field_count();
+    if (s_run.timebase != NULL) {
+        (void)fprintf(s_run.timebase, "%" PRIu64 " %" PRIu64 "\n", s_run.frames, timebase_read(cpu));
+    }
+    const bool last_skipped = s_run.skipping;
     if (s_run.config.realtime) {
-        pace();
+        decide_skip(pace());
     }
     update_pad();
-    if (!capture_frame(cpu)) {
+    if (!capture_frame(cpu, !last_skipped)) {
         s_run.window_closed = true;
         return HOOK_STOP;
     }
     if (s_run.frames == 1U || s_run.frames % 60U == 0U) {
-        AM_LOG_INFO("quadro %" PRIu64 ": %" PRIu64 " campos de VI, %" PRIu64 " ciclos, %" PRIu64 " leituras de DVD",
-                    s_run.frames, vi_field_count(), timebase_cycles(cpu), di_stats()->reads);
+        const u64 now = platform_ticks_ms();
+        const u64 dt = now - s_run.log_ms;
+        s_run.log_ms = now;
+        AM_LOG_INFO("quadro %" PRIu64 ": %" PRIu64 " campos de VI, %" PRIu64 " ciclos, %" PRIu64
+                    " leituras de DVD; %.1f quadros/s",
+                    s_run.frames, vi_field_count(), timebase_cycles(cpu), di_stats()->reads,
+                    s_run.frames > 1U && dt > 0U ? 60000.0 / (double)dt : 0.0);
     }
     return HOOK_CONTINUE;
 }
@@ -321,6 +374,14 @@ bool game_run_init(const GameRunConfig *config) {
         }
     }
     gx_fifo_set_render(config->render);
+    gx_tex_set_cache(config->gx_tex_cache);
+    if (config->render) {
+        const u32 workers = config->gx_threads != 0U ? config->gx_threads : platform_cpu_count();
+        if (workers > 1U && platform_parallel_init(workers)) {
+            gx_raster_set_parallel(platform_parallel_run, workers);
+        }
+        AM_LOG_INFO("GX: rasterizador com %u trabalhador(es)", workers > 1U ? workers : 1U);
+    }
     if (config->window_scale != 0U) {
         if (!platform_window_open("Auto Modellista Recompiled", GAME_XFB_WIDTH, GAME_XFB_HEIGHT,
                                   config->window_scale)) {
@@ -367,6 +428,16 @@ bool game_run_init(const GameRunConfig *config) {
         (void)fprintf(s_run.events, "# am-events v1 source=runtime\n");
         di_set_read_observer(on_di_read);
     }
+    if (config->timebase_out != NULL && (s_run.timebase = fopen(config->timebase_out, "w")) == NULL) {
+        AM_LOG_ERROR("não consegui criar %s", config->timebase_out);
+        return false;
+    }
+    if (s_run.timebase != NULL) {
+        di_set_read_observer(on_di_read);
+        if (!hook_register(GAME_ADDR_DVD_IRQ_HANDLER, "__DVDInterruptHandler", on_dvd_irq, NULL)) {
+            return false;
+        }
+    }
     if (!os_link_init(&link) || !hook_register(GAME_ADDR_FRAME, "quadro (fn_80051034)", on_frame, NULL) ||
         !hook_register(GAME_ADDR_MAIN, "main", on_main, NULL)) {
         AM_LOG_ERROR("não consegui registrar os ganchos do M5");
@@ -385,7 +456,13 @@ void game_run_shutdown(void) {
         s_run.events = NULL;
     }
     di_set_read_observer(NULL);
+    if (s_run.timebase != NULL) {
+        (void)fclose(s_run.timebase);
+        s_run.timebase = NULL;
+    }
     dsp_set_audio_sink(NULL, NULL);
+    gx_raster_set_parallel(NULL, 1);
+    platform_parallel_shutdown();
     audio_dump_close();
     if (s_run.audio_out) {
         platform_audio_close();
@@ -461,9 +538,9 @@ void game_run_report(void) {
                 mix->lists, mix->commands, mix->used_mask, mix->outputs, mix->clipped, ax->max_voices, ax->samples,
                 ax->ended, ax->loops);
     AM_LOG_INFO("áudio: %" PRIu64 " quadros estéreo pela DMA (%.1f s a %u Hz)%s; tempo real: %" PRIu64
-                " atraso(s) recomeçado(s)",
+                " atraso(s) recomeçado(s), %" PRIu64 " quadro(s) pulado(s)",
                 s_run.audio_frames, (double)s_run.audio_frames / DSP_AUDIO_RATE_HZ, DSP_AUDIO_RATE_HZ,
-                audio_dump_frames() != 0U ? ", gravados no --audio-dump" : "", s_run.pace_rebases);
+                audio_dump_frames() != 0U ? ", gravados no --audio-dump" : "", s_run.pace_rebases, s_run.skipped);
     const GxFifoStats *gx = gx_fifo_stats();
     AM_LOG_INFO("GX: %" PRIu64 " bytes no gather pipe, %" PRIu64 " comandos, %" PRIu64 " desenhos (%" PRIu64
                 " vértices), %" PRIu64 " BP, %" PRIu64 " DrawDone, %" PRIu64 " tokens, %" PRIu64 " cópias",
@@ -473,9 +550,10 @@ void game_run_report(void) {
     const GxRasterStats *ra = gx_raster_stats();
     const GxEfbStats *efb = gx_efb_stats();
     AM_LOG_INFO("GX render %s: %" PRIu64 " desenhos rasterizados, %" PRIu64 " triângulos (%" PRIu64
-                " descartados pela face, %" PRIu64 " fora da tela), %" PRIu64 " pixels no TEV",
+                " descartados pela face, %" PRIu64 " fora da tela), %" PRIu64 " pixels no TEV; %" PRIu64
+                " desenhos em faixas paralelas",
                 gx_fifo_render_enabled() ? "ligado" : "desligado", su->draws, ra->triangles, su->culled, su->rejected,
-                ra->pixels);
+                ra->pixels, ra->parallel_draws);
     AM_LOG_INFO("EFB: %" PRIu64 " cópias para o XFB (última 0x%08X, %ux%u), %" PRIu64
                 " para textura (formatos 0x%04X), %" PRIu64 " limpezas",
                 efb->xfb_copies, efb->last_xfb_addr, efb->last_xfb_width, efb->last_xfb_height, efb->texture_copies,
@@ -483,6 +561,14 @@ void game_run_report(void) {
     AM_LOG_INFO("TEV: até %u estágios num desenho; %" PRIu64 " desenhos com textura de Z, %" PRIu64
                 " com neblina, %" PRIu64 " com estágios indiretos; %" PRIu64 " cópias de Z para textura",
                 su->max_stages, su->ztex_draws, su->fog_draws, su->indirect_draws, efb->depth_copies);
+    const GxTexCacheStats *tc = gx_tex_cache_stats();
+    AM_LOG_INFO("GX cache de texturas: %" PRIu64 " acertos, %" PRIu64 " decodificações (%" PRIu64 " texels)", tc->hits,
+                tc->misses, tc->decoded_texels);
+    AM_LOG_INFO("GX recursos: formatos de textura 0x%04X, TLUT 0x%X, até %u coordenadas; blend %" PRIu64
+                ", lógica %" PRIu64 ", subtração %" PRIu64
+                " desenhos; testes de alfa 0x%02X; neblina 0x%02X; estágios 0x%04X",
+                su->tex_formats, su->tlut_formats, su->max_texgens, su->blend_draws, su->logic_draws,
+                su->subtract_draws, su->alpha_tests, su->fog_types, su->stage_counts);
     for (u32 i = 0; i < efb->kind_count; i++) {
         const GxEfbCopyKind *k = &efb->kinds[i];
         AM_LOG_INFO("  cópia para textura: formato %u, %ux%u%s%s, %" PRIu64 " vez(es)", k->format, k->width, k->height,

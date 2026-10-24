@@ -12,11 +12,27 @@
 #include "am/types.h"
 
 typedef struct GxRasterStats {
-    u64 triangles; /* triângulos rasterizados (depois de recorte e descarte) */
-    u64 pixels;    /* pixels que entraram no TEV */
+    u64 triangles;      /* triângulos rasterizados (depois de recorte e descarte) */
+    u64 pixels;         /* pixels que entraram no TEV */
+    u64 parallel_draws; /* desenhos divididos em faixas entre os trabalhadores */
 } GxRasterStats;
 
 void gx_raster_reset(void);
+
+/* Paralelismo (M7): `run(jobs, job, user)` executa job(índice, trabalhador, user) para índice em [0, jobs), cada
+ * trabalhador (0 .. workers - 1) com um índice por vez, e só volta quando todos terminaram. Com ele registrado, os
+ * triângulos de um desenho vão para uma fila e gx_raster_flush os rasteriza em faixas intercaladas de linhas de
+ * blocos 2x2: cada pixel é tocado por uma faixa só, na ordem dos triângulos, então a imagem é a mesma com qualquer
+ * número de trabalhadores. NULL (ou workers <= 1) volta ao modo direto, sem fila. */
+#define GX_RASTER_MAX_WORKERS 16U
+typedef void (*GxRasterJobFn)(u32 index, u32 worker, void *user);
+typedef void (*GxRasterParallelFn)(u32 jobs, GxRasterJobFn job, void *user);
+void gx_raster_set_parallel(GxRasterParallelFn run, u32 workers);
+/* Executa job(0 .. jobs - 1) pelos trabalhadores registrados (ou em sequência, sem eles). Para outros laços do GX
+ * cujo resultado não depende da ordem (a cópia EFB -> XFB, linha a linha). */
+void gx_raster_parallel_for(u32 jobs, GxRasterJobFn job, void *user);
+/* Rasteriza a fila do desenho atual (fim do desenho; sem fila, não faz nada). */
+void gx_raster_flush(void);
 
 /* Lê do BP o scissor, os contadores do GENMODE e as escalas de textura; chamar antes de cada desenho. */
 void gx_raster_begin_draw(void);

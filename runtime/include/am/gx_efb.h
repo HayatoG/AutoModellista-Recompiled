@@ -59,6 +59,8 @@ void gx_efb_blend(u32 x, u32 y, const u8 *rgba);
 
 /* BP 0x52: cópia (XFB ou textura) e limpeza, com os parâmetros dos registradores de BP. */
 void gx_efb_copy(void);
+/* A cópia pedida agora (BP COPY_EXECUTE) é para o XFB. */
+bool gx_efb_copy_is_xfb(void);
 
 /* Cor do EFB em RGBA (alfa 255 nos formatos sem alfa) e Z; para testes e depuração. */
 void gx_efb_peek(u32 x, u32 y, u8 *rgba, u32 *z);

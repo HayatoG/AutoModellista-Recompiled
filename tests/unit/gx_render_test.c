@@ -150,7 +150,57 @@ TEST(copy_to_xfb_and_clear) {
     EXPECT_TRUE(rgba[8] == 0 && rgba[9] == 0 && rgba[10] == 0);
 }
 
+/* Trabalhadores de mentira: as faixas em ordem inversa e trocando de trabalhador, como a ordem não definida das
+ * threads de verdade. */
+static void fake_parallel(u32 jobs, GxRasterJobFn job, void *user) {
+    for (u32 i = jobs; i > 0U; i--) {
+        job(i - 1U, (i - 1U) % 3U, user);
+    }
+}
+
+/* Cena grande: faixa com gouraud na tela toda e dois quads sobrepostos com blend por alfa. */
+static u64 draw_scene_hash(void) {
+    start();
+    gxt_bp(GX_BP_BLENDMODE, 1U | (1U << 3) | (4U << 8) | (5U << 5)); /* src alfa, 1 - src alfa, cor atualiza */
+    u8 cmd[3 + (4 * 16)] = {GX_CMD_DRAW_FIRST | (3U << 3), 0, 4};
+    u32 n = 3;
+    const f32 xy[4][2] = {{0, 0}, {0, 448}, {640, 0}, {640, 448}};
+    const u32 col[4] = {0xFF0000FFU, 0x00FF00FFU, 0x0000FFFFU, 0xFFFFFFFFU};
+    for (u32 v = 0; v < 4U; v++) {
+        n += gxt_put_f32(&cmd[n], xy[v][0]);
+        n += gxt_put_f32(&cmd[n], xy[v][1]);
+        n += gxt_put_f32(&cmd[n], 0.0F);
+        cmd[n++] = (u8)(col[v] >> 24);
+        cmd[n++] = (u8)(col[v] >> 16);
+        cmd[n++] = (u8)(col[v] >> 8);
+        cmd[n++] = (u8)col[v];
+    }
+    gxt_feed(cmd, n);
+    gxt_quad(100.0F, 50.0F, 500.0F, 400.0F, 0x80808080U);
+    gxt_quad(37.5F, 13.25F, 333.0F, 211.0F, 0x20F0A060U);
+    u64 h = 1469598103934665603ULL;
+    for (u32 y = 0; y < 448U; y++) {
+        for (u32 x = 0; x < 640U; x++) {
+            h = (h ^ peek_rgb(x, y)) * 1099511628211ULL;
+        }
+    }
+    return h;
+}
+
+TEST(parallel_bands_give_the_same_pixels) {
+    gx_raster_set_parallel(NULL, 1);
+    const u64 direct = draw_scene_hash();
+    const u64 pixels = gx_raster_stats()->pixels;
+    gx_raster_set_parallel(fake_parallel, 4);
+    const u64 banded = draw_scene_hash();
+    EXPECT_EQ(banded, direct);
+    EXPECT_EQ(gx_raster_stats()->pixels, pixels);
+    EXPECT_TRUE(gx_raster_stats()->parallel_draws >= 3U);
+    gx_raster_set_parallel(NULL, 1);
+}
+
 int main(void) {
+    RUN_TEST(parallel_bands_give_the_same_pixels);
     EXPECT_TRUE(mem_init());
     RUN_TEST(quad_covers_pixel_centers_only);
     RUN_TEST(gouraud_and_triangle_strip);

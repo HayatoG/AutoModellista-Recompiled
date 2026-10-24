@@ -6,6 +6,7 @@
 #include "am/gx_efb.h"
 #include "am/gx_raster.h"
 #include "am/gx_setup.h"
+#include "am/gx_tex.h"
 #include "am/gx_xf.h"
 #include "am/log.h"
 #include "am/mem.h"
@@ -42,6 +43,7 @@ static struct {
     GxFifoParser main;
     GxFifoSink sink;
     bool render;
+    bool skip; /* quadro pulado (M7): desenhos e cópias para o XFB não são executados */
     GxFifoStats stats;
 } s_gx;
 
@@ -56,10 +58,15 @@ void gx_fifo_reset(const GxFifoSink *sink) {
     gx_efb_reset();
     gx_setup_reset();
     gx_raster_reset();
+    gx_tex_cache_clear();
 }
 
 void gx_fifo_set_render(bool enabled) {
     s_gx.render = enabled;
+}
+
+void gx_fifo_set_skip(bool skip) {
+    s_gx.skip = skip;
 }
 
 bool gx_fifo_render_enabled(void) {
@@ -96,7 +103,8 @@ static void load_bp(u32 value) {
         return;
     case GX_BP_EVENT_COPY:
         s_gx.stats.copies++;
-        if (s_gx.render) {
+        if (s_gx.render && !(s_gx.skip && gx_efb_copy_is_xfb())) {
+            gx_raster_flush(); /* a cópia lê o EFB: nenhum triângulo pode ficar para trás */
             gx_efb_copy();
         }
         return;
@@ -143,7 +151,7 @@ static void start_draw(GxFifoParser *p, u32 count) {
     if (count == 0U || size == 0U) {
         return;
     }
-    if (!s_gx.render) {
+    if (!s_gx.render || s_gx.skip) {
         p->skip = (u64)count * size;
         p->phase = GX_PHASE_SKIP;
         return;
@@ -219,6 +227,7 @@ static void payload_done(GxFifoParser *p) {
     p->payload_len = 0;
     if (--p->vertices_left == 0U) {
         p->phase = GX_PHASE_OPCODE;
+        gx_setup_end();
     }
 }
 

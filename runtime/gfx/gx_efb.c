@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "am/gx_bp.h"
+#include "am/gx_raster.h"
 #include "am/gx_util.h"
 #include "am/log.h"
 #include "am/mem.h"
@@ -371,6 +372,35 @@ static void encode_xfb_pair(const u32 *c0, const u32 *c1, u8 *out) {
     out[3] = yuv_byte((112.0F * avg[0]) + (-94.0F * avg[1]) + (-18.0F * avg[2]) + 128.0F);
 }
 
+typedef struct XfbJob {
+    const CopyParams *p;
+    u8 *host; /* destino na MEM1 (NULL: escrita pelo barramento, em sequência) */
+    u32 dest, stride, width, height;
+    f32 yscale;
+} XfbJob;
+
+/* Uma linha do XFB: cada linha é independente das outras, então as linhas podem ir para trabalhadores diferentes. */
+static void xfb_row(u32 y, u32 worker, void *user) {
+    (void)worker;
+    const XfbJob *j = user;
+    const CopyParams *p = j->p;
+    const s32 row = (s32)floorf((((f32)y + 0.5F) + (f32)p->top) / j->yscale);
+    for (u32 x = 0; x + 1U < j->width + 1U; x += 2U) {
+        u32 c0[4];
+        u32 c1[4];
+        efb_sample(p, (s32)(p->left + x), row, c0);
+        efb_sample(p, (s32)(p->left + x + 1U), row, c1);
+        u8 yuyv[4];
+        encode_xfb_pair(c0, c1, yuyv);
+        if (j->host != NULL) {
+            memcpy(j->host + ((size_t)y * j->stride) + ((size_t)x * 2U), yuyv, 4U); /* já na ordem da memória */
+        } else {
+            mem_write32(NULL, MEM_CACHED_BASE | ((j->dest + (y * j->stride) + (x * 2U)) & 0x01FFFFFFU),
+                        ((u32)yuyv[0] << 24) | ((u32)yuyv[1] << 16) | ((u32)yuyv[2] << 8) | yuyv[3]);
+        }
+    }
+}
+
 static void copy_to_xfb(const CopyParams *p, u32 copy, u32 dest, u32 stride) {
     const u32 wh = gx_bp_reg(GX_BP_EFB_WH);
     const u32 ys = gx_bp_reg(GX_BP_COPYYSCALE) & 0x1FFU;
@@ -380,18 +410,18 @@ static void copy_to_xfb(const CopyParams *p, u32 copy, u32 dest, u32 stride) {
     }
     const u32 height = (u32)(1.0F + ((f32)((wh >> 10) & 0x3FFU) * yscale));
     const u32 width = p->right - p->left;
-    for (u32 y = 0; y < height; y++) {
-        const s32 row = (s32)floorf((((f32)y + 0.5F) + (f32)p->top) / yscale);
-        const GuestAddr line = MEM_CACHED_BASE | ((dest + (y * stride)) & 0x01FFFFFFU);
-        for (u32 x = 0; x + 1U < width + 1U; x += 2U) {
-            u32 c0[4];
-            u32 c1[4];
-            efb_sample(p, (s32)(p->left + x), row, c0);
-            efb_sample(p, (s32)(p->left + x + 1U), row, c1);
-            u8 yuyv[4];
-            encode_xfb_pair(c0, c1, yuyv);
-            mem_write32(NULL, line + (x * 2U),
-                        ((u32)yuyv[0] << 24) | ((u32)yuyv[1] << 16) | ((u32)yuyv[2] << 8) | yuyv[3]);
+    XfbJob job = {p, NULL, dest, stride, width, height, yscale};
+    const u32 span = height != 0U ? ((height - 1U) * stride) + (((width + 1U) & ~1U) * 2U) : 0U;
+    const u32 phys = dest & 0x01FFFFFFU;
+    if (span != 0U && phys + span <= MEM_MEM1_SIZE && stride >= ((width + 1U) & ~1U) * 2U) {
+        job.host = mem_host_ptr(MEM_CACHED_BASE | phys, span);
+    }
+    if (job.host != NULL) {
+        gx_raster_parallel_for(height, xfb_row, &job);
+        mem_mark_written(phys, span);
+    } else {
+        for (u32 y = 0; y < height; y++) {
+            xfb_row(y, 0, &job);
         }
     }
     s_efb.stats.xfb_copies++;
@@ -558,6 +588,10 @@ static void clear(const CopyParams *p) {
         }
     }
     s_efb.stats.clears++;
+}
+
+bool gx_efb_copy_is_xfb(void) {
+    return (gx_bp_reg(GX_BP_COPY_EXECUTE) & COPY_TO_XFB) != 0U;
 }
 
 void gx_efb_copy(void) {

@@ -42,8 +42,21 @@ void gx_tex_decode_texel(u8 *rgba, const GxTexSource *src, u32 s, u32 t, u32 wid
 /* Bytes de um nível de `width` x `height` texels (arredondado aos blocos do formato). */
 u32 gx_tex_level_size(u32 format, u32 width, u32 height);
 
-/* Lê das unidades de textura do BP os parâmetros que gx_tex_sample usa; chamar antes de cada desenho. */
+/* Lê das unidades de textura do BP os parâmetros que gx_tex_sample usa; chamar antes de cada desenho. Com o cache
+ * ligado, os níveis das texturas que o desenho usa são decodificados (ou achados) aqui, antes de rasterizar. */
 void gx_tex_prepare(void);
+
+/* Cache de texturas decodificadas (M7): ligado por padrão; desligar volta à decodificação texel a texel (a imagem é a
+ * mesma; tests/unit/gx_tex_test.c confere). */
+#define GX_TEX_CACHE_LEVELS 11U
+typedef struct GxTexCacheStats {
+    u64 hits;
+    u64 misses;
+    u64 decoded_texels;
+} GxTexCacheStats;
+void gx_tex_set_cache(bool on);
+void gx_tex_cache_clear(void);
+const GxTexCacheStats *gx_tex_cache_stats(void);
 
 /* Amostra a unidade `texmap` em (s, t) no formato s17.7 do TEV, com LOD s28.4 e filtro linear ou não. */
 void gx_tex_sample(s32 s, s32 t, s32 lod, bool linear, u32 texmap, u8 *rgba);

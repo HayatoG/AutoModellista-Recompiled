@@ -106,6 +106,17 @@ void platform_audio_push(const s16 *lr, u32 frames);
 u32 platform_audio_queued_frames(void);
 void platform_audio_close(void);
 
+/* Trabalhadores (M7): um conjunto fixo de threads que executa job(índice, trabalhador, user) para índice em [0, jobs),
+ * distribuindo os índices sob demanda; quem chama é o trabalhador 0 e só volta quando todos terminaram. `workers`
+ * inclui quem chama; 1 = nenhuma thread extra. */
+#define PLATFORM_MAX_WORKERS 16U
+typedef void (*PlatformJobFn)(u32 index, u32 worker, void *user);
+bool platform_parallel_init(u32 workers);
+void platform_parallel_run(u32 jobs, PlatformJobFn job, void *user);
+void platform_parallel_shutdown(void);
+/* Núcleos lógicos da máquina. */
+u32 platform_cpu_count(void);
+
 /* Milissegundos de relógio monotônico desde platform_init. */
 u64 platform_ticks_ms(void);
 /* Nanossegundos de relógio monotônico (para o ritmo em tempo real) e espera. */

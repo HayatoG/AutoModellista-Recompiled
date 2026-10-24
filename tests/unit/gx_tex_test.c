@@ -158,6 +158,40 @@ TEST(sampler_wrap_and_bilinear) {
     EXPECT_TRUE(rgba_is(c, 8, 0, 0, 255));
 }
 
+/* Cache de texturas decodificadas: com o estágio 0 usando a unidade 0, as amostras têm de ser as mesmas com e sem
+ * cache, inclusive depois de o jogo reescrever a textura (contadores de página) ou trocar a TLUT (hash). */
+static void sample_grid(u8 *out) {
+    for (s32 i = 0; i < 64; i++) {
+        gx_tex_sample((i * 37) - 300, (i * 53) - 200, 0, (i & 1) != 0, 0, out + (i * 4));
+    }
+}
+
+TEST(decoded_cache_matches_texel_decoding) {
+    u8 with_cache[64 * 4];
+    u8 without[64 * 4];
+    for (u32 pass = 0; pass < 2U; pass++) {
+        gx_tex_set_cache(pass == 0U);
+        setup_rgba8(1, 2, true);
+        (void)gx_bp_write(GX_BP_TREF, 1U << 6); /* estágio 0: textura ligada, unidade 0, coordenada 0 */
+        gx_tex_prepare();
+        sample_grid(pass == 0U ? with_cache : without);
+    }
+    EXPECT_EQ(memcmp(with_cache, without, sizeof(without)), 0);
+    gx_tex_set_cache(true);
+    setup_rgba8(0, 0, false);
+    (void)gx_bp_write(GX_BP_TREF, 1U << 6);
+    gx_tex_prepare();
+    const u64 misses = gx_tex_cache_stats()->misses;
+    gx_tex_prepare();
+    EXPECT_EQ(gx_tex_cache_stats()->misses, misses); /* nada mudou: acerto */
+    mem_write8(NULL, 0x80200001U, 0x77);             /* R do texel (0, 0) */
+    gx_tex_prepare();
+    EXPECT_EQ(gx_tex_cache_stats()->misses, misses + 1U);
+    u8 c[4];
+    gx_tex_sample(64, 64, 0, false, 0, c);
+    EXPECT_EQ(c[0], 0x77U);
+}
+
 int main(void) {
     EXPECT_TRUE(mem_init());
     RUN_TEST(i4_i8_ia4_ia8_blocks);
@@ -166,6 +200,7 @@ int main(void) {
     RUN_TEST(cmpr_both_palette_modes);
     RUN_TEST(level_sizes_round_to_blocks);
     RUN_TEST(sampler_wrap_and_bilinear);
+    RUN_TEST(decoded_cache_matches_texel_decoding);
     mem_shutdown();
     return am_test_finish();
 }

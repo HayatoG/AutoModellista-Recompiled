@@ -8,10 +8,42 @@
 #include "am/log.h"
 #include "am/rel_map.h"
 
+#define MEM_PAGE_SHIFT 12U
+#define MEM_PAGES      (MEM_MEM1_SIZE >> MEM_PAGE_SHIFT)
+
 static struct {
     u8 *mem1;
     u8 *aram;
+    u32 page_gen[MEM_PAGES]; /* contador de escritas por página de 4 KiB da MEM1 (cache de texturas do GX) */
 } s_mem;
+
+void mem_mark_written(u32 phys, u32 size) {
+    if (size == 0U || phys >= MEM_MEM1_SIZE) {
+        return;
+    }
+    const u32 end = phys + size - 1U < MEM_MEM1_SIZE ? phys + size - 1U : MEM_MEM1_SIZE - 1U;
+    for (u32 p = phys >> MEM_PAGE_SHIFT; p <= end >> MEM_PAGE_SHIFT; p++) {
+        s_mem.page_gen[p]++;
+    }
+}
+
+u64 mem_written_sum(u32 phys, u32 size) {
+    u64 sum = 0;
+    if (size == 0U || phys >= MEM_MEM1_SIZE) {
+        return 0;
+    }
+    const u32 end = phys + size - 1U < MEM_MEM1_SIZE ? phys + size - 1U : MEM_MEM1_SIZE - 1U;
+    for (u32 p = phys >> MEM_PAGE_SHIFT; p <= end >> MEM_PAGE_SHIFT; p++) {
+        sum += s_mem.page_gen[p];
+    }
+    return sum;
+}
+
+/* Escritas que o cpu.c do DolRecomp faz direto na RAM (psq_st, stfd...) chegam por este diário. */
+static void journal(u32 offset, u32 size, void *user) {
+    (void)user;
+    mem_mark_written(offset, size);
+}
 
 bool mem_init(void) {
     if (s_mem.mem1 != NULL) {
@@ -23,6 +55,7 @@ bool mem_init(void) {
         mem_shutdown();
         return false;
     }
+    ppc_set_mem_write_journal(journal, NULL);
     return true;
 }
 
@@ -104,6 +137,7 @@ static void write_be(CPUState *cpu, GuestAddr addr, u64 value, u8 size) {
     }
     clear_reservation(cpu, addr);
     store_be(p, size, value);
+    s_mem.page_gen[(u32)(p - s_mem.mem1) >> MEM_PAGE_SHIFT]++; /* size <= 8 e alinhado ao tipo: uma página só */
 }
 
 u8 mem_read8(CPUState *cpu, GuestAddr addr) {

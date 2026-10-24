@@ -21,9 +21,16 @@
 #define BIAS_COMPARE 3U
 #define SCALE_DIV2   3U
 
+/* Tabela de valores de entrada de um estágio (por pixel): os 4 registradores (PREV, REG0..2), textura, cor
+ * rasterizada, konst e as constantes 1, 1/2 e 0. Os seletores do BP viram índices nela uma vez por desenho. */
+enum { V_TEX = 4, V_RAS = 5, V_KONST = 6, V_ONE = 7, V_HALF = 8, V_ZERO = 9, V_COUNT = 10 };
+
 typedef struct Stage {
     u32 cc;
     u32 ac;
+    u8 csel[4];   /* a, b, c, d da cor: índice na tabela */
+    bool crep[4]; /* a entrada da cor é o alfa replicado */
+    u8 asel[4];   /* a, b, c, d do alfa */
     u32 texmap;
     u32 texcoord;
     bool tex;
@@ -98,6 +105,23 @@ static void decode_konst(void) {
     }
 }
 
+/* TevColorArg / TevAlphaArg -> tabela de valores. */
+static void decode_selectors(Stage *s) {
+    for (u32 k = 0; k < 4U; k++) {
+        const u32 arg = (s->cc >> (12U - (4U * k))) & 15U;
+        static const u8 s_const_sel[4] = {V_ONE, V_HALF, V_KONST, V_ZERO};
+        if ((arg >> 1) < 6U) {
+            s->csel[k] = (u8)(arg >> 1);
+            s->crep[k] = (arg & 1U) != 0U;
+        } else {
+            s->csel[k] = s_const_sel[arg - 12U];
+            s->crep[k] = false;
+        }
+        const u32 aarg = (s->ac >> (13U - (3U * k))) & 7U;
+        s->asel[k] = (u8)(aarg == 7U ? V_ZERO : aarg);
+    }
+}
+
 static void decode_stages(void) {
     for (u32 i = 0; i < s_tev.stages; i++) {
         const u32 order = gx_bp_reg((u8)(GX_BP_TREF + (i >> 1)));
@@ -113,6 +137,7 @@ static void decode_stages(void) {
         s->kc = (i & 1U) != 0U ? (ksel >> 14) & 31U : (ksel >> 4) & 31U;
         s->ka = (i & 1U) != 0U ? (ksel >> 19) & 31U : (ksel >> 9) & 31U;
         s->ind = gx_bp_reg((u8)(GX_BP_IND_CMD + i));
+        decode_selectors(s);
         if (s->texcoord >= s_tev.texgens) {
             s->texcoord = 0; /* coordenada inexistente: usa a 0 (Luigi's Mansion, Tev.cpp) */
         }
@@ -187,64 +212,6 @@ bool gx_tev_early_z(void) {
     return s_tev.early_z;
 }
 
-/* Valores de entrada de um estágio (TevColor do Dolphin, em RGBA). */
-typedef struct Inputs {
-    s16 (*reg)[4];
-    const s16 *tex;
-    const s16 *ras;
-    const s16 *konst;
-} Inputs;
-
-static void color_arg(const Inputs *in, u32 arg, s32 *out) {
-    static const s16 s_one[4] = {255, 255, 255, 255};
-    static const s16 s_half[4] = {128, 128, 128, 128};
-    static const s16 s_zero[4] = {0, 0, 0, 0};
-    const s16 *src;
-    switch (arg >> 1) {
-    case 0U:
-    case 1U:
-    case 2U:
-    case 3U:
-        src = in->reg[arg >> 1];
-        break;
-    case 4U:
-        src = in->tex;
-        break;
-    case 5U:
-        src = in->ras;
-        break;
-    case 6U:
-        src = (arg & 1U) == 0U ? s_one : s_half;
-        arg &= ~1U; /* one e half: valor em todos os canais */
-        break;
-    default:
-        src = (arg & 1U) == 0U ? in->konst : s_zero;
-        arg &= ~1U;
-        break;
-    }
-    for (u32 c = 0; c < 3U; c++) {
-        out[c] = (arg & 1U) != 0U ? src[CH_A] : src[c];
-    }
-}
-
-static s32 alpha_arg(const Inputs *in, u32 arg) {
-    switch (arg) {
-    case 0U:
-    case 1U:
-    case 2U:
-    case 3U:
-        return in->reg[arg][CH_A];
-    case 4U:
-        return in->tex[CH_A];
-    case 5U:
-        return in->ras[CH_A];
-    case 6U:
-        return in->konst[CH_A];
-    default:
-        return 0;
-    }
-}
-
 /* DrawColorRegular / DrawAlphaRegular: a, b, c truncados a 8 bits; d com 11 bits com sinal. */
 static s32 combine(u32 env, s32 a, s32 b, s32 c, s32 d, bool alpha) {
     const u32 bias = (env >> 16) & 3U;
@@ -303,19 +270,24 @@ static s16 clamp_out(s32 v, bool clamp) {
     return (s16)gx_clamp_s32(v, -1024, 1023);
 }
 
-static void run_combiners(const Stage *s, const Inputs *in, s16 (*reg)[4]) {
+static void run_combiners(const Stage *s, s16 (*v)[4]) {
     s32 a[4];
     s32 b[4];
     s32 c[4];
     s32 d[4];
-    color_arg(in, (s->cc >> 12) & 15U, a);
-    color_arg(in, (s->cc >> 8) & 15U, b);
-    color_arg(in, (s->cc >> 4) & 15U, c);
-    color_arg(in, s->cc & 15U, d);
-    a[CH_A] = alpha_arg(in, (s->ac >> 13) & 7U);
-    b[CH_A] = alpha_arg(in, (s->ac >> 10) & 7U);
-    c[CH_A] = alpha_arg(in, (s->ac >> 7) & 7U);
-    d[CH_A] = alpha_arg(in, (s->ac >> 4) & 7U);
+    s32 *const args[4] = {a, b, c, d};
+    for (u32 k = 0; k < 4U; k++) {
+        const s16 *src = v[s->csel[k]];
+        s32 *o = args[k];
+        if (s->crep[k]) {
+            o[0] = o[1] = o[2] = src[CH_A];
+        } else {
+            o[0] = src[0];
+            o[1] = src[1];
+            o[2] = src[2];
+        }
+        o[CH_A] = v[s->asel[k]][CH_A];
+    }
     s32 out[4];
     const bool ccmp = ((s->cc >> 16) & 3U) == BIAS_COMPARE;
     for (u32 ch = 0; ch < 3U; ch++) {
@@ -328,9 +300,9 @@ static void run_combiners(const Stage *s, const Inputs *in, s16 (*reg)[4]) {
     const u32 cdest = (s->cc >> 22) & 3U;
     const u32 adest = (s->ac >> 22) & 3U;
     for (u32 ch = 0; ch < 3U; ch++) {
-        reg[cdest][ch] = clamp_out(out[ch], ((s->cc >> 19) & 1U) != 0U);
+        v[cdest][ch] = clamp_out(out[ch], ((s->cc >> 19) & 1U) != 0U);
     }
-    reg[adest][CH_A] = clamp_out(out[CH_A], ((s->ac >> 19) & 1U) != 0U);
+    v[adest][CH_A] = clamp_out(out[CH_A], ((s->ac >> 19) & 1U) != 0U);
 }
 
 static bool alpha_compare(s32 alpha, s32 ref, u32 comp) {
@@ -393,6 +365,12 @@ typedef struct IndState {
 /* Tev::Indirect. ind_tex: amostras RGBA das texturas indiretas. */
 static void indirect(const Stage *st, const u8 (*ind_tex)[4], s32 s, s32 t, IndState *is) {
     const u32 ind = st->ind;
+    if (ind == 0U) { /* o caso comum: o resultado abaixo com tudo desligado, sem as contas */
+        is->tc[0] = sign24(s);
+        is->tc[1] = sign24(t);
+        is->alpha_bump = 0;
+        return;
+    }
     const u8 *map = ind_tex[ind & 3U];
     const u32 fmt = (ind >> 2) & 3U;
     const u32 bs = (ind >> 7) & 3U;
@@ -541,16 +519,14 @@ static s32 z_texture(s32 z, const s16 *raw) {
 }
 
 void gx_tev_shade(const GxTevPixel *p) {
-    s16 reg[4][4];
-    memcpy(reg, s_tev.regs, sizeof(reg));
+    s16 v[V_COUNT][4] = {{0}};
+    memcpy(v, s_tev.regs, sizeof(s_tev.regs));
+    v[V_ONE][0] = v[V_ONE][1] = v[V_ONE][2] = v[V_ONE][3] = 255;
+    v[V_HALF][0] = v[V_HALF][1] = v[V_HALF][2] = v[V_HALF][3] = 128;
     u8 ind_tex[4][4] = {{0}};
     sample_indirect(p, ind_tex);
     IndState is = {{0, 0}, 0};
     s16 raw[4] = {0, 0, 0, 0};
-    s16 tex[4] = {0, 0, 0, 0};
-    s16 ras[4];
-    s16 konst[4];
-    const Inputs in = {reg, tex, ras, konst};
     for (u32 i = 0; i < s_tev.stages; i++) {
         const Stage *s = &s_tev.st[i];
         indirect(s, ind_tex, p->uv[s->texcoord][0], p->uv[s->texcoord][1], &is);
@@ -559,24 +535,24 @@ void gx_tev_shade(const GxTevPixel *p) {
             if (s_tev.texgens > 0U) { /* sem texgens o resultado é preto (Tev.cpp) */
                 gx_tex_sample(is.tc[0], is.tc[1], p->lod[i], p->linear[i], s->texmap, texel);
             }
-            const u32 tswap = (s->ac >> 2) & 3U;
+            const u8 *sw = s_tev.swap[(s->ac >> 2) & 3U];
             for (u32 c = 0; c < 4U; c++) {
                 raw[c] = texel[c];
-                tex[c] = texel[s_tev.swap[tswap][c]];
+                v[V_TEX][c] = texel[sw[c]];
             }
         }
-        konst[0] = s_tev.kc[s->kc][0];
-        konst[1] = s_tev.kc[s->kc][1];
-        konst[2] = s_tev.kc[s->kc][2];
-        konst[3] = s_tev.ka[s->ka];
-        ras_color(p, s->chan, s->ac & 3U, is.alpha_bump, ras);
-        run_combiners(s, &in, reg);
+        v[V_KONST][0] = s_tev.kc[s->kc][0];
+        v[V_KONST][1] = s_tev.kc[s->kc][1];
+        v[V_KONST][2] = s_tev.kc[s->kc][2];
+        v[V_KONST][3] = s_tev.ka[s->ka];
+        ras_color(p, s->chan, s->ac & 3U, is.alpha_bump, v[V_RAS]);
+        run_combiners(s, v);
     }
     AM_ASSERT(s_tev.stages >= 1U && s_tev.stages <= GX_TEV_STAGES, "TEV: %u estágios", s_tev.stages);
     const Stage *last = &s_tev.st[s_tev.stages - 1U];
     const u32 cdest = (last->cc >> 22) & 3U;
     const u32 adest = (last->ac >> 22) & 3U;
-    u8 out[4] = {(u8)reg[cdest][CH_R], (u8)reg[cdest][CH_G], (u8)reg[cdest][CH_B], (u8)reg[adest][CH_A]};
+    u8 out[4] = {(u8)v[cdest][CH_R], (u8)v[cdest][CH_G], (u8)v[cdest][CH_B], (u8)v[adest][CH_A]};
     if (!alpha_test(out[CH_A])) {
         return;
     }

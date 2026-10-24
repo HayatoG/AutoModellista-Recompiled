@@ -32,6 +32,12 @@ u8 *mem_mem1_data(void);
 u8 *mem_host_ptr(GuestAddr addr, u32 size);
 
 /* ARAM não é endereçável pela CPU: só por DMA/DSP. `offset` é relativo ao início da ARAM; fora do limite é fatal. */
+/* Rastreio de escrita na MEM1 (M7, cache de texturas decodificadas do GX): cada página de 4 KiB tem um contador que
+ * toda escrita incrementa (mem_write*, o diário do cpu.c, DMA do DVD). A soma dos contadores de uma faixa só cresce:
+ * igual = nada escrito ali desde a última vez. `phys` é físico. */
+void mem_mark_written(u32 phys, u32 size);
+u64 mem_written_sum(u32 phys, u32 size);
+
 u8 mem_aram_read8(u32 offset);
 u16 mem_aram_read16(u32 offset);
 u32 mem_aram_read32(u32 offset);

@@ -29,6 +29,13 @@
  *   --audio-dump-max-mb <n>    teto do --audio-dump em MiB (padrão 256); passou disso é am_fatal
  *   --audio on|off             M7: som pelo dispositivo padrão (padrão: on com --window, off sem janela)
  *   --realtime on|off          M7: segura o tempo emulado no ritmo do relógio (padrão: on com --window)
+ *   --gx-tex-cache on|off      M7: cache de texturas decodificadas (padrão on; off decodifica texel a texel, mesma
+ *                              imagem)
+ *   --timebase-out <arq>       M7: "quadro timebase" na entrada de cada quadro (o mesmo de dolphin_trace.py)
+ *   --frameskip on|off         M7: com --realtime, não desenha até 4 quadros seguidos quando a emulação atrasa
+ *                              (padrão on; o jogo segue no ritmo certo e a janela mostra a última imagem)
+ *   --gx-threads <n>           M7: trabalhadores do rasterizador (padrão 0 = um por núcleo; 1 = sem threads). A
+ *                              imagem é a mesma com qualquer número (am/gx_raster.h)
  *   --verbose                  log de depuração (acessos MMIO, UART)
  *
  * Caminhos relativos de --trace/--dump-boot-state são resolvidos em $AM_LOG_DIR quando definido (os scripts usam
@@ -78,6 +85,10 @@ typedef struct Options {
     u64 audio_dump_max_mb;
     int audio;    /* -1 = padrão */
     int realtime; /* -1 = padrão */
+    u64 gx_threads;
+    int gx_tex_cache; /* -1 = padrão */
+    int frameskip;    /* -1 = padrão */
+    const char *timebase_out;
     bool gfx_off;
     bool stop_given;
     bool verbose;
@@ -164,6 +175,12 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->audio_dump_max_mb = n;
     } else if (strcmp(name, "--audio") == 0 && parse_on_off(value, &o->audio)) {
     } else if (strcmp(name, "--realtime") == 0 && parse_on_off(value, &o->realtime)) {
+    } else if (strcmp(name, "--frameskip") == 0 && parse_on_off(value, &o->frameskip)) {
+    } else if (strcmp(name, "--gx-tex-cache") == 0 && parse_on_off(value, &o->gx_tex_cache)) {
+    } else if (strcmp(name, "--timebase-out") == 0) {
+        o->timebase_out = value;
+    } else if (strcmp(name, "--gx-threads") == 0 && parse_u64(value, &n) && n <= 16U) {
+        o->gx_threads = n;
     } else if (strcmp(name, "--max-steps") == 0 && parse_u64(value, &n)) {
         o->max_steps = n;
     } else if (strcmp(name, "--trace-max-mb") == 0 && parse_u64(value, &n) && n > 0U) {
@@ -191,6 +208,8 @@ static bool parse_args(int argc, char **argv, Options *o) {
                    .audio_dump_max_mb = 256U,
                    .audio = -1,
                    .realtime = -1,
+                   .gx_tex_cache = -1,
+                   .frameskip = -1,
                    .max_seconds = 120U,
                    .same_pc_limit = CHASSIS_DEFAULT_SAME_PC_LIMIT};
     for (int i = 1; i < argc; i++) {
@@ -425,6 +444,7 @@ static int run_boot(CPUState *cpu, const Options *o) {
     char events_buf[1024];
     char shots_buf[4096];
     char audio_buf[1024];
+    char tb_buf[1024];
     const bool window = o->window_scale != 0U;
     (void)snprintf(disc_buf, sizeof(disc_buf), "%s/..", o->sys_dir);
     const GameRunConfig run = {.disc_root = o->disc_root != NULL ? o->disc_root : disc_buf,
@@ -437,7 +457,11 @@ static int run_boot(CPUState *cpu, const Options *o) {
                                .audio_dump = log_path(o->audio_dump, audio_buf, sizeof(audio_buf)),
                                .audio_dump_max_mb = o->audio_dump_max_mb,
                                .audio_out = o->audio >= 0 ? o->audio == 1 : window,
-                               .realtime = o->realtime >= 0 ? o->realtime == 1 : window};
+                               .realtime = o->realtime >= 0 ? o->realtime == 1 : window,
+                               .gx_threads = (u32)o->gx_threads,
+                               .gx_tex_cache = o->gx_tex_cache != 0,
+                               .frameskip = o->frameskip != 0,
+                               .timebase_out = log_path(o->timebase_out, tb_buf, sizeof(tb_buf))};
     if (load_sys(o->sys_dir, &files) && prepare(cpu, o, &files, &dol) && game_run_init(&run) &&
         check_hooks(&files, &dol)) {
         char dump_buf[1024];

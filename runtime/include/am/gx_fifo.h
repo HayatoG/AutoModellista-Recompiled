@@ -53,6 +53,11 @@ void gx_fifo_reset(const GxFifoSink *sink);
 /* Liga ou desliga a rasterização e as cópias do EFB (o estado de CP/XF/BP é sempre mantido). */
 void gx_fifo_set_render(bool enabled);
 bool gx_fifo_render_enabled(void);
+/* Pular o desenho de um quadro (M7, janela em tempo real atrasada): os comandos continuam sendo lidos (tokens,
+ * DrawDone, estado), mas os desenhos não são rasterizados e as cópias para o XFB (com a limpeza) não acontecem: o
+ * EFB fica limpo para o próximo quadro e o XFB guarda a imagem anterior. Cópias para textura continuam (quem pula
+ * garante que o jogo não as está usando). */
+void gx_fifo_set_skip(bool skip);
 
 /* Alimenta bytes do fluxo, na ordem; comandos podem atravessar chamadas. */
 void gx_fifo_feed(const u8 *data, u32 size);

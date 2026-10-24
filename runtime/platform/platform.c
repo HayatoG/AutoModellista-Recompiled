@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "am/platform.h"
 
+#include <stdint.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -15,6 +16,23 @@ static struct {
     SDL_Gamepad *gamepad; /* o primeiro conectado; os outros são ignorados */
     SDL_AudioStream *audio;
 } s_platform;
+
+/* Conjunto de trabalhadores: cada execução tem uma geração; os trabalhadores acordam com ela, pegam índices num
+ * contador atômico e o último a terminar avisa quem chamou. */
+static struct {
+    SDL_Thread *threads[PLATFORM_MAX_WORKERS];
+    u32 count; /* inclui quem chama */
+    SDL_Mutex *lock;
+    SDL_Condition *start;
+    SDL_Condition *done;
+    u64 generation;
+    bool quit;
+    u32 jobs;
+    PlatformJobFn job;
+    void *user;
+    SDL_AtomicInt next;
+    u32 pending;
+} s_pool;
 
 static void set_error(const char *msg) {
     (void)strncpy(s_platform.error, msg, sizeof(s_platform.error) - 1U);
@@ -33,7 +51,118 @@ bool platform_init(void) {
     return true;
 }
 
+static void pool_take(u32 worker) {
+    for (;;) {
+        const int i = SDL_AddAtomicInt(&s_pool.next, 1);
+        if (i < 0 || (u32)i >= s_pool.jobs) {
+            return;
+        }
+        s_pool.job((u32)i, worker, s_pool.user);
+    }
+}
+
+static int SDLCALL pool_thread(void *arg) {
+    const u32 worker = (u32)(uintptr_t)arg;
+    u64 seen = 0;
+    SDL_LockMutex(s_pool.lock);
+    for (;;) {
+        while (!s_pool.quit && s_pool.generation == seen) {
+            SDL_WaitCondition(s_pool.start, s_pool.lock);
+        }
+        if (s_pool.quit) {
+            break;
+        }
+        seen = s_pool.generation;
+        SDL_UnlockMutex(s_pool.lock);
+        pool_take(worker);
+        SDL_LockMutex(s_pool.lock);
+        if (--s_pool.pending == 0U) {
+            SDL_SignalCondition(s_pool.done);
+        }
+    }
+    SDL_UnlockMutex(s_pool.lock);
+    return 0;
+}
+
+bool platform_parallel_init(u32 workers) {
+    platform_parallel_shutdown();
+    workers = workers > PLATFORM_MAX_WORKERS ? PLATFORM_MAX_WORKERS : (workers == 0U ? 1U : workers);
+    s_pool.lock = SDL_CreateMutex();
+    s_pool.start = SDL_CreateCondition();
+    s_pool.done = SDL_CreateCondition();
+    if (s_pool.lock == NULL || s_pool.start == NULL || s_pool.done == NULL) {
+        set_error(SDL_GetError());
+        platform_parallel_shutdown();
+        return false;
+    }
+    s_pool.count = 1;
+    for (u32 i = 1; i < workers; i++) {
+        s_pool.threads[i] = SDL_CreateThread(pool_thread, "gx", (void *)(uintptr_t)i);
+        if (s_pool.threads[i] == NULL) {
+            set_error(SDL_GetError());
+            platform_parallel_shutdown();
+            return false;
+        }
+        s_pool.count++;
+    }
+    return true;
+}
+
+void platform_parallel_run(u32 jobs, PlatformJobFn job, void *user) {
+    if (s_pool.count <= 1U) {
+        for (u32 i = 0; i < jobs; i++) {
+            job(i, 0, user);
+        }
+        return;
+    }
+    SDL_LockMutex(s_pool.lock);
+    s_pool.jobs = jobs;
+    s_pool.job = job;
+    s_pool.user = user;
+    SDL_SetAtomicInt(&s_pool.next, 0);
+    s_pool.pending = s_pool.count - 1U;
+    s_pool.generation++;
+    SDL_BroadcastCondition(s_pool.start);
+    SDL_UnlockMutex(s_pool.lock);
+    pool_take(0);
+    SDL_LockMutex(s_pool.lock);
+    while (s_pool.pending != 0U) {
+        SDL_WaitCondition(s_pool.done, s_pool.lock);
+    }
+    SDL_UnlockMutex(s_pool.lock);
+}
+
+void platform_parallel_shutdown(void) {
+    if (s_pool.lock != NULL) {
+        SDL_LockMutex(s_pool.lock);
+        s_pool.quit = true;
+        SDL_BroadcastCondition(s_pool.start);
+        SDL_UnlockMutex(s_pool.lock);
+    }
+    for (u32 i = 1; i < PLATFORM_MAX_WORKERS; i++) {
+        if (s_pool.threads[i] != NULL) {
+            SDL_WaitThread(s_pool.threads[i], NULL);
+        }
+    }
+    if (s_pool.lock != NULL) {
+        SDL_DestroyMutex(s_pool.lock);
+    }
+    if (s_pool.start != NULL) {
+        SDL_DestroyCondition(s_pool.start);
+    }
+    if (s_pool.done != NULL) {
+        SDL_DestroyCondition(s_pool.done);
+    }
+    memset(&s_pool, 0, sizeof(s_pool));
+}
+
+u32 platform_cpu_count(void) {
+    const int n = SDL_GetNumLogicalCPUCores();
+    return n > 0 ? (u32)n : 1U;
+}
+
 void platform_shutdown(void) {
+    platform_parallel_shutdown();
     platform_audio_close();
     platform_window_close();
     if (s_platform.ready) {

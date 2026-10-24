@@ -17,10 +17,10 @@ typedef struct GxTevPixel {
     s32 x, y, z;
     u8 color[2][4];             /* RGBA dos dois canais */
     s32 uv[GX_TEXCOORD_MAX][2]; /* s17.7 */
-    s32 lod[GX_TEV_STAGES];
-    bool linear[GX_TEV_STAGES];
-    s32 ind_lod[4];
-    bool ind_linear[4];
+    const s32 *lod;             /* [GX_TEV_STAGES], do bloco 2x2 */
+    const bool *linear;         /* [GX_TEV_STAGES] */
+    const s32 *ind_lod;         /* [4] */
+    const bool *ind_linear;     /* [4] */
 } GxTevPixel;
 
 /* Decodifica do BP os estágios, as cores e os testes; chamar antes de cada desenho (depois de gx_tex_prepare). */

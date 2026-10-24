@@ -4,6 +4,7 @@
 #include "am/gx_raster.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "am/gx_bp.h"
@@ -15,6 +16,10 @@
 #define BLOCK      2
 #define MAX_RECTS  81 /* 9 faixas em x por 9 em y (ComputeScissorRanges) */
 #define FILTER_LIN 1U
+/* Abaixo desta área (soma dos retângulos envolventes do desenho, em pixels) dividir em faixas não compensa. */
+#define PARALLEL_MIN_AREA 4096
+/* Faixas por trabalhador: linhas de blocos intercaladas, distribuídas sob demanda (equilibra a carga). */
+#define BANDS_PER_WORKER 4U
 
 typedef struct Rect {
     s32 x_off, y_off;
@@ -37,15 +42,17 @@ typedef struct BlockPixel {
     f32 uv[GX_TEXCOORD_MAX][2];
 } BlockPixel;
 
-static struct {
-    Rect rects[MAX_RECTS];
-    u32 rect_count;
-    u32 texgens;
-    u32 colchans;
-    u32 stages;
-    u32 ind_stages;
-    bool zfreeze;
-    f32 tex_scale[GX_TEXCOORD_MAX][2];
+/* Parâmetros de LOD de uma unidade (estágio ou estágio indireto), lidos do BP uma vez por desenho. */
+typedef struct LodUnit {
+    bool on;
+    u32 texcoord;
+    u32 mode0;
+    u32 mode1;
+} LodUnit;
+
+/* Estado de um trabalhador durante um triângulo: declives, o bloco 2x2 e o LOD dele. Cada linha de blocos é
+ * rasterizada inteira por um só contexto (faixas intercaladas), então os pixels não dependem de quantos são. */
+typedef struct RasterCtx {
     Slope z, w;
     Slope color[2][4];
     Slope tex[GX_TEXCOORD_MAX][3];
@@ -54,12 +61,55 @@ static struct {
     bool linear[GX_TEV_STAGES];
     s32 ind_lod[4];
     bool ind_linear[4];
+    u64 pixels;
+    u32 band;  /* esta faixa: linhas de blocos com (y / BLOCK) % bands == band */
+    u32 bands; /* 1 = tudo */
+} RasterCtx;
+
+typedef struct Tri {
+    GxXfVertex v[3];
+} Tri;
+
+static struct {
+    Rect rects[MAX_RECTS];
+    u32 rect_count;
+    u32 texgens;
+    u32 colchans;
+    u32 stages;
+    u32 ind_stages;
+    bool zfreeze;
+    bool early_z;
+    LodUnit lod_units[GX_TEV_STAGES];
+    LodUnit ind_units[4];
+    Slope z; /* declive de Z global (zfreeze usa o do último triângulo sem zfreeze) */
+    /* Fila do desenho atual (só com paralelismo registrado): rasterizada em gx_raster_flush. */
+    Tri *queue;
+    u32 queued;
+    u32 queue_cap;
+    s64 queued_area;
+    GxRasterParallelFn parallel;
+    u32 workers;
+    RasterCtx ctx[GX_RASTER_MAX_WORKERS];
     GxRasterStats stats;
 } s_ras;
 
 void gx_raster_reset(void) {
+    Tri *queue = s_ras.queue;
+    const u32 cap = s_ras.queue_cap;
+    const GxRasterParallelFn parallel = s_ras.parallel;
+    const u32 workers = s_ras.workers;
     memset(&s_ras, 0, sizeof(s_ras));
+    s_ras.queue = queue;
+    s_ras.queue_cap = cap;
+    s_ras.parallel = parallel;
+    s_ras.workers = workers;
     s_ras.z.f0 = 1.0F; /* valor padrão "chutado" do Dolphin para zfreeze no primeiro desenho */
+}
+
+void gx_raster_set_parallel(GxRasterParallelFn run, u32 workers) {
+    gx_raster_flush();
+    s_ras.parallel = workers > 1U ? run : NULL;
+    s_ras.workers = workers > GX_RASTER_MAX_WORKERS ? GX_RASTER_MAX_WORKERS : workers;
 }
 
 const GxRasterStats *gx_raster_stats(void) {
@@ -116,6 +166,20 @@ void gx_raster_begin_draw(void) {
     s_ras.ind_stages = (gen >> 16) & 7U;
     s_ras.ind_stages = s_ras.ind_stages > 4U ? 4U : s_ras.ind_stages;
     s_ras.zfreeze = ((gen >> 19) & 1U) != 0U;
+    s_ras.early_z = gx_tev_early_z();
+    const u32 iref = gx_bp_reg(GX_BP_IREF);
+    for (u32 i = 0; i < 4U; i++) {
+        const u32 map = (iref >> (6U * i)) & 7U;
+        s_ras.ind_units[i] = (LodUnit){i < s_ras.ind_stages, (iref >> ((6U * i) + 3U)) & 7U,
+                                       gx_bp_tex_reg(GX_BP_TX_SETMODE0, map), gx_bp_tex_reg(GX_BP_TX_SETMODE1, map)};
+    }
+    for (u32 i = 0; i < GX_TEV_STAGES; i++) {
+        const u32 order = gx_bp_reg((u8)(GX_BP_TREF + (i >> 1)));
+        const u32 o = (i & 1U) != 0U ? order >> 12 : order;
+        s_ras.lod_units[i] =
+            (LodUnit){i < s_ras.stages && ((o >> 6) & 1U) != 0U, (o >> 3) & 7U,
+                      gx_bp_tex_reg(GX_BP_TX_SETMODE0, o & 7U), gx_bp_tex_reg(GX_BP_TX_SETMODE1, o & 7U)};
+    }
     compute_scissor();
 }
 
@@ -152,14 +216,18 @@ static f32 slope_value(const Slope *s, s32 x, s32 y) {
     return s->f0 + (s->dfdx * dx) + (s->dfdy * dy);
 }
 
-static void update_z_slope(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2, s32 x_off, s32 y_off) {
-    if (s_ras.zfreeze) {
-        return;
-    }
+static Slope z_slope(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2, s32 x_off, s32 y_off) {
     const s32 x1 = iround(16.0F * (v0->screen[0] - (f32)x_off)) - 9;
     const s32 y1 = iround(16.0F * (v0->screen[1] - (f32)y_off)) - 9;
     const SlopeCtx c = slope_ctx(v0, v1, v2, (x1 + 0xF) >> 4, (y1 + 0xF) >> 4, x_off, y_off);
-    s_ras.z = slope(v0->screen[2], v1->screen[2], v2->screen[2], &c);
+    return slope(v0->screen[2], v1->screen[2], v2->screen[2], &c);
+}
+
+/* Declive de Z global, na ordem dos triângulos (inclusive os descartados): é o que o zfreeze congela. */
+static void update_z_slope(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2, s32 x_off, s32 y_off) {
+    if (!s_ras.zfreeze) {
+        s_ras.z = z_slope(v0, v1, v2, x_off, y_off);
+    }
 }
 
 void gx_raster_update_z_slope(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2) {
@@ -174,12 +242,12 @@ static s32 fixed_log2(f32 f) {
     return (s32)((x & 0x7F800000U) >> 19) - 2032 + (s32)((x & 0x007FFFFFU) >> 19);
 }
 
-static void calc_lod(u32 texmap, u32 texcoord, s32 *lod_out, bool *linear) {
-    const u32 m0 = gx_bp_tex_reg(GX_BP_TX_SETMODE0, texmap);
-    const u32 m1 = gx_bp_tex_reg(GX_BP_TX_SETMODE1, texmap);
-    const f32 *uv00 = s_ras.block[0][0].uv[texcoord];
-    const f32 *uv10 = s_ras.block[1][0].uv[texcoord];
-    const f32 *uv01 = s_ras.block[0][1].uv[texcoord];
+static void calc_lod(const RasterCtx *ctx, const LodUnit *u, s32 *lod_out, bool *linear) {
+    const u32 m0 = u->mode0;
+    const u32 m1 = u->mode1;
+    const f32 *uv00 = ctx->block[0][0].uv[u->texcoord];
+    const f32 *uv10 = ctx->block[1][0].uv[u->texcoord];
+    const f32 *uv01 = ctx->block[0][1].uv[u->texcoord];
     const f32 dudx = fabsf(uv00[0] - uv10[0]);
     const f32 dvdx = fabsf(uv00[1] - uv10[1]);
     const f32 dudy = fabsf(uv00[0] - uv01[0]);
@@ -206,78 +274,76 @@ static void calc_lod(u32 texmap, u32 texcoord, s32 *lod_out, bool *linear) {
     *lod_out = lod;
 }
 
-static void build_block(s32 bx, s32 by) {
+static void build_block(RasterCtx *ctx, s32 bx, s32 by) {
     for (s32 yi = 0; yi < BLOCK; yi++) {
         for (s32 xi = 0; xi < BLOCK; xi++) {
-            BlockPixel *px = &s_ras.block[xi][yi];
+            BlockPixel *px = &ctx->block[xi][yi];
             const s32 x = bx + xi;
             const s32 y = by + yi;
-            const f32 inv_w = 1.0F / slope_value(&s_ras.w, x, y);
+            const f32 inv_w = 1.0F / slope_value(&ctx->w, x, y);
             for (u32 i = 0; i < s_ras.texgens; i++) {
                 f32 proj = inv_w;
-                const f32 q = slope_value(&s_ras.tex[i][2], x, y) * inv_w;
+                const f32 q = slope_value(&ctx->tex[i][2], x, y) * inv_w;
                 if (q != 0.0F) {
                     proj = inv_w / q;
                 }
-                px->uv[i][0] = slope_value(&s_ras.tex[i][0], x, y) * proj;
-                px->uv[i][1] = slope_value(&s_ras.tex[i][1], x, y) * proj;
+                px->uv[i][0] = slope_value(&ctx->tex[i][0], x, y) * proj;
+                px->uv[i][1] = slope_value(&ctx->tex[i][1], x, y) * proj;
             }
         }
     }
-    const u32 iref = gx_bp_reg(GX_BP_IREF);
     for (u32 i = 0; i < s_ras.ind_stages; i++) {
-        calc_lod((iref >> (6U * i)) & 7U, (iref >> ((6U * i) + 3U)) & 7U, &s_ras.ind_lod[i], &s_ras.ind_linear[i]);
+        calc_lod(ctx, &s_ras.ind_units[i], &ctx->ind_lod[i], &ctx->ind_linear[i]);
     }
     for (u32 i = 0; i < s_ras.stages; i++) {
-        const u32 order = gx_bp_reg((u8)(GX_BP_TREF + (i >> 1)));
-        const u32 o = (i & 1U) != 0U ? order >> 12 : order;
-        if (((o >> 6) & 1U) != 0U) {
-            calc_lod(o & 7U, (o >> 3) & 7U, &s_ras.lod[i], &s_ras.linear[i]);
+        if (s_ras.lod_units[i].on) {
+            calc_lod(ctx, &s_ras.lod_units[i], &ctx->lod[i], &ctx->linear[i]);
         }
     }
 }
 
-static void draw_pixel(s32 x, s32 y, s32 xi, s32 yi) {
-    f32 zf = slope_value(&s_ras.z, x, y);
+static void draw_pixel(RasterCtx *ctx, s32 x, s32 y, s32 xi, s32 yi) {
+    f32 zf = slope_value(&ctx->z, x, y);
     zf = gx_clamp_f32(zf, 0.0F, 16777215.0F);
     GxTevPixel p;
     p.x = x;
     p.y = y;
     p.z = (s32)zf;
-    if (gx_tev_early_z() && !gx_efb_z_test((u32)x, (u32)y, (u32)p.z)) {
+    if (s_ras.early_z && !gx_efb_z_test((u32)x, (u32)y, (u32)p.z)) {
         return;
     }
-    s_ras.stats.pixels++;
+    ctx->pixels++;
     memset(p.color, 0, sizeof(p.color));
     for (u32 i = 0; i < s_ras.colchans; i++) {
         for (u32 c = 0; c < 4U; c++) {
-            const f32 v = slope_value(&s_ras.color[i][c], x, y);
+            const f32 v = slope_value(&ctx->color[i][c], x, y);
             p.color[i][c] = (u8)gx_clamp_f32(v, 0.0F, 255.0F);
         }
     }
-    const BlockPixel *px = &s_ras.block[xi][yi];
+    const BlockPixel *px = &ctx->block[xi][yi];
     for (u32 i = 0; i < GX_TEXCOORD_MAX; i++) {
         p.uv[i][0] = i < s_ras.texgens ? (s32)(px->uv[i][0] * 128.0F) : 0; /* TEV guarda UV em s17.7 */
         p.uv[i][1] = i < s_ras.texgens ? (s32)(px->uv[i][1] * 128.0F) : 0;
     }
-    memcpy(p.lod, s_ras.lod, sizeof(p.lod));
-    memcpy(p.linear, s_ras.linear, sizeof(p.linear));
-    memcpy(p.ind_lod, s_ras.ind_lod, sizeof(p.ind_lod));
-    memcpy(p.ind_linear, s_ras.ind_linear, sizeof(p.ind_linear));
+    p.lod = ctx->lod;
+    p.linear = ctx->linear;
+    p.ind_lod = ctx->ind_lod;
+    p.ind_linear = ctx->ind_linear;
     gx_tev_shade(&p);
 }
 
-static void setup_slopes(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2, const SlopeCtx *c) {
+static void setup_slopes(RasterCtx *ctx, const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2,
+                         const SlopeCtx *c) {
     const f32 w[3] = {1.0F / v0->proj[3], 1.0F / v1->proj[3], 1.0F / v2->proj[3]};
-    s_ras.w = slope(w[0], w[1], w[2], c);
+    ctx->w = slope(w[0], w[1], w[2], c);
     for (u32 i = 0; i < s_ras.colchans; i++) {
         for (u32 k = 0; k < 4U; k++) {
-            s_ras.color[i][k] = slope((f32)v0->color[i][k], (f32)v1->color[i][k], (f32)v2->color[i][k], c);
+            ctx->color[i][k] = slope((f32)v0->color[i][k], (f32)v1->color[i][k], (f32)v2->color[i][k], c);
         }
     }
     for (u32 i = 0; i < s_ras.texgens; i++) {
         for (u32 k = 0; k < 3U; k++) {
-            s_ras.tex[i][k] = slope(v0->tex[i][k] * w[0], v1->tex[i][k] * w[1], v2->tex[i][k] * w[2], c);
+            ctx->tex[i][k] = slope(v0->tex[i][k] * w[0], v1->tex[i][k] * w[1], v2->tex[i][k] * w[2], c);
         }
     }
 }
@@ -326,7 +392,7 @@ static u32 edge_mask(const Edges *e, u32 i, s32 x0, s32 x1, s32 y0, s32 y1) {
            ((u32)(e->c[i] + (e->dx[i] * y1) - (e->dy[i] * x1) > 0) << 3);
 }
 
-static void raster_block(const Edges *e, s32 x, s32 y) {
+static void raster_block(RasterCtx *ctx, const Edges *e, s32 x, s32 y) {
     const s32 x0 = x << 4;
     const s32 x1 = (x + BLOCK - 1) << 4;
     const s32 y0 = y << 4;
@@ -337,7 +403,7 @@ static void raster_block(const Edges *e, s32 x, s32 y) {
     if (a == 0U || b == 0U || c == 0U) {
         return;
     }
-    build_block(x, y);
+    build_block(ctx, x, y);
     s32 cy[3];
     for (u32 i = 0; i < 3U; i++) {
         cy[i] = e->c[i] + (e->dx[i] * y0) - (e->dy[i] * x0);
@@ -347,7 +413,7 @@ static void raster_block(const Edges *e, s32 x, s32 y) {
         for (s32 ix = 0; ix < BLOCK; ix++) {
             const bool inside = (a == 0xFU && b == 0xFU && c == 0xFU) || (cx[0] > 0 && cx[1] > 0 && cx[2] > 0);
             if (inside && x + ix >= e->minx && x + ix < e->maxx && y + iy >= e->miny && y + iy < e->maxy) {
-                draw_pixel(x + ix, y + iy, ix, iy);
+                draw_pixel(ctx, x + ix, y + iy, ix, iy);
             }
             for (u32 i = 0; i < 3U; i++) {
                 cx[i] -= e->dy[i] * 16;
@@ -359,25 +425,117 @@ static void raster_block(const Edges *e, s32 x, s32 y) {
     }
 }
 
-static void triangle_in_rect(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2, const Rect *r) {
-    update_z_slope(v0, v1, v2, r->x_off, r->y_off);
+/* Primeira linha de blocos da faixa do contexto a partir de `y` (múltiplo de BLOCK). */
+static s32 band_start(const RasterCtx *ctx, s32 y) {
+    const u32 row = (u32)(y / BLOCK);
+    const u32 skip = (ctx->band + ctx->bands - (row % ctx->bands)) % ctx->bands;
+    return y + ((s32)skip * BLOCK);
+}
+
+static void triangle_in_rect(RasterCtx *ctx, const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2,
+                             const Rect *r) {
     const GxXfVertex *const v[3] = {v0, v1, v2};
     Edges e;
     if (!edges(v, r, &e)) {
         return;
     }
+    const s32 first = band_start(ctx, e.miny & ~(BLOCK - 1));
+    if (first >= e.maxy) {
+        return; /* nenhuma linha desta faixa */
+    }
+    ctx->z = s_ras.zfreeze ? s_ras.z : z_slope(v0, v1, v2, r->x_off, r->y_off);
     const SlopeCtx c = slope_ctx(v0, v1, v2, (e.x[0] + 0xF) >> 4, (e.y[0] + 0xF) >> 4, r->x_off, r->y_off);
-    setup_slopes(v0, v1, v2, &c);
-    for (s32 y = e.miny & ~(BLOCK - 1); y < e.maxy; y += BLOCK) {
+    setup_slopes(ctx, v0, v1, v2, &c);
+    const s32 step = BLOCK * (s32)ctx->bands;
+    for (s32 y = first; y < e.maxy; y += step) {
         for (s32 x = e.minx & ~(BLOCK - 1); x < e.maxx; x += BLOCK) {
-            raster_block(&e, x, y);
+            raster_block(ctx, &e, x, y);
         }
     }
+}
+
+static void raster_tri(RasterCtx *ctx, const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2) {
+    for (u32 i = 0; i < s_ras.rect_count; i++) {
+        triangle_in_rect(ctx, v0, v1, v2, &s_ras.rects[i]);
+    }
+}
+
+/* Área (em pixels) do retângulo envolvente, para decidir se o desenho vale a divisão em faixas. */
+static s64 bbox_area(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2) {
+    const f32 x0 = fminf(fminf(v0->screen[0], v1->screen[0]), v2->screen[0]);
+    const f32 x1 = fmaxf(fmaxf(v0->screen[0], v1->screen[0]), v2->screen[0]);
+    const f32 y0 = fminf(fminf(v0->screen[1], v1->screen[1]), v2->screen[1]);
+    const f32 y1 = fmaxf(fmaxf(v0->screen[1], v1->screen[1]), v2->screen[1]);
+    const f32 a = (x1 - x0 + 1.0F) * (y1 - y0 + 1.0F);
+    return a > 1e9F ? (s64)1000000000 : (s64)a;
 }
 
 void gx_raster_triangle(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2) {
     s_ras.stats.triangles++;
     for (u32 i = 0; i < s_ras.rect_count; i++) {
-        triangle_in_rect(v0, v1, v2, &s_ras.rects[i]);
+        update_z_slope(v0, v1, v2, s_ras.rects[i].x_off, s_ras.rects[i].y_off);
     }
+    if (s_ras.parallel == NULL) {
+        RasterCtx *ctx = &s_ras.ctx[0];
+        ctx->band = 0;
+        ctx->bands = 1;
+        raster_tri(ctx, v0, v1, v2);
+        s_ras.stats.pixels += ctx->pixels;
+        ctx->pixels = 0;
+        return;
+    }
+    if (s_ras.queued == s_ras.queue_cap) {
+        const u32 cap = s_ras.queue_cap != 0U ? s_ras.queue_cap * 2U : 256U;
+        Tri *q = realloc(s_ras.queue, (size_t)cap * sizeof(Tri));
+        AM_ASSERT(q != NULL, "GX: sem memória para a fila de %u triângulos", cap);
+        s_ras.queue = q;
+        s_ras.queue_cap = cap;
+    }
+    Tri *t = &s_ras.queue[s_ras.queued++];
+    t->v[0] = *v0;
+    t->v[1] = *v1;
+    t->v[2] = *v2;
+    s_ras.queued_area += bbox_area(v0, v1, v2);
+}
+
+/* Uma faixa: todos os triângulos da fila, na ordem, só nas linhas de blocos da faixa. */
+static void run_band(u32 band, u32 worker, void *user) {
+    const u32 bands = *(const u32 *)user;
+    RasterCtx *ctx = &s_ras.ctx[worker];
+    ctx->band = band;
+    ctx->bands = bands;
+    for (u32 i = 0; i < s_ras.queued; i++) {
+        const Tri *t = &s_ras.queue[i];
+        raster_tri(ctx, &t->v[0], &t->v[1], &t->v[2]);
+    }
+}
+
+void gx_raster_parallel_for(u32 jobs, GxRasterJobFn job, void *user) {
+    if (s_ras.parallel != NULL && jobs > 1U) {
+        s_ras.parallel(jobs, job, user);
+        return;
+    }
+    for (u32 i = 0; i < jobs; i++) {
+        job(i, 0, user);
+    }
+}
+
+void gx_raster_flush(void) {
+    if (s_ras.queued == 0U) {
+        return;
+    }
+    if (s_ras.queued_area >= PARALLEL_MIN_AREA) {
+        u32 bands = s_ras.workers * BANDS_PER_WORKER;
+        s_ras.parallel(bands, run_band, &bands);
+        s_ras.stats.parallel_draws++;
+    } else {
+        u32 one = 1;
+        run_band(0, 0, &one);
+    }
+    for (u32 w = 0; w < GX_RASTER_MAX_WORKERS; w++) {
+        s_ras.stats.pixels += s_ras.ctx[w].pixels;
+        s_ras.ctx[w].pixels = 0;
+    }
+    s_ras.queued = 0;
+    s_ras.queued_area = 0;
 }
