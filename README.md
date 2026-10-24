@@ -30,7 +30,8 @@ gerado a partir deles ficam fora do git (`.gitignore`).
 | M2 recompilação (backend C) | **atingido** | `docs/RECOMPILATION_REPORT.md` |
 | M3 esqueleto da runtime | **atingido localmente** (macOS arm64 e x86_64): CMake, `runtime/core`, DOL + 12 RELs linkados (155 trechos), 12 testes; CI Linux/Windows escrito, ainda não executado | `docs/M3_ESQUELETO.md`, `scripts/verify_m3.sh` |
 | M4 até `main` | **atingido localmente** (macOS arm64 e x86_64): DOL carregado, estado do IPL/apploader conferido contra o Dolphin, `__start` → `OSInit` → `main` em C recompilado; trace de chamadas igual ao do Dolphin 2609a em todos os eventos comparáveis (1998/1998; 2733/2733 com trechos de 128 instruções; chamadas dentro do mesmo trecho não são visíveis, ver §5.2) | `docs/M4_BOOT.md`, `scripts/verify_m4.sh`, `tests/golden/m4_trace.json` |
-| M5–M10 port nativo em C | planejado | `docs/PLANO_PORT_C.md`, padrões em `docs/PADROES_DE_CODIGO.md` |
+| M5 OS e disco | **atingido localmente** (macOS arm64 e x86_64, Release): RELs ligados pelo `OSLink` do SDK (menus e, na largada, o `game.rel`), DVD com o tempo do drive do Dolphin, laço de quadros com roteiro de controle até a corrida; `game.rel` ligado no quadro 5731 e 669 quadros depois sem erro; 12 eventos de módulo nos mesmos quadros do Dolphin 2609a e 91 leituras de disco idênticas, música ADX em fluxo com a mesma contagem por trecho (§5.3) | `docs/M5_OS_DISCO.md`, `scripts/verify_m5.sh`, `tests/golden/m5_events.json` |
+| M6–M10 port nativo em C | planejado | `docs/PLANO_PORT_C.md`, padrões em `docs/PADROES_DE_CODIGO.md` |
 
 ## Começar
 
