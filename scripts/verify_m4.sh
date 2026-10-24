@@ -31,7 +31,7 @@ find runtime tests/unit -type f \( -name '*.c' -o -name '*.h' \) -print0 | xargs
 
 build() {  # build <dir> <cmake args...>
   local B=$1; shift
-  cmake -S . -B $B -G Ninja "$@" > $AM_LOG_DIR/cmake_${B:t}.log
+  cmake -S . -B $B -G Ninja -UAM_SDL3_TAG "$@" > $AM_LOG_DIR/cmake_${B:t}.log
   cmake --build $B > $AM_LOG_DIR/build_${B:t}.log
   ctest --test-dir $B --output-on-failure | grep -E "tests passed|tests failed"
 }

@@ -1,0 +1,25 @@
+{
+ "dolphin": "2609a",
+ "criterion": "docs/M5_OS_DISCO.md §5",
+ "pad_script": "320:D_LEFT:8,360:A:8,1700:START:8,2000:START:8,2600:A:8,2900:A:8,3300:A:8,3600:A:8,3900:A:8,4200:A:8,4500:A:8,4800:A:8,5100:A:8,5400:A:8,5700:A:8",
+ "frames": 6400,
+ "summary": {
+  "strict_compared": 103,
+  "first_divergence": null,
+  "module_events": 12,
+  "strict_reads": 91,
+  "stream_files": 10,
+  "stream_reads": 441,
+  "stream_reads_identical": 231,
+  "stream_bad_segments": [],
+  "module_frames_equal": true,
+  "strict_sha256": "5ebc86e48180950207ee2a9b26aca5d294d96ff57a535f0ec27589a8b6477085",
+  "ok": true,
+  "dolphin_link_frame": 5731,
+  "dolphin_frames_after_link": 669,
+  "dolphin_events": 551,
+  "runtime_link_frame": 5731,
+  "runtime_frames_after_link": 669,
+  "runtime_events": 551
+ }
+}

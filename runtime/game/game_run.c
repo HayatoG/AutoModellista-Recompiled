@@ -187,6 +187,10 @@ bool game_run_init(const GameRunConfig *config) {
 
 void game_run_shutdown(void) {
     if (s_run.events != NULL) {
+        /* Rodapé no formato do cabeçalho do Dolphin (scripts/compare_events.py lê frames=); um am_fatal não chega
+         * aqui, então log sem rodapé = execução que não terminou. */
+        (void)fprintf(s_run.events, "# fim frames=%" PRIu64 " end=%s\n", s_run.frames,
+                      s_run.target_reached ? "frames" : "parada");
         (void)fclose(s_run.events);
         s_run.events = NULL;
     }

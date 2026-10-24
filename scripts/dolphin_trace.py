@@ -45,6 +45,7 @@ DEFAULT_DOLPHIN = "/Applications/Dolphin.app/Contents/MacOS/Dolphin"
 DEFAULT_USER = "/Volumes/AMRecomp/dolphin-user"
 DEFAULT_USER_PIPE = "/Volumes/AMRecomp/dolphin-user-pipe"  # com --pad-script: GCPadNew.ini aponta para o pipe
 ENTRY = 0x80003154
+RTC_EPOCH_2000 = 946684800  # 2000-01-01 em segundos Unix (Config/MainSettings.cpp: MAIN_CUSTOM_RTC_VALUE)
 MAIN = 0x800719AC
 # Endereços do M5 (runtime/include/am/game.h).
 OS_LINK = 0x800C5C70
@@ -90,6 +91,10 @@ def launch(args) -> subprocess.Popen:
         "-C", f"Dolphin.Core.DSPHLE={'True' if args.dsp_hle else 'False'}",
         "-C", "Dolphin.DSP.Backend=No Audio Output",
         "-C", "Dolphin.Core.EnableCheats=False",
+        # Relógio igual ao da runtime (--rtc, segundos desde 2000-01-01): o padrão do Dolphin é o relógio do host, e o
+        # jogo usa o tempo para sortear (M5: os carros da corrida mudavam de uma execução para outra).
+        "-C", "Dolphin.Core.EnableCustomRTC=True",
+        "-C", f"Dolphin.Core.CustomRTCValue={RTC_EPOCH_2000 + args.rtc}",
         # Dispositivos iguais aos da runtime no M4 (docs/M4_BOOT.md §4): nenhum aparelho EXI (o padrão do Dolphin
         # põe um memory card no slot A; Config/MainSettings.cpp, EXIDeviceType::None = 0xFF) e um controle de
         # GameCube só na porta 1 (SIDEVICE_GC_CONTROLLER = 6, SIDEVICE_NONE = 0; HW/SI/SI_Device.h).
@@ -416,6 +421,7 @@ def main() -> int:
     ap.add_argument("--cpu-core", type=int, default=4, help="0 Interpreter, 1 JIT64, 4 JITARM64, 5 CachedInterpreter")
     ap.add_argument("--dsp-hle", type=lambda s: s.lower() in ("1", "true", "yes"), default=True)
     ap.add_argument("--dolphin-log", default=None)
+    ap.add_argument("--rtc", type=int, default=0, help="relógio inicial em segundos desde 2000-01-01 (= --rtc da runtime)")
     ap.add_argument("--video", default="Null", help="backend de vídeo do Dolphin (Null; Metal para --shots, que precisa do XFB na RAM)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("boot-state")
