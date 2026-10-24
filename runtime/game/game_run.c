@@ -22,6 +22,7 @@
 #include "am/guest_cpu.h"
 #include "am/gx_efb.h"
 #include "am/gx_fifo.h"
+#include "am/gx_gpu.h"
 #include "am/gx_raster.h"
 #include "am/gx_setup.h"
 #include "am/gx_tex.h"
@@ -34,6 +35,7 @@
 #include "am/pad_script.h"
 #include "am/pi.h"
 #include "am/platform.h"
+#include "am/platform_gpu.h"
 #include "am/recomp.h"
 #include "am/si.h"
 #include "am/timebase.h"
@@ -393,6 +395,15 @@ static bool init_video(const GameRunConfig *config) {
         }
         AM_LOG_INFO("GX: rasterizador com %u trabalhador(es)", workers > 1U ? workers : 1U);
     }
+    if (config->render && config->gpu) {
+        if (!platform_gpu_init()) {
+            AM_LOG_ERROR("--gfx gpu: sem GPU utilizável (SDL3 GPU com metallib)");
+            return false;
+        }
+        gx_gpu_reset();
+        gx_gpu_set_backend(platform_gpu_run);
+        AM_LOG_INFO("GX: desenho na GPU (driver %s, ubershader TEV)", platform_gpu_name());
+    }
     if (config->window_scale == 0U) {
         return true;
     }
@@ -496,6 +507,10 @@ void game_run_shutdown(void) {
     dsp_set_audio_sink(NULL, NULL);
     gx_raster_set_parallel(NULL, 1);
     platform_parallel_shutdown();
+    if (gx_gpu_active()) {
+        gx_gpu_set_backend(NULL);
+        platform_gpu_shutdown();
+    }
     audio_dump_close();
     if (s_run.audio_out) {
         platform_audio_close();
@@ -610,6 +625,14 @@ static void report_gx(void) {
                 " com neblina, %" PRIu64 " com estágios indiretos; %" PRIu64 " cópias de Z para textura",
                 su->max_stages, su->ztex_draws, su->fog_draws, su->indirect_draws, efb->depth_copies);
     report_gx_features(su, efb);
+    if (gx_gpu_active()) {
+        const GxGpuStats *g = gx_gpu_stats();
+        AM_LOG_INFO("GX GPU: %" PRIu64 " lotes, %" PRIu64 " desenhos, %" PRIu64 " triângulos; %" PRIu64
+                    " texturas enviadas (%" PRIu64 " texels), buffer de texels recomeçado %" PRIu64
+                    " vez(es); sem suporte: %" PRIu64 " desenhos com indireto, %" PRIu64 " com zfreeze",
+                    g->batches, g->draws, g->triangles, g->texture_uploads, g->uploaded_texels, g->arena_resets,
+                    g->indirect_draws, g->zfreeze_draws);
+    }
 }
 
 static void report_gx_features(const GxSetupStats *su, const GxEfbStats *efb) {

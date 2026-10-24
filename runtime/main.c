@@ -19,7 +19,8 @@
  *   --disc <dir>               raiz da árvore extraída (sys/ e files/); padrão: <--sys>/..
  *   --pad-script <roteiro>     botões do controle 1 por quadro, "200:D_LEFT:8,240:A:8" (am/pad_script.h)
  *   --events <arquivo>         log de eventos do M5 (main, OSLink, leituras do DVD) para comparar com o Dolphin
- *   --gfx soft|off             M6: GX em software (padrão) ou só contar comandos, como no M5
+ *   --gfx soft|gpu|off         M6: GX em software (padrão) ou só contar comandos, como no M5; M8: gpu desenha com a
+ *                              SDL3 GPU (ubershader TEV) e faz as cópias do EFB na CPU
  *   --shot <q:arq.png,...>     M6: no início do quadro q grava o XFB em PNG (o mesmo que dolphin_trace.py --shots)
  *   --window <escala>          M6: janela SDL3 com o XFB que o VI mostra (1, 2...); com --shot grava também
  *                              <arq>_janela.png, lido de volta do que a janela desenhou. M7: sem --pad-script, o
@@ -95,6 +96,7 @@ typedef struct Options {
     const char *profile;
     const char *probes;
     bool gfx_off;
+    bool gfx_gpu;
     bool stop_given;
     bool verbose;
 } Options;
@@ -189,8 +191,10 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->shots = value;
     } else if (strcmp(name, "--window") == 0 && parse_u64(value, &n) && n > 0U && n <= 8U) {
         o->window_scale = n;
-    } else if (strcmp(name, "--gfx") == 0 && (strcmp(value, "soft") == 0 || strcmp(value, "off") == 0)) {
+    } else if (strcmp(name, "--gfx") == 0 &&
+               (strcmp(value, "soft") == 0 || strcmp(value, "off") == 0 || strcmp(value, "gpu") == 0)) {
         o->gfx_off = strcmp(value, "off") == 0;
+        o->gfx_gpu = strcmp(value, "gpu") == 0;
     } else if (strcmp(name, "--audio-dump") == 0) {
         o->audio_dump = value;
     } else if (strcmp(name, "--audio-dump-max-mb") == 0 && parse_u64(value, &n) && n > 0U) {
@@ -475,6 +479,7 @@ static GameRunConfig run_config(const Options *o, RunPaths *p) {
                            .events = log_path(o->events, p->events, sizeof(p->events)),
                            .pad_script = o->pad_script,
                            .render = !o->gfx_off,
+                           .gpu = o->gfx_gpu,
                            .shots = log_path_list(o->shots, p->shots, sizeof(p->shots)),
                            .window_scale = (u32)o->window_scale,
                            .audio_dump = log_path(o->audio_dump, p->audio, sizeof(p->audio)),

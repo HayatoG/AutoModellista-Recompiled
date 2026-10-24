@@ -261,6 +261,8 @@ typedef struct TexUnit {
     /* Níveis já decodificados em RGBA (cache abaixo); NULL = decodificar texel a texel, como o Dolphin. */
     const u8 *cached[GX_TEX_CACHE_LEVELS];
     u32 cached_levels;
+    u64 cached_serial; /* M8: identidade da decodificação (para a GPU não reenviar a mesma textura) */
+    u32 cached_texels;
 } TexUnit;
 
 static TexUnit tex_unit(u32 texmap) {
@@ -393,6 +395,8 @@ typedef struct TexCacheEntry {
     u64 tlut_hash;
     u64 written;
     u64 last_use;
+    u64 serial;
+    u32 texels;
     u8 *rgba;
     u32 offset[GX_TEX_CACHE_LEVELS];
 } TexCacheEntry;
@@ -401,8 +405,11 @@ static struct {
     TexUnit units[GX_TEXMAP_MAX];
     TexCacheEntry cache[TEX_CACHE_ENTRIES];
     u64 clock;
+    u64 serial;
     bool cache_on;
     GxTexCacheStats stats;
+    u8 *scratch[GX_TEXMAP_MAX]; /* M8: níveis decodificados de unidades fora do cache, para a GPU */
+    u32 scratch_bytes[GX_TEXMAP_MAX];
 } s_tex = {.cache_on = true};
 
 void gx_tex_set_cache(bool on) {
@@ -413,6 +420,11 @@ void gx_tex_set_cache(bool on) {
 void gx_tex_cache_clear(void) {
     for (u32 i = 0; i < TEX_CACHE_ENTRIES; i++) {
         free(s_tex.cache[i].rgba);
+    }
+    for (u32 i = 0; i < GX_TEXMAP_MAX; i++) {
+        free(s_tex.scratch[i]);
+        s_tex.scratch[i] = NULL;
+        s_tex.scratch_bytes[i] = 0;
     }
     memset(s_tex.cache, 0, sizeof(s_tex.cache));
 }
@@ -452,6 +464,8 @@ static bool cache_fill(TexCacheEntry *e, const TexUnit *u) {
         return false;
     }
     e->rgba = buf;
+    e->serial = ++s_tex.serial;
+    e->texels = total / 4U;
     for (u32 l = 0; l < e->levels; l++) {
         GxTexSource src;
         u32 wm1;
@@ -471,6 +485,8 @@ static bool cache_fill(TexCacheEntry *e, const TexUnit *u) {
 
 static void cache_attach(TexUnit *u, const TexCacheEntry *e) {
     u->cached_levels = e->levels;
+    u->cached_serial = e->serial;
+    u->cached_texels = e->texels;
     for (u32 l = 0; l < e->levels; l++) {
         u->cached[l] = e->rgba + e->offset[l];
     }
@@ -588,5 +604,63 @@ void gx_tex_sample(s32 s, s32 t, s32 lod, bool linear, u32 texmap, u8 *rgba) {
     sample_mip(u, s, t, base + 1U, linear, b);
     for (u32 i = 0; i < 4U; i++) {
         rgba[i] = (u8)((((u32)a[i] * (u32)(16 - frac)) + ((u32)b[i] * (u32)frac)) >> 4);
+    }
+}
+
+/* M8: níveis em RGBA para a GPU. Do cache quando a unidade está nele; senão decodificados aqui texel a texel (TMEM,
+ * texturas grandes, cache desligado), sempre com uma identidade nova. */
+static bool decode_scratch(u32 texmap, const TexUnit *u, u32 levels, GxTexGpuUnit *out) {
+    u32 total = 0;
+    for (u32 l = 0; l < levels; l++) {
+        total += (((u->width_minus_1 >> l) + 1U) * ((u->height_minus_1 >> l) + 1U)) * 4U;
+    }
+    if (total > s_tex.scratch_bytes[texmap]) {
+        u8 *buf = realloc(s_tex.scratch[texmap], total);
+        if (buf == NULL) {
+            return false;
+        }
+        s_tex.scratch[texmap] = buf;
+        s_tex.scratch_bytes[texmap] = total;
+    }
+    u8 *o = s_tex.scratch[texmap];
+    for (u32 l = 0; l < levels; l++) {
+        GxTexSource src;
+        u32 wm1;
+        u32 hm1;
+        level_source(u, l, &src, &wm1, &hm1);
+        for (u32 t = 0; t <= hm1; t++) {
+            for (u32 x = 0; x <= wm1; x++) {
+                texel(u, &src, (s32)x, (s32)t, wm1, o);
+                o += 4;
+            }
+        }
+    }
+    out->rgba = s_tex.scratch[texmap];
+    out->texels = total / 4U;
+    out->levels = levels;
+    out->serial = ++s_tex.serial;
+    return true;
+}
+
+void gx_tex_gpu_unit(u32 texmap, GxTexGpuUnit *out) {
+    AM_ASSERT(texmap < GX_TEXMAP_MAX, "texmap %u", texmap);
+    const TexUnit *u = &s_tex.units[texmap];
+    memset(out, 0, sizeof(*out));
+    out->wm1 = u->width_minus_1;
+    out->hm1 = u->height_minus_1;
+    out->mode0 = u->mode0;
+    out->mode1 = gx_bp_tex_reg(GX_BP_TX_SETMODE1, texmap);
+    if (u->cached_levels != 0U) {
+        out->rgba = u->cached[0];
+        out->texels = u->cached_texels;
+        out->levels = u->cached_levels;
+        out->serial = u->cached_serial;
+        return;
+    }
+    if (u->src.data == NULL || (u->width_minus_1 + 1U) * (u->height_minus_1 + 1U) > TEX_CACHE_MAX_TEXELS * 4U) {
+        return; /* sem dados: amostra preta */
+    }
+    if (!decode_scratch(texmap, u, levels_needed(texmap, u), out)) {
+        memset(out, 0, sizeof(*out));
     }
 }

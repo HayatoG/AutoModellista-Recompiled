@@ -44,5 +44,8 @@ void gx_raster_triangle(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVe
 void gx_raster_update_z_slope(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2);
 
 const GxRasterStats *gx_raster_stats(void);
+/* M8: retângulos de scissor do desenho atual (deslocamento x/y, left, top, right, bottom), para o backend de GPU. */
+#define GX_RASTER_MAX_RECTS 81U
+u32 gx_raster_rects(s32 (*out)[6], u32 max);
 
 #endif /* AM_GX_RASTER_H */

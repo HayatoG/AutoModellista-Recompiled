@@ -18,7 +18,7 @@ target_compile_options(am_ppc PRIVATE ${AM_GENERATED_FLAGS})
 # --- gfx: o GX em software (M6). Sem contração de a*b+c em FMA: arm64 e x86_64 dão os mesmos pixels (o golden do
 # M6 guarda o hash da captura dos dois builds).
 set(AM_GFX_SOURCES gfx/gx_fifo.c gfx/gx_vtx.c gfx/gx_xf.c gfx/gx_bp.c gfx/gx_tex.c gfx/gx_tev.c gfx/gx_efb.c
-  gfx/gx_setup.c gfx/gx_raster.c)
+  gfx/gx_setup.c gfx/gx_raster.c gfx/gx_gpu.c)
 if(NOT MSVC)
   set_source_files_properties(${AM_GFX_SOURCES} PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
@@ -70,7 +70,7 @@ else()
   FetchContent_MakeAvailable(SDL3)
 endif()
 
-add_library(am_platform STATIC platform/platform.c)
+add_library(am_platform STATIC platform/platform.c platform/platform_gpu.c)
 target_include_directories(am_platform PUBLIC include)
 target_link_libraries(am_platform PUBLIC SDL3::SDL3)
 am_apply_strict(am_platform)

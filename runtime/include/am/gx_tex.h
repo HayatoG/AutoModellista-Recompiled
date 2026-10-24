@@ -61,4 +61,17 @@ const GxTexCacheStats *gx_tex_cache_stats(void);
 /* Amostra a unidade `texmap` em (s, t) no formato s17.7 do TEV, com LOD s28.4 e filtro linear ou não. */
 void gx_tex_sample(s32 s, s32 t, s32 lod, bool linear, u32 texmap, u8 *rgba);
 
+/* M8: os níveis de uma unidade (depois de gx_tex_prepare) em RGBA, para o backend de GPU. serial identifica a
+ * decodificação: o mesmo serial = os mesmos texels. serial 0 = unidade sem dados (o TEV amostra preto). Os ponteiros
+ * valem até o próximo gx_tex_prepare. */
+typedef struct GxTexGpuUnit {
+    u64 serial;
+    const u8 *rgba;
+    u32 texels; /* todos os níveis, em sequência, cada um com ((wm1 >> l) + 1) x ((hm1 >> l) + 1) texels */
+    u32 levels;
+    u32 wm1, hm1;
+    u32 mode0, mode1;
+} GxTexGpuUnit;
+void gx_tex_gpu_unit(u32 texmap, GxTexGpuUnit *out);
+
 #endif /* AM_GX_TEX_H */

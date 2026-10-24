@@ -75,6 +75,14 @@ const GxEfbStats *gx_efb_stats(void) {
     return &s_efb.stats;
 }
 
+u32 *gx_efb_color_buffer(void) {
+    return s_efb.color;
+}
+
+u32 *gx_efb_depth_buffer(void) {
+    return s_efb.depth;
+}
+
 static u32 pixel_format(void) {
     return gx_bp_reg(GX_BP_ZCOMPARE) & 7U;
 }
@@ -588,6 +596,10 @@ static void clear(const CopyParams *p) {
         }
     }
     s_efb.stats.clears++;
+}
+
+bool gx_efb_copy_clears(void) {
+    return (gx_bp_reg(GX_BP_COPY_EXECUTE) & COPY_CLEAR) != 0U;
 }
 
 bool gx_efb_copy_is_xfb(void) {

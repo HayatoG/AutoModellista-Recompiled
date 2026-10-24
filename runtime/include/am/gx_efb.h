@@ -61,6 +61,8 @@ void gx_efb_blend(u32 x, u32 y, const u8 *rgba);
 void gx_efb_copy(void);
 /* A cópia pedida agora (BP COPY_EXECUTE) é para o XFB. */
 bool gx_efb_copy_is_xfb(void);
+/* A cópia pedida agora limpa o EFB depois (COPY_EXECUTE.clear). */
+bool gx_efb_copy_clears(void);
 
 /* Cor do EFB em RGBA (alfa 255 nos formatos sem alfa) e Z; para testes e depuração. */
 void gx_efb_peek(u32 x, u32 y, u8 *rgba, u32 *z);
@@ -70,5 +72,9 @@ void gx_efb_peek(u32 x, u32 y, u8 *rgba, u32 *z);
 void gx_efb_xfb_to_rgba(GuestAddr addr, u32 width, u32 height, u32 stride, u8 *rgba);
 
 const GxEfbStats *gx_efb_stats(void);
+/* M8: o EFB da CPU (GX_EFB_WIDTH x GX_EFB_HEIGHT, linha a linha): cor empacotada em 24 bits no formato do PE e Z de
+ * 24 bits. O backend de GPU traz o EFB da GPU para cá antes de uma cópia e devolve depois da limpeza. */
+u32 *gx_efb_color_buffer(void);
+u32 *gx_efb_depth_buffer(void);
 
 #endif /* AM_GX_EFB_H */

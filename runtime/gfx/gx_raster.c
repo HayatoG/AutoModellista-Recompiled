@@ -9,6 +9,7 @@
 
 #include "am/gx_bp.h"
 #include "am/gx_efb.h"
+#include "am/gx_gpu.h"
 #include "am/gx_tev.h"
 #include "am/gx_util.h"
 #include "am/log.h"
@@ -181,6 +182,9 @@ void gx_raster_begin_draw(void) {
                       gx_bp_tex_reg(GX_BP_TX_SETMODE0, o & 7U), gx_bp_tex_reg(GX_BP_TX_SETMODE1, o & 7U)};
     }
     compute_scissor();
+    if (gx_gpu_active()) {
+        gx_gpu_begin_draw();
+    }
 }
 
 static s32 iround(f32 x) {
@@ -470,8 +474,26 @@ static s64 bbox_area(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVerte
     return a > 1e9F ? (s64)1000000000 : (s64)a;
 }
 
+u32 gx_raster_rects(s32 (*out)[6], u32 max) {
+    u32 n = 0;
+    for (; n < s_ras.rect_count && n < max; n++) {
+        const Rect *r = &s_ras.rects[n];
+        out[n][0] = r->x_off;
+        out[n][1] = r->y_off;
+        out[n][2] = r->left;
+        out[n][3] = r->top;
+        out[n][4] = r->right;
+        out[n][5] = r->bottom;
+    }
+    return n;
+}
+
 void gx_raster_triangle(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2) {
     s_ras.stats.triangles++;
+    if (gx_gpu_active()) {
+        gx_gpu_triangle(v0, v1, v2);
+        return;
+    }
     for (u32 i = 0; i < s_ras.rect_count; i++) {
         update_z_slope(v0, v1, v2, s_ras.rects[i].x_off, s_ras.rects[i].y_off);
     }
@@ -521,6 +543,10 @@ void gx_raster_parallel_for(u32 jobs, GxRasterJobFn job, void *user) {
 }
 
 void gx_raster_flush(void) {
+    if (gx_gpu_active()) {
+        gx_gpu_end_draw();
+        return;
+    }
     if (s_ras.queued == 0U) {
         return;
     }
