@@ -1,0 +1,76 @@
+{
+ "dolphin": "2609a",
+ "criterion": "docs/M7_MENUS.md §5",
+ "pad_script": "320:D_LEFT:8,360:A:8,1700:START:8,2000:START:8,2600:A:8,2900:A:8,3300:A:8",
+ "frames": 3600,
+ "shots": {
+  "1600": {
+   "psnr_db": 34.96,
+   "bad_pixels_pct": 0.837,
+   "max_abs": 194,
+   "lit_runtime_pct": 58.41,
+   "lit_dolphin_pct": 57.96,
+   "runtime_rgb_sha256": "8f579a74ddf9aa9bb4f0930e6c069e91cd51fc40008f8a13d78e7bbf696de43e",
+   "ok": true
+  },
+  "1800": {
+   "psnr_db": 40.64,
+   "bad_pixels_pct": 0.0,
+   "max_abs": 20,
+   "lit_runtime_pct": 99.26,
+   "lit_dolphin_pct": 99.24,
+   "runtime_rgb_sha256": "8ccc91ec3442902f3678f85218afa94e08030e1dafcc802856d46adef5aa2c72",
+   "ok": true
+  },
+  "2300": {
+   "psnr_db": 35.68,
+   "bad_pixels_pct": 0.456,
+   "max_abs": 81,
+   "lit_runtime_pct": 88.66,
+   "lit_dolphin_pct": 88.66,
+   "runtime_rgb_sha256": "c6ad65a636f3d0a4aa71ece91f65f3061a4161f82d6f0dc39fc3a831e60071ef",
+   "ok": true
+  },
+  "2880": {
+   "psnr_db": 36.06,
+   "bad_pixels_pct": 0.376,
+   "max_abs": 105,
+   "lit_runtime_pct": 88.6,
+   "lit_dolphin_pct": 88.59,
+   "runtime_rgb_sha256": "8c20ff25dab2d781cc41e3208c276ec92bf802c0f060d04d8cfe7b205502c135",
+   "ok": true
+  },
+  "3200": {
+   "psnr_db": 32.76,
+   "bad_pixels_pct": 0.879,
+   "max_abs": 243,
+   "lit_runtime_pct": 87.81,
+   "lit_dolphin_pct": 87.81,
+   "runtime_rgb_sha256": "bfdcfb98d52374e2287f661a91c28988499ce00454b2505c13061b8a2266a0f8",
+   "ok": true
+  },
+  "3500": {
+   "psnr_db": 31.43,
+   "bad_pixels_pct": 0.493,
+   "max_abs": 254,
+   "lit_runtime_pct": 87.42,
+   "lit_dolphin_pct": 87.41,
+   "runtime_rgb_sha256": "e3763599489db783a182c4e5e6992ea540e3057a96b2b9599d9eb9659e721a4e",
+   "ok": true
+  }
+ },
+ "audio": {
+  "seconds_runtime": 61.93,
+  "lag_ms": 8.24,
+  "active": 44,
+  "silent_both": 17,
+  "presence_diverge": 0,
+  "pct_corr_ok": 93.2,
+  "pct_db_ok": 100.0,
+  "corr_median": 1.0,
+  "db_diff_median": 0.0,
+  "db_diff_max": 0.26,
+  "passed": true,
+  "runtime_pcm_sha256": "83001b3b2ff3ce62dfe6ecd021d9e57e5abd97a1b6b0444ef470028a613a0d81"
+ }
+}

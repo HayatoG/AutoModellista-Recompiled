@@ -2,7 +2,7 @@
 mesmo roteiro e do mesmo --rtc. docs/M7_MENUS.md §5.
 
     python3 -I scripts/compare_audio.py runtime.wav dolphin.wav [--start 0] [--end 0] [--window 1.0]
-        [--json resumo.json] [--min-corr 0.9] [--max-db 1.0] [--min-ok 90]
+        [--json resumo.json] [--min-corr 0.9] [--min-corr-pct 80] [--max-db 1.0] [--min-db-pct 95]
 
 Os dois lados geram o áudio no ritmo do tempo emulado, mas o jogo não chega aos mesmos pontos no mesmo ciclo (a
 runtime estima os ciclos do C gerado; docs/M5_OS_DISCO.md §5.3): o mesmo som pode começar alguns ms antes ou depois.
@@ -11,14 +11,16 @@ A métrica tolera isso alinhando antes de comparar:
 1. Envelope: RMS do canal mono (L + R) / 2 em blocos de 10 ms, em dBFS.
 2. Defasagem global: o deslocamento (em blocos, até ±2 s) que maximiza a correlação dos envelopes; depois refinado
    em amostras (±1 bloco) pela correlação cruzada das amostras no trecho de 1 s mais alto.
-3. Por janela (--window s, padrão 1 s), com a defasagem global e um ajuste local de até ±50 ms (--local, buscado
+3. Por janela (--window s, padrão 1 s), com a defasagem global e um ajuste local de até ±0,5 s (--local, buscado
    no sinal com média de 8 amostras e refinado em ±8 amostras): a correlação normalizada das amostras (1,0 = mesma
    forma de onda) e a diferença de nível RMS em dB.
 4. Janelas "ativas" (as duas acima de -60 dBFS) contam no critério; janela ativa de um lado e muda do outro é
    divergência de presença.
 
-Critério padrão: nas janelas ativas, pelo menos --min-ok % com correlação >= --min-corr e |diferença de nível| <=
---max-db; e nenhuma janela com presença divergente. Sem dependências (só a biblioteca padrão). Nunca versionar os
+Critério padrão: nas janelas ativas, pelo menos --min-corr-pct % (80) com correlação >= --min-corr (0,9) e pelo
+menos --min-db-pct % (95) com |diferença de nível| <= --max-db (1 dB); e nenhuma janela com presença divergente. A
+correlação tem limite menor que o nível porque uma janela que mistura música e efeito começados em instantes
+emulados diferentes não alinha as duas fontes com uma defasagem só, mesmo com as amostras de cada fonte idênticas. Sem dependências (só a biblioteca padrão). Nunca versionar os
 WAV (são do jogo); só o resumo vai para tests/golden/.
 """
 
@@ -146,8 +148,9 @@ def main() -> int:
     ap.add_argument("--window", type=float, default=1.0)
     ap.add_argument("--min-corr", type=float, default=0.9)
     ap.add_argument("--max-db", type=float, default=1.0)
-    ap.add_argument("--min-ok", type=float, default=90.0, help="porcentagem mínima de janelas ativas dentro do critério")
-    ap.add_argument("--local", type=int, default=1600, help="ajuste local por janela, em amostras (1600 = 50 ms)")
+    ap.add_argument("--min-corr-pct", type=float, default=80.0, help="%% mínima de janelas ativas com correlação ok")
+    ap.add_argument("--min-db-pct", type=float, default=95.0, help="%% mínima de janelas ativas com nível ok")
+    ap.add_argument("--local", type=int, default=16000, help="ajuste local por janela, em amostras (16000 = 0,5 s)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
 
@@ -182,11 +185,15 @@ def main() -> int:
 
     active = [w for w in windows if w["presence"] == "ambos"]
     ok = [w for w in active if w["corr"] >= args.min_corr and abs(w["db_diff"]) <= args.max_db]
+    corr_ok = [w for w in active if w["corr"] >= args.min_corr]
+    db_ok = [w for w in active if abs(w["db_diff"]) <= args.max_db]
     diverge = [w for w in windows if w["presence"] == "um"]
     corrs = sorted(w["corr"] for w in active)
     diffs = sorted(abs(w["db_diff"]) for w in active)
     pct_ok = 100.0 * len(ok) / len(active) if active else 0.0
-    passed = bool(active) and pct_ok >= args.min_ok and not diverge
+    pct_corr = 100.0 * len(corr_ok) / len(active) if active else 0.0
+    pct_db = 100.0 * len(db_ok) / len(active) if active else 0.0
+    passed = bool(active) and pct_corr >= args.min_corr_pct and pct_db >= args.min_db_pct and not diverge
     summary = {
         "rate": rate_a,
         "seconds_runtime": round(len(a) / rate_a, 2),
@@ -199,11 +206,14 @@ def main() -> int:
         "presence_diverge": len(diverge),
         "ok": len(ok),
         "pct_ok": round(pct_ok, 1),
+        "pct_corr_ok": round(pct_corr, 1),
+        "pct_db_ok": round(pct_db, 1),
         "corr_median": round(corrs[len(corrs) // 2], 4) if corrs else 0.0,
         "corr_min": round(corrs[0], 4) if corrs else 0.0,
         "db_diff_median": round(diffs[len(diffs) // 2], 2) if diffs else 0.0,
         "db_diff_max": round(diffs[-1], 2) if diffs else 0.0,
-        "criteria": {"min_corr": args.min_corr, "max_db": args.max_db, "min_ok": args.min_ok},
+        "criteria": {"min_corr": args.min_corr, "min_corr_pct": args.min_corr_pct, "max_db": args.max_db,
+                     "min_db_pct": args.min_db_pct, "local_samples": args.local},
         "passed": passed,
     }
     for w in windows:
@@ -215,7 +225,8 @@ def main() -> int:
           f"{summary['seconds_dolphin']} s, defasagem {summary['lag_ms']} ms ({lag} amostras); {len(active)} janelas "
           f"ativas de {len(windows)}, {summary['silent_both']} mudas nos dois, {len(diverge)} divergentes; "
           f"correlação mediana {summary['corr_median']} (mín. {summary['corr_min']}), |dif. de nível| mediana "
-          f"{summary['db_diff_median']} dB (máx. {summary['db_diff_max']}); {summary['pct_ok']}% dentro "
+          f"{summary['db_diff_median']} dB (máx. {summary['db_diff_max']}); correlação ok em {summary['pct_corr_ok']}%, "
+          f"nível ok em {summary['pct_db_ok']}% "
           f"-> {'OK' if passed else 'FALHOU'}")
     if args.json:
         Path(args.json).write_text(json.dumps({"summary": summary, "windows": windows}, indent=1) + "\n")
