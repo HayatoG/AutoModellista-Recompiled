@@ -52,10 +52,21 @@ static struct {
     u64 audio_interrupts;
     bool audio_enable_irq;
     u64 audio_enable_irq_cycle;
+    DspAudioSink sink;
+    void *sink_user;
 } s_dsp;
 
+void dsp_set_audio_sink(DspAudioSink sink, void *user) {
+    s_dsp.sink = sink;
+    s_dsp.sink_user = user;
+}
+
 void dsp_reset(void) {
+    const DspAudioSink sink = s_dsp.sink;
+    void *sink_user = s_dsp.sink_user;
     memset(&s_dsp, 0, sizeof(s_dsp));
+    s_dsp.sink = sink;
+    s_dsp.sink_user = sink_user;
     /* DSPManager::Reinit e DSPHLE::Initialize: DSP parado, DSPInit em 1, microcódigo da ROM. */
     s_dsp.control = DSP_CSR_HALT;
     s_dsp.hle_control = DSP_CSR_HALT | DSP_CSR_INIT;
@@ -77,9 +88,28 @@ static void raise(u16 cause) {
     update_interrupts();
 }
 
+/* AudioCommon::SendAIBuffer: 8 quadros estéreo da MRAM (R, L big-endian, a ordem do OutputSamples do AX) para a
+ * saída, em L, R do host. Com a DMA desligada o Dolphin manda silêncio. */
+static void send_block(bool enabled) {
+    if (s_dsp.sink == NULL) {
+        return;
+    }
+    s16 lr[DSP_AUDIO_BLOCK_FRAMES * 2U] = {0};
+    if (enabled) {
+        const GuestAddr at = MEM_CACHED_BASE | (s_dsp.audio_current & 0x03FFFFE0U);
+        for (u32 i = 0; i < DSP_AUDIO_BLOCK_FRAMES; i++) {
+            lr[i * 2U] = (s16)mem_read16(NULL, at + (i * 4U) + 2U);
+            lr[(i * 2U) + 1U] = (s16)mem_read16(NULL, at + (i * 4U));
+        }
+    }
+    s_dsp.sink(lr, DSP_AUDIO_BLOCK_FRAMES, s_dsp.sink_user);
+}
+
 /* DSPManager::UpdateAudioDMA, chamado a cada bloco de 32 bytes: no fim dos blocos recarrega e pede AID. */
 static void audio_dma_block(void) {
-    if ((s_dsp.audio_control & 0x8000U) == 0U) {
+    const bool enabled = (s_dsp.audio_control & 0x8000U) != 0U;
+    send_block(enabled);
+    if (!enabled) {
         return;
     }
     s_dsp.audio_blocks++;

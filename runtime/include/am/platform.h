@@ -98,8 +98,19 @@ typedef struct PlatformInput {
 /* Estado atual da entrada (os eventos são tratados em platform_window_present). Sem janela, tudo solto. */
 void platform_input_read(PlatformInput *out);
 
+/* Áudio (M7): saída estéreo PCM 16 bits na taxa `rate_hz`, pelo dispositivo padrão (SDL_AudioStream, que converte
+ * para a taxa do dispositivo). push enfileira quadros L, R; queued diz quantos quadros ainda não tocaram. Sem
+ * dispositivo (ou sem abrir), push não faz nada e queued é 0. */
+bool platform_audio_open(u32 rate_hz);
+void platform_audio_push(const s16 *lr, u32 frames);
+u32 platform_audio_queued_frames(void);
+void platform_audio_close(void);
+
 /* Milissegundos de relógio monotônico desde platform_init. */
 u64 platform_ticks_ms(void);
+/* Nanossegundos de relógio monotônico (para o ritmo em tempo real) e espera. */
+u64 platform_ticks_ns(void);
+void platform_sleep_ns(u64 ns);
 
 /* Versão da SDL em uso, no formato major*1000000 + minor*1000 + patch. */
 int platform_sdl_version(void);

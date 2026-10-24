@@ -13,6 +13,7 @@ static struct {
     SDL_Texture *texture;
     u32 tex_w, tex_h;
     SDL_Gamepad *gamepad; /* o primeiro conectado; os outros são ignorados */
+    SDL_AudioStream *audio;
 } s_platform;
 
 static void set_error(const char *msg) {
@@ -33,6 +34,7 @@ bool platform_init(void) {
 }
 
 void platform_shutdown(void) {
+    platform_audio_close();
     platform_window_close();
     if (s_platform.ready) {
         SDL_Quit();
@@ -58,6 +60,52 @@ void platform_free_file(u8 *data) {
 
 u64 platform_ticks_ms(void) {
     return (u64)SDL_GetTicks();
+}
+
+u64 platform_ticks_ns(void) {
+    return (u64)SDL_GetTicksNS();
+}
+
+void platform_sleep_ns(u64 ns) {
+    SDL_DelayPrecise(ns);
+}
+
+bool platform_audio_open(u32 rate_hz) {
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+        set_error(SDL_GetError());
+        return false;
+    }
+    const SDL_AudioSpec spec = {.format = SDL_AUDIO_S16, .channels = 2, .freq = (int)rate_hz};
+    s_platform.audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+    if (s_platform.audio == NULL) {
+        set_error(SDL_GetError());
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
+        return false;
+    }
+    (void)SDL_ResumeAudioStreamDevice(s_platform.audio);
+    return true;
+}
+
+void platform_audio_push(const s16 *lr, u32 frames) {
+    if (s_platform.audio != NULL) {
+        (void)SDL_PutAudioStreamData(s_platform.audio, lr, (int)(frames * 4U));
+    }
+}
+
+u32 platform_audio_queued_frames(void) {
+    if (s_platform.audio == NULL) {
+        return 0;
+    }
+    const int bytes = SDL_GetAudioStreamQueued(s_platform.audio);
+    return bytes > 0 ? (u32)bytes / 4U : 0U;
+}
+
+void platform_audio_close(void) {
+    if (s_platform.audio != NULL) {
+        SDL_DestroyAudioStream(s_platform.audio);
+        s_platform.audio = NULL;
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    }
 }
 
 int platform_sdl_version(void) {

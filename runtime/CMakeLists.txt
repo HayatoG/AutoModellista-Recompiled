@@ -32,7 +32,7 @@ add_library(am_core STATIC
   hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/dvd_timing.c hw/si.c hw/exi.c hw/vi.c
   hw/cp.c hw/pe.c hw/gather_pipe.c
   ${AM_GFX_SOURCES}
-  audio/dsp_hle.c audio/ax_voice.c)
+  audio/dsp_hle.c audio/ax_voice.c audio/ax_mixer.c audio/audio_dump.c)
 target_include_directories(am_core PUBLIC include)
 target_link_libraries(am_core PUBLIC am_ppc)
 if(NOT APPLE AND NOT WIN32)

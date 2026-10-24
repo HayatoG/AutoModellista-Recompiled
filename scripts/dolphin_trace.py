@@ -109,6 +109,12 @@ def launch(args) -> subprocess.Popen:
         "-C", "Dolphin.Input.BackgroundInput=True",
         "-e", args.iso,
     ]
+    if getattr(args, "audio_dump", None):
+        # M7: o Dolphin grava a saída da DMA de áudio (dspdump.wav) e a do streaming do disco (dtkdump.wav) em
+        # <user>/Dump/Audio; DumpAudioSilent evita a pergunta de apagar arquivo existente. Antes do -e, como os outros.
+        cmd[-2:-2] = ["-C", "Dolphin.DSP.DumpAudio=True", "-C", "Dolphin.DSP.DumpAudioSilent=True"]
+        for old in (Path(args.user_dir) / "Dump" / "Audio").glob("*dump*.wav"):
+            old.unlink()
     if args.video != "Null":
         # O XFB só existe na RAM se as cópias EFB->XFB forem gravadas nela (o padrão é só textura na GPU; o backend
         # Null nem copia). Necessário para --shots. "-C GFX.Hacks..." não teve efeito no 2609a; o GFX.ini do
@@ -353,6 +359,21 @@ def write_xfb_png(path: Path, data: bytes, width: int, height: int) -> None:
                      chunk(b"IEND", b""))
 
 
+def collect_audio_dump(args) -> None:
+    """Move o dspdump.wav desta execução para --audio-dump. O Dolphin é morto antes de fechar o WAV: o cabeçalho fica
+    com os tamanhos provisórios (100 MB) e quem lê usa o tamanho do arquivo (scripts/compare_audio.py)."""
+    dumps = sorted((Path(args.user_dir) / "Dump" / "Audio").glob("*_dspdump.wav"), key=lambda q: q.stat().st_mtime)
+    if not dumps:
+        print("aviso: o Dolphin não gravou dspdump.wav", file=sys.stderr)
+        return
+    target = Path(args.audio_dump)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    dumps[-1].replace(target)
+    for extra in (Path(args.user_dir) / "Dump" / "Audio").glob("*dump*.wav"):
+        extra.unlink()
+    print(f"áudio do Dolphin: {target} ({target.stat().st_size} bytes)")
+
+
 def cmd_events(args) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -406,6 +427,8 @@ def cmd_events(args) -> int:
         if pad is not None:
             pad.close()
         stop(proc, client)
+        if args.audio_dump:
+            collect_audio_dump(args)
         out.write_text(f"# am-events v1 source=dolphin dolphin=2609a frames={frames} end={reason}\n" +
                        "".join(l + "\n" for l in lines))
         print(f"{len(lines)} eventos, {frames} quadros em {elapsed:.1f}s; fim: {reason}; {out}")
@@ -439,6 +462,7 @@ def main() -> int:
     e.add_argument("--timeout", type=float, default=1800.0)
     e.add_argument("--pad-script", default=None, help="roteiro de botões (formato de am/pad_script.h)")
     e.add_argument("--shots", default=None, help="quadros cujo XFB vira PNG ao lado de --out (ex.: 300,800)")
+    e.add_argument("--audio-dump", default=None, help="M7: grava o dspdump.wav do Dolphin neste arquivo")
     args = ap.parse_args()
     if args.cmd == "events":
         return cmd_events(args)

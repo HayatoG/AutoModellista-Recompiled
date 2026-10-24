@@ -44,6 +44,15 @@ void dsp_update(void);
 /* Ciclo do próximo evento (fim de DMA, bloco da DMA de áudio, interrupção pedida pelo microcódigo). */
 u64 dsp_next_event_cycle(void);
 u64 dsp_audio_dma_interrupts(void);
+
+/* Saída de áudio (M7): a cada bloco da DMA de áudio, 8 quadros estéreo (~32028 Hz: 108 MHz / 3372) em L, R
+ * intercalados; com a DMA desligada, silêncio (Dolphin DSPManager::UpdateAudioDMA -> AudioCommon::SendAIBuffer). O
+ * ritmo é o do tempo emulado: o mesmo áudio em qualquer velocidade de execução. NULL desliga. Sobrevive a
+ * dsp_reset. */
+#define DSP_AUDIO_BLOCK_FRAMES 8U
+#define DSP_AUDIO_RATE_HZ      32028U /* 108000000 / 3372, inteiro como no WAV do Dolphin (WaveFileWriter::Start) */
+typedef void (*DspAudioSink)(const s16 *lr, u32 frames, void *user);
+void dsp_set_audio_sink(DspAudioSink sink, void *user);
 u64 dsp_read(u32 offset, u8 size);
 void dsp_write(u32 offset, u64 value, u8 size);
 

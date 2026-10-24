@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Protocolo dos microcódigos do DSP em HLE (audio/dsp_hle.c) pelo barramento: boot pela ROM com troca por hash,
  * AX recebendo listas de comando, interrupções do DSP e DMA de áudio. */
+#include "am/ax_mixer.h"
 #include "am/bus.h"
 #include "am/dsp.h"
 #include "am/dsp_hle.h"
@@ -91,7 +92,7 @@ TEST(rom_boots_ax_and_ax_answers_command_lists) {
     EXPECT_TRUE(pi_external_pending());
     EXPECT_EQ(receive(), 0xDCD10002U); /* DSP_YIELD */
     EXPECT_EQ(dsp_hle_stats()->command_lists, 1U);
-    EXPECT_EQ(dsp_hle_stats()->command_words, 5U);
+    EXPECT_EQ(ax_mixer_stats()->commands, 2U); /* PB_ADDR e PROCESS; o END não conta */
     bus_write(0xCC00500AU, 0x0900U | 0x0080U, 2);
     send(0xCDD10003U); /* MAIL_CONTINUE: volta a esperar lista */
     send(0xBABE0005U);

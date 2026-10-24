@@ -4,14 +4,14 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "am/ax_mixer.h"
 #include "am/ax_voice.h"
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/timebase.h"
 
-#define DSP_HLE_MAIL_QUEUE  16U
-#define DSP_HLE_IRQ_QUEUE   8U
-#define DSP_HLE_CMDLIST_MAX 0x200U /* AXUCode::m_cmdlist: 512 palavras de 16 bits */
+#define DSP_HLE_MAIL_QUEUE 16U
+#define DSP_HLE_IRQ_QUEUE  8U
 
 /* UCodes.h e AX.h. */
 #define DSP_MAIL_ROM_READY  0x8071FEEDU
@@ -28,10 +28,6 @@
 #define AX_MAIL_CMDLIST     0xBABE0000U
 /* AXUCode::SignalWorkEnd: AX_EMPTY_COMMAND_LIST_CYCLES. */
 #define AX_YIELD_CYCLES 2500U
-#define AX_CMD_PB_ADDR  0x02U
-#define AX_CMD_PROCESS  0x03U
-#define AX_CMD_MORE     0x0DU
-#define AX_CMD_END      0x0FU
 
 typedef enum AxMailState {
     AX_WAIT_CMDLIST_SIZE,
@@ -64,7 +60,6 @@ static struct {
     u32 upload_iram_mram;
     u32 upload_iram_size;
     bool needs_resume_mail;
-    u32 pb_addr;
     DspHleStats stats;
 } s_hle;
 
@@ -104,6 +99,7 @@ static void set_ucode(DspHleKind kind, u32 crc) {
         push_mail(DSP_MAIL_INIT_READY, false, 0);
         break;
     case DSP_HLE_KIND_AX:
+        ax_mixer_reset();             /* um AXUCode novo começa com os buffers zerados */
         push_mail(DSP_INIT, true, 0); /* AXUCode::InitializeShared */
         break;
     }
@@ -198,42 +194,6 @@ static void rom_mail(u32 mail) {
     s_hle.next_parameter = 0;
 }
 
-/* AXUCode::HandleCommandList: percorre até CMD_END conferindo o formato (argumentos por comando). Só PB_ADDR e
- * PROCESS têm efeito (vozes andam, audio/ax_voice.c); os de mixagem e saída são do M7. */
-static void ax_walk_cmdlist(GuestAddr addr, u32 words) {
-    static const u8 s_args[0x14] = {2, 5, 2, 0, 4, 4, 2, 2, 10, 2, 0, 0, 0, 3, 4, 0, 4, 2, 4, 12};
-    if (words >= DSP_HLE_CMDLIST_MAX) {
-        am_fatal("DSP AX: lista de comandos de %u palavras em 0x%08X (máximo %u)", words, addr, DSP_HLE_CMDLIST_MAX);
-    }
-    u32 i = 0;
-    for (u32 guard = 0; guard < 64U; guard++) {
-        const u32 cmd = mem_read16(NULL, addr + (i * 2U));
-        i++;
-        if (cmd == AX_CMD_END) {
-            s_hle.stats.command_words += i;
-            return;
-        }
-        if (cmd >= sizeof(s_args)) {
-            am_fatal("DSP AX: comando 0x%04X desconhecido na lista em 0x%08X (palavra %u)", cmd, addr, i - 1U);
-        }
-        if (cmd == AX_CMD_PB_ADDR) {
-            s_hle.pb_addr = ((u32)mem_read16(NULL, addr + (i * 2U)) << 16) | mem_read16(NULL, addr + (i * 2U) + 2U);
-        } else if (cmd == AX_CMD_PROCESS) {
-            ax_voice_process_list(s_hle.pb_addr);
-        }
-        if (cmd == AX_CMD_MORE) {
-            const u32 hi = mem_read16(NULL, addr + (i * 2U));
-            const u32 lo = mem_read16(NULL, addr + (i * 2U) + 2U);
-            s_hle.stats.command_words += i + 3U;
-            addr = MEM_CACHED_BASE | (((hi << 16) | lo) & 0x03FFFFFFU);
-            i = 0;
-            continue;
-        }
-        i += s_args[cmd];
-    }
-    am_fatal("DSP AX: lista de comandos em 0x%08X sem CMD_END em 64 comandos", addr);
-}
-
 /* UCodeInterface::PrepareBootUCode: dez mails descrevem o próximo microcódigo. */
 static void ax_prepare_boot(u32 mail) {
     if (s_hle.upload_step == 3U) {
@@ -265,7 +225,7 @@ static void ax_mail(u32 mail) {
         }
         return;
     case AX_WAIT_CMDLIST_ADDR:
-        ax_walk_cmdlist(MEM_CACHED_BASE | (mail & 0x03FFFFFFU), s_hle.cmdlist_size);
+        ax_mixer_command_list(mail & 0x03FFFFFFU, s_hle.cmdlist_size, s_hle.stats.ucode_crc);
         s_hle.stats.command_lists++;
         push_mail(DSP_YIELD, true, AX_YIELD_CYCLES);
         s_hle.ax_state = AX_WAIT_NEXT_TASK;

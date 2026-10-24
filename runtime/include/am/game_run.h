@@ -14,6 +14,10 @@ typedef struct GameRunConfig {
     bool render;            /* M6: rasterizar e copiar o EFB (--gfx soft) ou só contar (--gfx off) */
     const char *shots;      /* NULL ou "quadro:arquivo.png,...": XFB do quadro em PNG (como dolphin_trace --shots) */
     u32 window_scale;       /* 0 = sem janela; senão a janela SDL3 mostra o XFB com esse fator */
+    const char *audio_dump; /* NULL ou WAV com a saída da DMA de áudio (am/audio_dump.h) */
+    u64 audio_dump_max_mb;  /* teto do --audio-dump */
+    bool audio_out;         /* M7: tocar o som pelo dispositivo padrão */
+    bool realtime;          /* M7: segurar o tempo emulado no ritmo do relógio real */
 } GameRunConfig;
 
 /* Abre o disco, registra os ganchos (OSLink, quadros) e confere que todos passam pelo chassi. */

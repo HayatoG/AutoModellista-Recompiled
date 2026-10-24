@@ -8,6 +8,9 @@
 #include <string.h>
 
 #include "am/ai.h"
+#include "am/audio_dump.h"
+#include "am/ax_mixer.h"
+#include "am/ax_voice.h"
 #include "am/di.h"
 #include "am/disc.h"
 #include "am/dsp.h"
@@ -36,6 +39,11 @@
 
 #define GAME_RUN_REL_CACHE 16U
 #define GAME_RUN_SHOT_MAX  32U
+/* Ritmo em tempo real: a emulação pode andar até 60 ms na frente do relógio (é a reserva da fila de áudio); se ficar
+ * mais de 250 ms atrás, desiste de alcançar e recomeça a contagem dali. */
+#define GAME_RUN_PACE_AHEAD_NS  60000000ULL
+#define GAME_RUN_PACE_BEHIND_NS 250000000ULL
+#define GAME_RUN_CPU_HZ         486000000ULL
 
 typedef struct Shot {
     u64 frame;
@@ -62,6 +70,12 @@ static struct {
     u32 shot_count;
     bool window;
     bool window_closed;
+    bool audio_out;
+    bool pace_started;
+    u64 pace_cycles0;
+    u64 pace_wall0;
+    u64 pace_rebases; /* vezes em que a emulação ficou para trás do relógio */
+    u64 audio_frames;
     u8 rgba[GAME_XFB_WIDTH * GAME_XFB_HEIGHT * 4U];
 } s_run;
 
@@ -197,6 +211,37 @@ static bool capture_frame(CPUState *cpu) {
     return open;
 }
 
+/* Saída da DMA de áudio (hw/dsp.c): para o WAV do --audio-dump e para o dispositivo de som. */
+static void on_audio(const s16 *lr, u32 frames, void *user) {
+    (void)user;
+    s_run.audio_frames += frames;
+    audio_dump_write(lr, frames);
+    if (s_run.audio_out) {
+        platform_audio_push(lr, frames);
+    }
+}
+
+/* Segura a emulação no ritmo do relógio: o tempo emulado são os ciclos estimados da CPU a 486 MHz. */
+static void pace(void) {
+    const u64 cycles = timebase_cycles(NULL);
+    const u64 now = platform_ticks_ns();
+    if (!s_run.pace_started) {
+        s_run.pace_started = true;
+        s_run.pace_cycles0 = cycles;
+        s_run.pace_wall0 = now;
+        return;
+    }
+    const u64 emu_ns = (cycles - s_run.pace_cycles0) * 1000000000ULL / GAME_RUN_CPU_HZ;
+    const u64 wall_ns = now - s_run.pace_wall0;
+    if (emu_ns > wall_ns + GAME_RUN_PACE_AHEAD_NS) {
+        platform_sleep_ns(emu_ns - wall_ns - GAME_RUN_PACE_AHEAD_NS);
+    } else if (wall_ns > emu_ns + GAME_RUN_PACE_BEHIND_NS) {
+        s_run.pace_cycles0 = cycles;
+        s_run.pace_wall0 = now;
+        s_run.pace_rebases++;
+    }
+}
+
 /* Controle do quadro: o roteiro (--pad-script) tem prioridade; sem ele, com janela, o teclado e o gamepad. */
 static void update_pad(void) {
     SiPadState pad = si_pad_neutral();
@@ -222,6 +267,9 @@ static HookAction on_frame(CPUState *cpu, void *user) {
     }
     s_run.frames++;
     s_run.fields_at_frame = vi_field_count();
+    if (s_run.config.realtime) {
+        pace();
+    }
     update_pad();
     if (!capture_frame(cpu)) {
         s_run.window_closed = true;
@@ -284,6 +332,18 @@ bool game_run_init(const GameRunConfig *config) {
         AM_LOG_INFO("controle: %s", s_run.live_input ? "teclado e gamepad da janela (docs/M7_MENUS.md §3)"
                                                      : "roteiro --pad-script (a janela não lê a entrada)");
     }
+    if (config->audio_dump != NULL &&
+        !audio_dump_open(config->audio_dump, DSP_AUDIO_RATE_HZ, config->audio_dump_max_mb * 1024ULL * 1024ULL)) {
+        AM_LOG_ERROR("--audio-dump: não consegui criar %s", config->audio_dump);
+        return false;
+    }
+    if (config->audio_out) {
+        s_run.audio_out = platform_audio_open(DSP_AUDIO_RATE_HZ);
+        if (!s_run.audio_out) {
+            AM_LOG_WARN("áudio: sem dispositivo de som (%s); seguindo sem som", platform_last_error());
+        }
+    }
+    dsp_set_audio_sink(on_audio, NULL);
     const DiscResult d = disc_open(config->disc_root);
     if (d != DISC_OK) {
         AM_LOG_ERROR("disco em %s: %s", config->disc_root, disc_result_name(d));
@@ -325,6 +385,12 @@ void game_run_shutdown(void) {
         s_run.events = NULL;
     }
     di_set_read_observer(NULL);
+    dsp_set_audio_sink(NULL, NULL);
+    audio_dump_close();
+    if (s_run.audio_out) {
+        platform_audio_close();
+        s_run.audio_out = false;
+    }
     if (s_run.window) {
         platform_window_close();
         s_run.window = false;
@@ -387,6 +453,17 @@ void game_run_report(void) {
                 " interrupções de DMA de áudio",
                 dsp->ucode_crc, dsp->last_boot_len, dsp->last_boot_addr, dsp->command_lists,
                 dsp_audio_dma_interrupts());
+    const AxVoiceStats *ax = ax_voice_stats();
+    const AxMixerStats *mix = ax_mixer_stats();
+    AM_LOG_INFO("AX: %" PRIu64 " listas, %" PRIu64 " comandos (usados 0x%05X), %" PRIu64
+                " quadros de 5 ms na MRAM, %" PRIu64 " amostras saturadas; vozes: até %" PRIu64 " por quadro, %" PRIu64
+                " amostras lidas, %" PRIu64 " fins, %" PRIu64 " laços",
+                mix->lists, mix->commands, mix->used_mask, mix->outputs, mix->clipped, ax->max_voices, ax->samples,
+                ax->ended, ax->loops);
+    AM_LOG_INFO("áudio: %" PRIu64 " quadros estéreo pela DMA (%.1f s a %u Hz)%s; tempo real: %" PRIu64
+                " atraso(s) recomeçado(s)",
+                s_run.audio_frames, (double)s_run.audio_frames / DSP_AUDIO_RATE_HZ, DSP_AUDIO_RATE_HZ,
+                audio_dump_frames() != 0U ? ", gravados no --audio-dump" : "", s_run.pace_rebases);
     const GxFifoStats *gx = gx_fifo_stats();
     AM_LOG_INFO("GX: %" PRIu64 " bytes no gather pipe, %" PRIu64 " comandos, %" PRIu64 " desenhos (%" PRIu64
                 " vértices), %" PRIu64 " BP, %" PRIu64 " DrawDone, %" PRIu64 " tokens, %" PRIu64 " cópias",

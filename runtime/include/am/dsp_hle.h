@@ -7,8 +7,8 @@
  *         microcódigo pelo hash (UCodeFactory);
  *   INIT  o microcódigo de inicialização do __OSInitAudioSystem (mail 0x80544348);
  *   AX    responde DSP_INIT ao subir, recebe listas de comando (0xBABE<tamanho> + endereço) e devolve DSP_YIELD com
- *         interrupção 2500 ciclos depois; atende MAIL_RESUME/NEW_UCODE/RESET/CONTINUE. Da lista, só PB_ADDR e PROCESS
- *         têm efeito: as vozes andam (endereço, laço, fim; audio/ax_voice.c), mas nada é mixado (M7).
+ *         interrupção 2500 ciclos depois; atende MAIL_RESUME/NEW_UCODE/RESET/CONTINUE. A lista é executada por
+ *         audio/ax_mixer.c (vozes, mixagem e saída em PCM na MRAM, M7).
  *
  * Microcódigo de hash desconhecido é am_fatal (o Dolphin força o AX com um aviso). */
 #ifndef AM_DSP_HLE_H
@@ -34,7 +34,6 @@ typedef struct DspHleStats {
     u64 mails_to_dsp;
     u64 mails_from_dsp;
     u64 command_lists; /* listas do AX recebidas */
-    u64 command_words; /* palavras percorridas nelas */
 } DspHleStats;
 
 void dsp_hle_reset(void);
