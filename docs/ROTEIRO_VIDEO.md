@@ -276,9 +276,25 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** os dois trilhos andam juntos; a cada fim de quadro, o trilho da CPU para e um relógio de areia aparece até o trilho do GX alcançar. Depois, uma prévia da parte 2b: o trilho da CPU segue sem parar, carregando caixinhas (as cópias) para o GX.
 
-### 4.12 Quanto custou até aqui (tokens e tempo)
+### 4.12 M8, parte 2b: quatro IAs, quatro peças
 
-**Fala:** “E quanto de IA foi isso? Até agora, uns 743 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 3,4 milhões de tokens, algo como uns 28 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31. No relógio da parede foram dois dias, com noite de sono no meio.”
+**Fala:** “Pra fechar o M8 faltavam quatro coisas que não dependiam uma da outra: o desenho sem esperar, os dois campos de tempo que sobravam, o memory card e o cel-shading com o carro andando. Então eu pus quatro IAs ao mesmo tempo, cada uma na sua cópia do projeto: duas Opus nas peças difíceis, duas Sonnet nas mais diretas, e um Dolphin só, que elas usavam na vez de cada uma. A primeira: a CPU não espera mais o desenho. Ela pode adiantar até três quadros, e quando ela vai mexer numa parte da memória que o desenho ainda vai ler, a runtime guarda antes uma cópia da versão antiga. Resultado: a corrida, que saía a 31 quadros por segundo, agora sai a 60, e as imagens continuam idênticas byte a byte. A segunda foi a mais bonita: os dois campos de tempo eram um erro no próprio tradutor. Num tipo de laço, ele só cobrava o primeiro pedaço; a cópia de memória do jogo saía pela metade do preço, 2 ciclos por byte em vez de 4. Pra achar isso, a IA fez o Dolphin anotar o relógio exato dentro das funções do jogo e comparou tique a tique. Corrigido o tradutor, o relógio ficou exato: zero campo de diferença. A terceira: o save no memory card sai idêntico ao do Dolphin, byte por byte, meio megabyte. E a quarta confirmou a pista: com o carro andando, o contorno preto é geometria mesmo, o carro desenhado duas vezes. No fim, uma quinta IA juntou tudo e rodou a verificação inteira de novo, e achou o único erro entre as peças: o memory card e a cópia do desenho, feitos ao mesmo tempo, não se conheciam.”
+
+**Na tela:**
+
+- Quatro colunas lado a lado, uma por peça, com o modelo no topo (Opus, Opus, Sonnet, Sonnet) e o horário real de cada uma (14:02 → 15:59, 14:02 → 17:35, 14:02 → 15:52, 14:02 → 14:44), e um cadeado “Dolphin” passando de uma para a outra.
+- A tabela da janela (arm64): corrida 53 / 31 antes, 59,7 / 59,3 depois; em x86\_64, 48 / 60, com a legenda “o limite aqui é a CPU emulada”.
+- O gráfico da defasagem do relógio ao longo dos 6400 quadros: 82 campos no começo do M8, 2,1 depois da parte 1, 0,000 agora.
+- A conta da cópia de memória: “runtime 2 ciclos por byte, Dolphin 4”, e “163 laços com o mesmo erro”.
+- A captura lado a lado do carro andando, GPU e Dolphin, com “35,3 a 37,6 dB”.
+- A comparação dos dois arquivos de memory card: “0 de 524.288 bytes diferentes”.
+- As linhas `OK` do `verify_m8.sh --oracle`, `--cel`, `verify_card.sh` e dos verify do M5, M6 e M7.
+
+**Motion:** os quatro trilhos começam juntos às 14:02 e terminam em horas diferentes; o cadeado do Dolphin pula de trilho em trilho. Na frase da cópia na escrita, uma página da memória é carimbada “cópia” antes de a CPU riscar o original. Na frase do tradutor, um laço em dois blocos aparece com o segundo bloco piscando “de graça”, e o contador de ciclos dobra quando ele acende. No fim, os quatro trilhos convergem num só (a junção), com um alerta vermelho rápido entre “cartão” e “GX” que vira verde.
+
+### 4.13 Quanto custou até aqui (tokens e tempo)
+
+**Fala:** “E quanto de IA foi isso? Até agora, uns 905 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 4 milhões de tokens, algo como uns 33 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos, e a peça mais longa da última parte, o relógio exato, 3 horas e meia. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31; até a corrida sair a 60 com o save funcionando, 22 horas e 32. No relógio da parede foram quase três dias, com noites de sono no meio.”
 
 **Na tela:**
 
@@ -297,7 +313,12 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M7 menus, controle e som | Opus | 1h52 | 292 mil | 116,4 M |
 | M8 parte 1, relógio e GPU | Opus | 2h03 | 271 mil | 80,9 M |
 | M8 parte 2a, GX numa thread | Opus | 36 min | 55 mil | 4,8 M |
-| Sessão principal | Opus | 17h+ | 436 mil | 94,0 M |
+| M8 parte 2b, desenho sem esperar | Opus | 1h57 | 135 mil | 28,8 M |
+| M8 parte 2b, relógio exato | Opus | 3h33 | 185 mil | 65,9 M |
+| M8 parte 2b, memory card | Sonnet | 1h50 | 105 mil | 33,8 M |
+| M8 parte 2b, cel-shading | Sonnet | 42 min | 27 mil | 5,7 M |
+| M8 parte 2b, junção e verificação | Opus | 1h27 | 36 mil | 9,4 M |
+| Sessão principal | Opus | 29h+ | 504 mil | 107,4 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
 
@@ -311,23 +332,24 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | M7 dá pra jogar pelos menus | 13h59 | 49h50 |
 | M8 parte 1, relógio e GPU | 16h31 | 52h22 |
 | M8 parte 2a, GX numa thread | 17h15 | 57h56 |
+| M8 corrida a 60, cel-shading e saves | 22h32 | 65h04 |
 
-**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “743 M processados · 3,4 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”, “GPU: 16h31”); embaixo, uma régua mais longa e cinza mostra o calendário (52h22), com faixas de noite escurecidas. Atualizar os números na edição final.
+**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “905 M processados · 4,0 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”, “GPU: 16h31”, “M8: 22h32”); embaixo, uma régua mais longa e cinza mostra o calendário (65h04), com faixas de noite escurecidas. Atualizar os números na edição final.
 
 ## Cap. 5 — Onde estamos e o que vem
 
-**Fala:** “Hoje o Auto Modellista liga no meu computador sem emulador, lê o disco, toca o filme da abertura com som, e eu navego pelos menus com o controle, ouvindo a mesma música e os mesmos efeitos do console, até largar numa corrida. Os menus já saem a 60 quadros por segundo na placa de vídeo, e o relógio do jogo anda junto com o do console. Ainda falta muita coisa: na corrida a tela mostra 31 quadros por segundo, porque o desenho e o processador emulado ainda dividem o mesmo núcleo. A segunda parte do M8 separa os dois, como o Dolphin faz, pra corrida inteira sair a 60, e coloca o save no memory card. E aí sim, confirmar como o jogo faz aquele contorno preto de desenho animado: a pista é que ele desenha o carro duas vezes, uma um pouco maior e de costas. Quando der pra fazer uma volta inteira em Suzuka, sai o próximo vídeo. Se você quer ver isso, já sabe.”
+**Fala:** “Hoje o Auto Modellista liga no meu computador sem emulador, lê o disco, toca o filme da abertura com som, e eu navego pelos menus com o controle, ouvindo a mesma música e os mesmos efeitos do console, até largar numa corrida. A corrida sai a 60 quadros por segundo na placa de vídeo, o relógio do jogo bate com o do console tique a tique, o save no memory card é idêntico ao do original, e aquele contorno preto de desenho animado está confirmado: é o carro desenhado duas vezes, uma um pouco maior e de costas. Por enquanto isso tudo é no Mac com chip Apple. O próximo passo é levar pra Windows e Linux de verdade, e depois o que faz um port valer a pena: widescreen, resolução maior, e trocar o código traduzido pelo código decompilado, função por função. Quando der pra fazer uma volta inteira em Suzuka no PC, sai o próximo vídeo. Se você quer ver isso, já sabe.”
 
 **Na tela:**
 
-- Timeline dos marcos M3 a M10 com M3–M7 concluídos e o M8 pela metade (parte 1 feita, parte 2 piscando).
+- Timeline dos marcos M3 a M10 com M3–M8 concluídos e o M9 piscando.
 - Uma gravação de tela do modo `jogar`: menu principal navegado pelo teclado, com o som.
-- Os números do estudo do cel-shading: 0 cópias para textura, neblina em 92% dos desenhos, 1,6 milhão de triângulos descartados pela face, com a legenda “hipótese, a confirmar”.
+- Os números do cel-shading com o carro andando: 0 cópias para textura, neblina em 98,6% dos desenhos, com a legenda “confirmado: o contorno é geometria”.
 - Encerramento com o mosaico de carros e o nome do canal.
 
 **Motion:**
 
-- Timeline horizontal desenhando da esquerda para a direita; os marcos concluídos ganham um check verde ao passar; no M8 a linha para no meio do marco e um cursor pisca.
+- Timeline horizontal desenhando da esquerda para a direita; os marcos concluídos ganham um check verde ao passar; no M9 a linha para e um cursor pisca.
 - Na frase do contorno: um carro em wireframe ganha uma cópia levemente inflada atrás de si, que vira o traço preto.
 - Na frase “uma volta inteira em Suzuka”: um contador de voltas “0/1” aparece e corta para o card “próximo vídeo”.
 - Card final com o handle do canal e um botão de inscrição animado discreto.
@@ -346,3 +368,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 24/10/2026 (quarta e quinta quedas) | Roteiro de estudo: linha nova em Problemas (duas quedas do SSD no fechamento do M7, imagem presa a dispositivos antigos, `am-montar` corrigido); material para estender a cena 4.6 na edição |
 | 24/10/2026 (M8 parte 1) | 4.10 nova: “M8, parte 1: o relógio e a placa de vídeo” (instruções do interpretador com 0 ciclos, laço de cache 2 → 7, defasagem 1,37 s → 0,035 s, o relógio que o Dolphin mostra, shader inteiro na GPU mais perto do Dolphin que o software, menus a 60 e corrida a 31); a cena de tokens vira 4.11, com o M8 parte 1, a sessão principal e o tempo acumulado; Cap. 5 atualizado (M8 pela metade) |
 | 24/10/2026 (M8 parte 2a) | 4.11 nova: “M8, parte 2a: a thread que não acelerou” (GX numa thread, determinístico, sem ganho; a espera no DrawDone; a cópia como o Dolphin fica para a 2b); a cena de tokens vira 4.12 com a parte 2a e o tempo acumulado |
+| 24/10/2026 (M8 concluído) | 4.12 nova: “M8, parte 2b: quatro IAs, quatro peças” (quatro agentes em worktrees, desenho sem esperar com cópia na escrita e corrida a 60, laço do tradutor que cobrava metade e relógio exato, memory card igual ao do Dolphin, contorno confirmado, erro achado na junção); a cena de tokens vira 4.13 com as cinco linhas da parte 2b, a sessão principal e o tempo acumulado até o M8; Cap. 5 reescrito (M8 feito, M9 próximo) |
