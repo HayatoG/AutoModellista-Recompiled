@@ -46,7 +46,7 @@ find runtime tests/unit -type f \( -name '*.c' -o -name '*.h' \) ! -name '*_meta
 if [[ $CEL == 1 ]]; then
   CPAD="$PAD,6900:A:1500,7700:D_RIGHT:120"; CSHOTS=(7400 7600 7750 7850 7950 8100 8400); CF=8400
   mkdir -p $AM_LOG_DIR/cel
-  cshots() { local s=() f; for f in $CSHOTS; do s+=("$f:cel/$1_f$f.png"); done; echo ${(j:,:)s}; }
+  cshots() { local s=() f; for f in $CSHOTS; do s+=("${f}:cel/$1_f${f}.png"); done; echo ${(j:,:)s}; }
   if [[ $ORACLE == 1 || ! -f $AM_LOG_DIR/cel/dolphin_f$CF.png ]]; then
     echo "== cel: Dolphin com o roteiro da corrida andando"
     lockf /Volumes/AMRecomp/wt-builds/dolphin.lock $T 1900 python3 -I scripts/dolphin_trace.py --iso "$ISO" --video Metal \
