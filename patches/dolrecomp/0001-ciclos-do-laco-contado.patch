@@ -1,0 +1,22 @@
+diff --git a/src/backend/emitter.c b/src/backend/emitter.c
+index 45c3286..28db89e 100644
+--- a/src/backend/emitter.c
++++ b/src/backend/emitter.c
+@@ -1887,9 +1887,16 @@ static void emit_counted_loop(FILE* out, const PPCInst* insts,
+     u32 loop_address = insts[first].address;
+     u32 continuation = insts[last].address + 4u;
+ 
++    /* The body is straight-line but may contain leaders (targets of branches from outside the loop, e.g. a "b" into
++     * the middle of the body); each iteration runs every block in [first, last], so charge all of them. */
++    u32 loop_cycles = 0;
++    for (u32 i = first; i <= last; ++i)
++        if (cfg->leaders[i])
++            loop_cycles += cfg->block_cycles[i];
++
+     fprintf(out, "static void loop_%08X(CPUState* ctx) {\n", loop_address);
+     fprintf(out, "label_%08X:\n", loop_address);
+-    fprintf(out, "    ctx->downcount -= %u;\n", cfg->block_cycles[first]);
++    fprintf(out, "    ctx->downcount -= %u;\n", loop_cycles);
+     for (u32 i = first; i <= last; ++i) {
+         if (cfg->materialize_pc[i])
+             fprintf(out, "    ctx->pc = 0x%08Xu;\n", insts[i].address);

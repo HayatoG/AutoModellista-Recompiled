@@ -29,3 +29,14 @@ done
 # DolRecomp só precisa do tomlc17; os submódulos da ModernGekko (RecompCore/Dolphin, centenas de MB)
 # são buscados por scripts/build_moderngekko.sh, que checa espaço em disco antes.
 git -C $TOOLS/DolRecomp submodule update -q --init --recursive --depth 1
+
+# Correções nossas sobre o commit fixado (patches/<ferramenta>/*.patch), aplicadas uma vez. M8 parte 2b: o laço contado
+# do backend C cobrava só o primeiro bloco do corpo (docs/M8_PARTE2B_TEMPO.md). Depois de aplicar, recompilar o
+# DolRecomp (scripts/build_dolrecomp.sh) e regenerar o C (scripts/regen_generated.sh).
+for p in $ROOT/patches/dolrecomp/*.patch(N); do
+  if git -C $TOOLS/DolRecomp apply --reverse --check $p 2> /dev/null; then
+    echo "DolRecomp: $(basename $p) já aplicado"
+  else
+    git -C $TOOLS/DolRecomp apply $p && echo "DolRecomp: $(basename $p) aplicado"
+  fi
+done

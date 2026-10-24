@@ -3,6 +3,8 @@
 Só o que o stub do Dolphin implementa (Source/Core/Core/PowerPC/GDBStub.cpp, tag 2609a):
   p<id>    lê um registrador (ids abaixo)        m<addr>,<len>  lê memória (len <= 4096)
   Z0/z0    põe/tira breakpoint de execução        c              continua até o próximo stop
+  P<id>=v  escreve um registrador                 M<addr>,<len>:  escreve memória (só RAM)
+  s        executa uma instrução e para
   k        encerra a sessão
 O stub confirma cada pacote com '+' e espera '+' de volta.
 
@@ -105,6 +107,20 @@ class GdbClient:
             addr += n
             size -= n
         return bytes(out)
+
+    def write_reg(self, reg_id: int, value: int) -> None:
+        reply = self.command(f"P{reg_id:x}={value & 0xFFFFFFFF:08x}")
+        if reply != "OK":
+            raise GdbError(f"P{reg_id:x}: {reply}")
+
+    def write_mem(self, addr: int, data: bytes) -> None:
+        reply = self.command(f"M{addr:x},{len(data):x}:{data.hex()}")
+        if reply != "OK":
+            raise GdbError(f"M{addr:x}: {reply}")
+
+    def step(self) -> str:
+        """Executa uma instrução e devolve o pacote de parada."""
+        return self.command("s")
 
     def add_breakpoint(self, addr: int) -> None:
         reply = self.command(f"Z0,{addr:x},4")
