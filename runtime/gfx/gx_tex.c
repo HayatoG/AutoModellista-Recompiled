@@ -431,6 +431,8 @@ static struct {
     GxTexCacheStats stats;
     u8 *scratch[GX_TEXMAP_MAX]; /* M8: níveis decodificados de unidades fora do cache, para a GPU */
     u32 scratch_bytes[GX_TEXMAP_MAX];
+    u8 *view[GX_TEXMAP_MAX]; /* M8 parte 2b: bytes da textura como estavam no fim da época (thread do GX, mem.h) */
+    u32 view_bytes[GX_TEXMAP_MAX];
 } s_tex = {.cache_on = true};
 
 void gx_tex_set_cache(bool on) {
@@ -446,6 +448,9 @@ void gx_tex_cache_clear(void) {
         free(s_tex.scratch[i]);
         s_tex.scratch[i] = NULL;
         s_tex.scratch_bytes[i] = 0;
+        free(s_tex.view[i]);
+        s_tex.view[i] = NULL;
+        s_tex.view_bytes[i] = 0;
     }
     memset(s_tex.cache, 0, sizeof(s_tex.cache));
 }
@@ -617,7 +622,40 @@ typedef struct TexKey {
     u32 bucket;
     u64 tlut_hash;
     u64 written;
+    bool trusted; /* o contador de escritas vale para os bytes lidos (falso quando vêm da cópia da época) */
 } TexKey;
+
+#define TEX_WRITTEN_UNKNOWN UINT64_MAX /* nenhuma soma real chega aqui: obriga a conferir pelo hash */
+
+/* Bytes da fonte que os níveis 0..levels-1 ocupam a partir do endereço da textura. */
+static u32 source_bytes(const TexUnit *u, u32 levels) {
+    GxTexSource last;
+    u32 lw;
+    u32 lh;
+    level_source(u, levels - 1U, &last, &lw, &lh);
+    const u32 bytes = (u32)(last.data - u->src.data) + gx_tex_level_size(u->format, lw + 1U, lh + 1U);
+    return bytes < u->src.size ? bytes : u->src.size;
+}
+
+/* M8 parte 2b: com a thread do GX adiantada, a CPU pode já ter escrito na textura depois da época do desenho; aí os
+ * bytes vêm da cópia na escrita (mem.h) para um buffer da unidade. Devolve true se trocou a fonte. */
+static bool tex_view(u32 texmap, TexUnit *u, u32 addr, u32 bytes) {
+    if (bytes == 0U || mem_gx_unchanged(addr, bytes)) {
+        return false;
+    }
+    if (bytes > s_tex.view_bytes[texmap]) {
+        u8 *buf = realloc(s_tex.view[texmap], bytes);
+        if (buf == NULL) {
+            am_fatal("GX: sem memória para a cópia de uma textura (%u bytes)", bytes);
+        }
+        s_tex.view[texmap] = buf;
+        s_tex.view_bytes[texmap] = bytes;
+    }
+    mem_gx_read(MEM_CACHED_BASE | addr, s_tex.view[texmap], bytes);
+    u->src.data = s_tex.view[texmap];
+    u->src.size = bytes;
+    return true;
+}
 
 /* Procura no balde; achando a mesma textura com conteúdo velho (ou menos níveis), devolve-a em *stale. */
 static TexCacheEntry *cache_find(const TexUnit *u, const TexKey *k, TexCacheEntry **stale) {
@@ -629,10 +667,10 @@ static TexCacheEntry *cache_find(const TexUnit *u, const TexKey *k, TexCacheEntr
             continue; /* outra textura, ou a mesma imagem com outra paleta (convivem no cache) */
         }
         if (e->levels >= k->levels &&
-            (e->written == k->written ||
+            ((k->trusted && e->written == k->written) ||
              (e->bytes == k->bytes &&
               e->content == hash_bytes(u->src.data, k->bytes < u->src.size ? k->bytes : u->src.size)))) {
-            e->written = k->written;
+            e->written = k->trusted ? k->written : TEX_WRITTEN_UNKNOWN;
             return e;
         }
         *stale = e;
@@ -660,7 +698,7 @@ static void cache_insert(TexUnit *u, const TexKey *k, TexCacheEntry *stale) {
                               .levels = k->levels,
                               .tlut_format = u->src.tlut_format,
                               .tlut_hash = k->tlut_hash,
-                              .written = k->written,
+                              .written = k->trusted ? k->written : TEX_WRITTEN_UNKNOWN,
                               .last_use = ++s_tex.clock,
                               .texels = victim->texels,
                               .bucket = k->bucket,
@@ -676,18 +714,29 @@ static void cache_insert(TexUnit *u, const TexKey *k, TexCacheEntry *stale) {
     }
 }
 
+static void cache_resolve(TexUnit *u, const TexKey *k);
+
 static void cache_lookup(u32 texmap, TexUnit *u) {
     TexKey k;
     k.levels = levels_needed(texmap, u);
     k.addr = (gx_bp_tex_reg(GX_BP_TX_SETIMAGE3, texmap) << 5) & 0x01FFFFFFU;
-    GxTexSource last;
-    u32 lw;
-    u32 lh;
-    level_source(u, k.levels - 1U, &last, &lw, &lh);
-    k.bytes = (u32)(last.data - u->src.data) + gx_tex_level_size(u->format, lw + 1U, lh + 1U);
+    k.bytes = source_bytes(u, k.levels);
     k.tlut_hash = paletted(u->format) ? tlut_hash_of(u) : 0U;
     k.written = mem_written_sum(k.addr, k.bytes);
+    k.trusted = !tex_view(texmap, u, k.addr, k.bytes); /* depois da soma: uma escrita contada já está marcada */
     k.bucket = bucket_of(k.addr);
+    cache_resolve(u, &k);
+    if (k.trusted && !mem_gx_unchanged(k.addr, k.bytes)) {
+        /* A CPU escreveu na textura enquanto ela era lida da memória: de novo, pela cópia da época. */
+        (void)tex_view(texmap, u, k.addr, k.bytes);
+        k.trusted = false;
+        u->cached_levels = 0;
+        cache_resolve(u, &k);
+    }
+}
+
+static void cache_resolve(TexUnit *u, const TexKey *kp) {
+    const TexKey k = *kp;
     TexCacheEntry *stale = NULL;
     TexCacheEntry *e = cache_find(u, &k, &stale);
     if (e != NULL) {
@@ -813,7 +862,19 @@ void gx_tex_gpu_unit(u32 texmap, GxTexGpuUnit *out) {
     if (u->src.data == NULL || (u->width_minus_1 + 1U) * (u->height_minus_1 + 1U) > TEX_CACHE_MAX_TEXELS * 4U) {
         return; /* sem dados: amostra preta */
     }
-    if (!decode_scratch(texmap, u, levels_needed(texmap, u), out)) {
+    const u32 levels = levels_needed(texmap, u);
+    TexUnit v = *u;
+    const u32 addr = (gx_bp_tex_reg(GX_BP_TX_SETIMAGE3, texmap) << 5) & 0x01FFFFFFU;
+    const u32 bytes = v.tmem ? 0U : source_bytes(&v, levels);
+    const bool viewed = tex_view(texmap, &v, addr, bytes);
+    if (!decode_scratch(texmap, &v, levels, out)) {
         memset(out, 0, sizeof(*out));
+        return;
+    }
+    if (!viewed && !mem_gx_unchanged(addr, bytes)) { /* escrita da CPU no meio da leitura: pela cópia da época */
+        (void)tex_view(texmap, &v, addr, bytes);
+        if (!decode_scratch(texmap, &v, levels, out)) {
+            memset(out, 0, sizeof(*out));
+        }
     }
 }

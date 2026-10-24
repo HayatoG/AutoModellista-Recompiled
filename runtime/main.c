@@ -38,8 +38,12 @@
  *   --probes <q0>:<hex>,...    M8: a partir do quadro q0, entrada nesses endereços no --timebase-out
  *   --frameskip on|off         M7: com --realtime, não desenha até 4 quadros seguidos quando a emulação atrasa
  *                              (padrão on; o jogo segue no ritmo certo e a janela mostra a última imagem)
- *   --gx-thread on|off         M8: o GX numa thread própria, como o "dual core" do Dolphin (padrão off: o
- *                              jogo espera o GX no DrawDone, docs/M8_CORRIDA.md §11); tempo e imagens iguais
+ *   --gx-thread on|off         M8: o GX numa thread própria, como o "dual core" do Dolphin (padrão on com
+ *                              janela e --gfx gpu, off no resto; docs/M8_PARTE2B_GX.md); tempo e imagens iguais
+ *   --gx-depth <n>             M8: com a thread do GX e a GPU, quantos eventos (DrawDone, tokens) o GX pode
+ *                              ficar atrás da CPU (0..6; padrão 3, um quadro da corrida; 0 = a CPU espera o GX
+ *                              em cada um, como na parte 2a). A cópia na escrita (am/mem.h) mantém tempo e
+ *                              imagens iguais
  *   --gx-threads <n>           M7: trabalhadores do rasterizador (padrão 0 = um por núcleo; 1 = sem threads). A
  *                              imagem é a mesma com qualquer número (am/gx_raster.h)
  *   --verbose                  log de depuração (acessos MMIO, UART)
@@ -95,6 +99,7 @@ typedef struct Options {
     int gx_tex_cache; /* -1 = padrão */
     int frameskip;    /* -1 = padrão */
     int gx_thread;    /* -1 = padrão */
+    u64 gx_depth;
     const char *timebase_out;
     const char *profile;
     const char *probes;
@@ -211,6 +216,8 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->profile = value;
     } else if (strcmp(name, "--probes") == 0) {
         o->probes = value;
+    } else if (strcmp(name, "--gx-depth") == 0 && parse_u64(value, &n) && n <= 6U) {
+        o->gx_depth = n;
     } else if (strcmp(name, "--gx-threads") == 0 && parse_u64(value, &n) && n <= 16U) {
         o->gx_threads = n;
     } else if (strcmp(name, "--max-steps") == 0 && parse_u64(value, &n)) {
@@ -243,6 +250,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
                    .gx_tex_cache = -1,
                    .frameskip = -1,
                    .gx_thread = -1,
+                   .gx_depth = 3U,
                    .max_seconds = 120U,
                    .same_pc_limit = CHASSIS_DEFAULT_SAME_PC_LIMIT};
     for (int i = 1; i < argc; i++) {
@@ -492,7 +500,8 @@ static GameRunConfig run_config(const Options *o, RunPaths *p) {
                            .audio_out = o->audio >= 0 ? o->audio == 1 : interactive,
                            .realtime = o->realtime >= 0 ? o->realtime == 1 : interactive,
                            .gx_threads = (u32)o->gx_threads,
-                           .gx_thread = o->gx_thread == 1,
+                           .gx_thread = o->gx_thread >= 0 ? o->gx_thread == 1 : o->window_scale != 0U && o->gfx_gpu,
+                           .gx_depth = (u32)o->gx_depth,
                            .gx_tex_cache = o->gx_tex_cache != 0,
                            .frameskip = o->frameskip != 0,
                            .timebase_out = log_path(o->timebase_out, p->timebase, sizeof(p->timebase)),

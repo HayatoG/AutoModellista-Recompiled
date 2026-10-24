@@ -55,9 +55,12 @@ u32 gx_xf_read(u32 addr) {
 }
 
 void gx_xf_load_indexed(u32 array, u32 index, u32 addr, u32 size) {
-    const GuestAddr base = MEM_CACHED_BASE | gx_vtx_array_addr(array, index);
-    for (u32 i = 0; i < size; i++) {
-        gx_xf_write(addr + i, mem_read32(NULL, base + (i * 4U)));
+    u8 buf[16U * 4U]; /* LOAD_INDX: até 16 palavras */
+    const u32 n = size < 16U ? size : 16U;
+    mem_gx_read(MEM_CACHED_BASE | gx_vtx_array_addr(array, index), buf, n * 4U); /* visão da época (mem.h) */
+    for (u32 i = 0; i < n; i++) {
+        const u8 *w = &buf[(size_t)i * 4U];
+        gx_xf_write(addr + i, ((u32)w[0] << 24) | ((u32)w[1] << 16) | ((u32)w[2] << 8) | w[3]);
     }
 }
 

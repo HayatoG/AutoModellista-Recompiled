@@ -82,6 +82,52 @@ TEST(aram_is_separate_and_big_endian) {
     EXPECT_EQ(mem_read32(NULL, 0x80000100U), 0U); /* MEM1 não foi tocada */
 }
 
+/* M8 parte 2b: o GX, épocas atrás da CPU, lê a memória como estava no fim da época dele. */
+TEST(cow_gx_reads_the_end_of_its_epoch) {
+    const GuestAddr a = 0x80010000U;
+    mem_write32(NULL, a, 0x11111111U);
+    EXPECT_TRUE(mem_cow_start(2U));
+    mem_write32(NULL, a, 0x22222222U); /* época 1: o GX ainda vai ler esta */
+    mem_cow_next_epoch();
+    mem_write32(NULL, a, 0x33333333U); /* época 2: primeira escrita copia a página antes */
+    mem_write32(NULL, a + 4U, 0x44444444U);
+    mem_cow_next_epoch();
+    mem_write32(NULL, a, 0x55555555U); /* época 3 */
+    u8 b[8];
+    mem_cow_gx_epoch(1U);
+    mem_gx_read(a, b, 8U);
+    EXPECT_EQ(b[0], 0x22);
+    EXPECT_EQ(b[4], 0x00);
+    EXPECT_TRUE(!mem_gx_unchanged(0x10000U, 4U));
+    mem_cow_gx_done(1U);
+    mem_cow_gx_epoch(2U);
+    mem_gx_read(a, b, 8U);
+    EXPECT_EQ(b[0], 0x33);
+    EXPECT_EQ(b[4], 0x44);
+    mem_cow_gx_epoch(3U);
+    EXPECT_EQ(mem_gx_read8(a), 0x55);
+    EXPECT_TRUE(mem_gx_unchanged(0x10000U, 4U));
+    EXPECT_EQ(mem_read32(NULL, a), 0x55555555U); /* a CPU sempre vê a memória de agora */
+    mem_cow_stop();
+}
+
+/* Uma escrita do GX (cópia do EFB) vale para as épocas dele que ainda leem a cópia da página. */
+TEST(cow_gx_write_reaches_its_own_view) {
+    const GuestAddr a = 0x80020000U;
+    EXPECT_TRUE(mem_cow_start(1U));
+    mem_cow_next_epoch();
+    mem_write32(NULL, a + 8U, 0x01020304U); /* época 2: a página é copiada para o GX da época 1 */
+    mem_cow_gx_epoch(1U);
+    mem_gx_write16(a, 0xBEEFU);
+    EXPECT_EQ(mem_gx_read8(a), 0xBE);
+    EXPECT_EQ(mem_gx_read8(a + 8U), 0x00);
+    EXPECT_EQ(mem_read16(NULL, a), 0xBEEFU);
+    const u64 before = mem_written_sum(0x20000U, 4U);
+    mem_gx_write8(a + 2U, 1U);
+    EXPECT_TRUE(mem_written_sum(0x20000U, 4U) > before); /* o cache de texturas vê a escrita do GX */
+    mem_cow_stop();
+}
+
 int main(void) {
     RUN_TEST(write32_is_big_endian_in_host_memory);
     RUN_TEST(sub_word_reads_follow_big_endian_order);
@@ -92,6 +138,8 @@ int main(void) {
     RUN_TEST(host_ptr_rejects_addresses_outside_mem1);
     RUN_TEST(write_cancels_matching_reservation);
     RUN_TEST(aram_is_separate_and_big_endian);
+    RUN_TEST(cow_gx_reads_the_end_of_its_epoch);
+    RUN_TEST(cow_gx_write_reaches_its_own_view);
     mem_shutdown();
     return am_test_finish();
 }

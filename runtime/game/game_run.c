@@ -56,6 +56,9 @@
  * de cada vez já segura o ritmo e desenha o dobro de quadros que a sequência de 4 do software. */
 #define GAME_RUN_SKIP_MAX_GPU   1U
 #define GAME_RUN_SKIP_TEX_GUARD 120U
+/* M8 parte 2b: com a thread do GX, pular o desenho só tira trabalho do GX; se a CPU não esperou o GX pelo menos isto
+ * no último quadro, o atraso é da CPU emulada e pular só tiraria quadros da tela. */
+#define GAME_RUN_SKIP_GX_WAIT_NS 2000000ULL
 
 typedef struct Shot {
     u64 frame;
@@ -92,6 +95,7 @@ static struct {
     u32 skipped_in_row;
     u64 skipped;
     u64 tex_copies_seen;
+    u64 gx_wait_seen;   /* espera da CPU pelo GX (DrawDone e tokens) até o último quadro */
     u64 tex_copy_frame; /* último quadro com cópia do EFB para textura */
     u64 audio_frames;
     u64 log_ms;      /* relógio na última linha de progresso (quadros/s de verdade) */
@@ -218,8 +222,12 @@ static bool capture_frame(CPUState *cpu, bool refresh) {
         }
         const u32 shown = vi_xfb_top();
         if (shown != 0U && refresh) { /* depois de um quadro pulado, o XFB é velho: fica a última imagem */
-            gx_fifo_sync();
-            xfb_to_rgba(shown);
+            if (gx_fifo_present_xfb(shown, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, GAME_XFB_WIDTH * 2U)) {
+                /* thread do GX: ele converte quando chegar aqui; a janela mostra a última pronta, sem esperar */
+                (void)gx_fifo_xfb_latest(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT);
+            } else {
+                xfb_to_rgba(shown);
+            }
         }
         const PlatformWindowResult r =
             platform_window_present(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, shot != NULL ? window_png : NULL);
@@ -289,7 +297,17 @@ static void decide_skip(s64 behind) {
         s_run.tex_copy_frame = s_run.frames;
     }
     const bool guard = s_run.tex_copy_frame != 0U && s_run.frames - s_run.tex_copy_frame < GAME_RUN_SKIP_TEX_GUARD;
-    const bool skip = s_run.config.frameskip && behind > GAME_RUN_SKIP_BEHIND_NS &&
+    bool gx_late = true;
+    if (gx_fifo_threaded()) {
+        u64 syncs = 0;
+        u64 waits = 0;
+        u64 wait_ns[3] = {0};
+        gx_fifo_thread_counters(&syncs, &waits, wait_ns);
+        const u64 waited = wait_ns[0] + wait_ns[1];
+        gx_late = waited - s_run.gx_wait_seen >= GAME_RUN_SKIP_GX_WAIT_NS;
+        s_run.gx_wait_seen = waited;
+    }
+    const bool skip = s_run.config.frameskip && behind > GAME_RUN_SKIP_BEHIND_NS && gx_late &&
                       s_run.skipped_in_row < (s_run.config.gpu ? GAME_RUN_SKIP_MAX_GPU : GAME_RUN_SKIP_MAX) && !guard;
     s_run.skipping = skip;
     s_run.skipped_in_row = skip ? s_run.skipped_in_row + 1U : 0U;
@@ -414,11 +432,13 @@ static bool init_video(const GameRunConfig *config) {
                                               platform_lock_destroy, platform_lock,         platform_unlock,
                                               platform_cond_create,  platform_cond_destroy, platform_cond_wait,
                                               platform_cond_signal,  platform_ticks_ns};
-        if (!gx_fifo_thread_start(&s_api)) {
+        /* O software amostra texturas da memória durante o desenho, fora da visão da época: espera em cada evento. */
+        const u32 depth = config->gpu ? config->gx_depth : 0U;
+        if (!gx_fifo_thread_start(&s_api, depth)) {
             AM_LOG_ERROR("GX: não consegui criar a thread do GX: %s", platform_last_error());
             return false;
         }
-        AM_LOG_INFO("GX: numa thread própria (a CPU emulada só lê o fluxo por cima)");
+        AM_LOG_INFO("GX: numa thread própria (a CPU emulada só lê o fluxo por cima), até %u evento(s) atrás", depth);
     }
     if (config->window_scale == 0U) {
         return true;
@@ -661,8 +681,10 @@ static void report_gx(void) {
         u64 wait_ns[3] = {0};
         gx_fifo_thread_counters(&syncs, &waits, wait_ns);
         AM_LOG_INFO("GX thread: %" PRIu64 " sincronizações, %" PRIu64 " com o GX ainda trabalhando; espera de %" PRIu64
-                    " ms no DrawDone, %" PRIu64 " ms nos tokens, %" PRIu64 " ms nas leituras do XFB",
-                    syncs, waits, wait_ns[0] / 1000000U, wait_ns[1] / 1000000U, wait_ns[2] / 1000000U);
+                    " ms no DrawDone, %" PRIu64 " ms nos tokens, %" PRIu64 " ms nas leituras do XFB; %" PRIu64
+                    " páginas copiadas na escrita",
+                    syncs, waits, wait_ns[0] / 1000000U, wait_ns[1] / 1000000U, wait_ns[2] / 1000000U,
+                    mem_cow_copies());
     }
 }
 

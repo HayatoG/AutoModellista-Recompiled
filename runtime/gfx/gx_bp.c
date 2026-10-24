@@ -76,10 +76,13 @@ static void copy_to_tmem(u32 tmem_offset, u32 src, u32 size) {
     }
     const u32 n = size > GX_TMEM_SIZE - tmem_offset ? GX_TMEM_SIZE - tmem_offset : size;
     u8 *dst = s_bp.tmem + tmem_offset;
-    for (u32 i = 0; i < n; i++) {
-        /* offset < 1 MiB e n <= 1 MiB - offset; o analisador do clang 21 não acompanha (falso positivo). */
-        // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
-        dst[i] = mem_read8(NULL, MEM_CACHED_BASE | ((src + i) & 0x01FFFFFFU));
+    /* A fonte dá a volta nos 32 MiB do endereço físico (máscara de 25 bits); com a thread do GX, visão da época. */
+    for (u32 done = 0; done < n;) {
+        const u32 at = (src + done) & 0x01FFFFFFU;
+        const u32 room = 0x02000000U - at;
+        const u32 take = n - done < room ? n - done : room;
+        mem_gx_read(MEM_CACHED_BASE | at, dst + done, take);
+        done += take;
     }
 }
 

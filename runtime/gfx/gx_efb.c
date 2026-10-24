@@ -403,8 +403,8 @@ static void xfb_row(u32 y, u32 worker, void *user) {
         if (j->host != NULL) {
             memcpy(j->host + ((size_t)y * j->stride) + ((size_t)x * 2U), yuyv, 4U); /* já na ordem da memória */
         } else {
-            mem_write32(NULL, MEM_CACHED_BASE | ((j->dest + (y * j->stride) + (x * 2U)) & 0x01FFFFFFU),
-                        ((u32)yuyv[0] << 24) | ((u32)yuyv[1] << 16) | ((u32)yuyv[2] << 8) | yuyv[3]);
+            mem_gx_write32(MEM_CACHED_BASE | ((j->dest + (y * j->stride) + (x * 2U)) & 0x01FFFFFFU),
+                           ((u32)yuyv[0] << 24) | ((u32)yuyv[1] << 16) | ((u32)yuyv[2] << 8) | yuyv[3]);
         }
     }
 }
@@ -426,7 +426,7 @@ static void copy_to_xfb(const CopyParams *p, u32 copy, u32 dest, u32 stride) {
     }
     if (job.host != NULL) {
         gx_raster_parallel_for(height, xfb_row, &job);
-        mem_mark_written(phys, span);
+        mem_gx_wrote(phys, span);
     } else {
         for (u32 y = 0; y < height; y++) {
             xfb_row(y, 0, &job);
@@ -511,15 +511,15 @@ static void write_texel(GuestAddr block, BlockLayout l, u32 s, u32 t, u32 v) {
     const u32 idx = (t << l.bw_log2) + s;
     if (l.bits == 4U) {
         const GuestAddr a = block + (idx >> 1);
-        const u8 old = mem_read8(NULL, a);
-        mem_write8(NULL, a, (u8)((idx & 1U) != 0U ? ((old & 0xF0U) | v) : ((old & 0x0FU) | (v << 4))));
+        const u8 old = mem_gx_read8(a);
+        mem_gx_write8(a, (u8)((idx & 1U) != 0U ? ((old & 0xF0U) | v) : ((old & 0x0FU) | (v << 4))));
     } else if (l.bits == 8U) {
-        mem_write8(NULL, block + idx, (u8)v);
+        mem_gx_write8(block + idx, (u8)v);
     } else if (l.bits == 16U) {
-        mem_write16(NULL, block + (idx * 2U), (u16)v);
+        mem_gx_write16(block + (idx * 2U), (u16)v);
     } else {
-        mem_write16(NULL, block + (idx * 2U), (u16)(v >> 16));
-        mem_write16(NULL, block + 32U + (idx * 2U), (u16)v);
+        mem_gx_write16(block + (idx * 2U), (u16)(v >> 16));
+        mem_gx_write16(block + 32U + (idx * 2U), (u16)v);
     }
 }
 
