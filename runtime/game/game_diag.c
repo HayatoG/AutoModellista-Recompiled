@@ -26,8 +26,8 @@ static struct {
 static HookAction on_probe(CPUState *cpu, void *user) {
     (void)user;
     if (s_diag.frame >= s_diag.probe_from) {
-        /* 4a coluna: o último mftb (o que o GDB do Dolphin mostra); 5a: o timebase exato, só da runtime. */
-        (void)fprintf(s_diag.timebase, "probe %08X %08X %" PRIu64 " %" PRIu64 "\n", cpu->pc, cpu->lr,
+        /* Depois de pc, lr e r3: o último mftb (o que o GDB do Dolphin mostra) e o timebase exato. */
+        (void)fprintf(s_diag.timebase, "probe %08X %08X %08X %" PRIu64 " %" PRIu64 "\n", cpu->pc, cpu->lr, cpu->gpr[3],
                       timebase_guest_last(), timebase_read(cpu));
     }
     return HOOK_CONTINUE;
