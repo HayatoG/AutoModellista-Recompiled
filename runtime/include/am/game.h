@@ -34,4 +34,11 @@
 #define GAME_ADDR_FRAME_RETURN    0x8004839CU
 #define GAME_ADDR_VI_WAIT_RETRACE 0x800D276CU
 
+/* VISetNextFrameBuffer (0x800D358C) guarda o próximo XFB nesta variável do vi.c do SDK; VIFlush (0x800D345C) a copia
+ * para o VI (REA/Ghidra; scripts/dolphin_trace.py lê a mesma variável para as capturas do oráculo). */
+#define GAME_ADDR_VI_NEXT_FB 0x8026E648U
+/* XFB do jogo em NTSC: 640x448 YUYV, 1280 bytes por linha (o mesmo tamanho que o oráculo grava). */
+#define GAME_XFB_WIDTH  640U
+#define GAME_XFB_HEIGHT 448U
+
 #endif /* AM_GAME_H */

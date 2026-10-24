@@ -16,9 +16,13 @@
 #include "am/game.h"
 #include "am/gather_pipe.h"
 #include "am/guest_cpu.h"
+#include "am/gx_efb.h"
 #include "am/gx_fifo.h"
+#include "am/gx_raster.h"
+#include "am/gx_setup.h"
 #include "am/hook.h"
 #include "am/log.h"
+#include "am/mem.h"
 #include "am/os_link.h"
 #include "am/os_threads.h"
 #include "am/pad_script.h"
@@ -30,6 +34,12 @@
 #include "am/vi.h"
 
 #define GAME_RUN_REL_CACHE 16U
+#define GAME_RUN_SHOT_MAX  32U
+
+typedef struct Shot {
+    u64 frame;
+    char path[512];
+} Shot;
 
 typedef struct RelFile {
     char name[16];
@@ -46,6 +56,11 @@ static struct {
     FILE *events;
     PadScript pad;
     u64 fields_at_frame; /* campos de VI quando o último quadro começou */
+    Shot shots[GAME_RUN_SHOT_MAX];
+    u32 shot_count;
+    bool window;
+    bool window_closed;
+    u8 rgba[GAME_XFB_WIDTH * GAME_XFB_HEIGHT * 4U];
 } s_run;
 
 static void event_line(const char *fmt, ...) AM_PRINTF(1, 2);
@@ -107,6 +122,79 @@ static bool load_rel(const char *name, const u8 **data, size_t *size, void *user
     return true;
 }
 
+/* "quadro:arquivo.png,...": o caminho vai até a vírgula seguinte. */
+static bool parse_shots(const char *text) {
+    const char *p = text;
+    while (*p != '\0') {
+        char *end = NULL;
+        const unsigned long long frame = strtoull(p, &end, 10);
+        if (end == p || *end != ':' || s_run.shot_count == GAME_RUN_SHOT_MAX) {
+            return false;
+        }
+        const char *path = end + 1;
+        const char *comma = strchr(path, ',');
+        const size_t len = comma != NULL ? (size_t)(comma - path) : strlen(path);
+        Shot *sh = &s_run.shots[s_run.shot_count++];
+        if (len == 0U || len >= sizeof(sh->path)) {
+            return false;
+        }
+        sh->frame = (u64)frame;
+        memcpy(sh->path, path, len);
+        sh->path[len] = '\0';
+        p = comma != NULL ? comma + 1 : path + len;
+    }
+    return true;
+}
+
+/* XFB (YUYV na memória do guest) em RGBA no buffer da execução. */
+static void xfb_to_rgba(GuestAddr addr) {
+    gx_efb_xfb_to_rgba(addr, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, GAME_XFB_WIDTH * 2U, s_run.rgba);
+}
+
+/* Início do quadro: atualiza a janela com o XFB que o VI está mostrando e grava as capturas pedidas (o XFB que
+ * VISetNextFrameBuffer recebeu por último, como o oráculo); com janela, a captura também grava o que a janela
+ * desenhou (<arquivo>_janela.png). Devolve false se a janela foi fechada. */
+static bool capture_frame(CPUState *cpu) {
+    const Shot *shot = NULL;
+    for (u32 i = 0; i < s_run.shot_count; i++) {
+        if (s_run.shots[i].frame == s_run.frames) {
+            shot = &s_run.shots[i];
+        }
+    }
+    bool open = true;
+    if (s_run.window) {
+        char window_png[600];
+        if (shot != NULL) {
+            (void)snprintf(window_png, sizeof(window_png), "%.*s_janela.png", (int)(strlen(shot->path) - 4U),
+                           shot->path);
+        }
+        const u32 shown = vi_xfb_top();
+        if (shown != 0U) {
+            xfb_to_rgba(shown);
+        }
+        const PlatformWindowResult r =
+            platform_window_present(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, shot != NULL ? window_png : NULL);
+        if (r == PLATFORM_WINDOW_ERROR) {
+            am_fatal("janela: %s", platform_last_error());
+        }
+        open = r == PLATFORM_WINDOW_OK;
+    }
+    if (shot != NULL) {
+        const GuestAddr xfb = mem_read32(cpu, GAME_ADDR_VI_NEXT_FB);
+        if (xfb == 0U) {
+            AM_LOG_WARN("quadro %" PRIu64 ": o jogo ainda não definiu um XFB; captura %s ignorada", s_run.frames,
+                        shot->path);
+            return open;
+        }
+        xfb_to_rgba(xfb);
+        if (!platform_save_png(shot->path, s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT)) {
+            am_fatal("não consegui gravar %s: %s", shot->path, platform_last_error());
+        }
+        AM_LOG_INFO("quadro %" PRIu64 ": XFB 0x%08X -> %s", s_run.frames, xfb, shot->path);
+    }
+    return open;
+}
+
 /* fn_80051034 chamada pelo laço de fn_8004838C = um quadro. Para depois de `frames` quadros completos. */
 static HookAction on_frame(CPUState *cpu, void *user) {
     (void)user;
@@ -120,6 +208,10 @@ static HookAction on_frame(CPUState *cpu, void *user) {
     s_run.frames++;
     s_run.fields_at_frame = vi_field_count();
     si_set_pad_buttons(pad_script_buttons(&s_run.pad, s_run.frames));
+    if (!capture_frame(cpu)) {
+        s_run.window_closed = true;
+        return HOOK_STOP;
+    }
     if (s_run.frames == 1U || s_run.frames % 60U == 0U) {
         AM_LOG_INFO("quadro %" PRIu64 ": %" PRIu64 " campos de VI, %" PRIu64 " ciclos, %" PRIu64 " leituras de DVD",
                     s_run.frames, vi_field_count(), timebase_cycles(cpu), di_stats()->reads);
@@ -153,6 +245,26 @@ bool game_run_init(const GameRunConfig *config) {
     if (config->pad_script != NULL && !pad_script_parse(config->pad_script, &s_run.pad)) {
         AM_LOG_ERROR("roteiro de botões inválido: %s", config->pad_script);
         return false;
+    }
+    if (config->shots != NULL && !parse_shots(config->shots)) {
+        AM_LOG_ERROR("--shot inválido (\"quadro:arquivo.png,...\", até %u): %s", GAME_RUN_SHOT_MAX, config->shots);
+        return false;
+    }
+    for (u32 i = 0; i < s_run.shot_count; i++) {
+        const size_t len = strlen(s_run.shots[i].path);
+        if (len < 5U || strcmp(&s_run.shots[i].path[len - 4U], ".png") != 0) {
+            AM_LOG_ERROR("--shot: o arquivo tem de terminar em .png: %s", s_run.shots[i].path);
+            return false;
+        }
+    }
+    gx_fifo_set_render(config->render);
+    if (config->window_scale != 0U) {
+        if (!platform_window_open("Auto Modellista Recompiled", GAME_XFB_WIDTH, GAME_XFB_HEIGHT,
+                                  config->window_scale)) {
+            AM_LOG_ERROR("janela: %s", platform_last_error());
+            return false;
+        }
+        s_run.window = true;
     }
     const DiscResult d = disc_open(config->disc_root);
     if (d != DISC_OK) {
@@ -195,6 +307,10 @@ void game_run_shutdown(void) {
         s_run.events = NULL;
     }
     di_set_read_observer(NULL);
+    if (s_run.window) {
+        platform_window_close();
+        s_run.window = false;
+    }
     for (u32 i = 0; i < s_run.rel_count; i++) {
         platform_free_file(s_run.rels[i].data);
     }
@@ -226,6 +342,10 @@ u64 game_run_frames(void) {
     return s_run.frames;
 }
 
+bool game_run_window_closed(void) {
+    return s_run.window_closed;
+}
+
 bool game_run_frame_target_reached(void) {
     return s_run.target_reached;
 }
@@ -254,6 +374,17 @@ void game_run_report(void) {
                 " vértices), %" PRIu64 " BP, %" PRIu64 " DrawDone, %" PRIu64 " tokens, %" PRIu64 " cópias; descartado",
                 gather_pipe_total_bytes(), gx->commands, gx->draws, gx->vertices, gx->bp_writes, gx->draw_done,
                 gx->tokens, gx->copies);
+    const GxSetupStats *su = gx_setup_stats();
+    const GxRasterStats *ra = gx_raster_stats();
+    const GxEfbStats *efb = gx_efb_stats();
+    AM_LOG_INFO("GX render %s: %" PRIu64 " desenhos rasterizados, %" PRIu64 " triângulos (%" PRIu64
+                " descartados pela face, %" PRIu64 " fora da tela), %" PRIu64 " pixels no TEV",
+                gx_fifo_render_enabled() ? "ligado" : "desligado", su->draws, ra->triangles, su->culled, su->rejected,
+                ra->pixels);
+    AM_LOG_INFO("EFB: %" PRIu64 " cópias para o XFB (última 0x%08X, %ux%u), %" PRIu64
+                " para textura (formatos 0x%04X), %" PRIu64 " limpezas",
+                efb->xfb_copies, efb->last_xfb_addr, efb->last_xfb_width, efb->last_xfb_height, efb->texture_copies,
+                efb->copy_formats, efb->clears);
     AM_LOG_INFO("exceções: externa %" PRIu64 ", decrementer %" PRIu64 ", FP indisponível %" PRIu64,
                 exception_count_of(EXCEPTION_NUM_EXTERNAL), exception_count_of(EXCEPTION_NUM_DECREMENTER),
                 exception_count_of(EXCEPTION_NUM_FP_UNAVAILABLE));

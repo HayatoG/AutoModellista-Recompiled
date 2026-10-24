@@ -11,6 +11,9 @@ typedef struct GameRunConfig {
     u64 frames;             /* 0 = sem parada por quadros */
     const char *events;     /* NULL ou arquivo do log de eventos (mesmo formato de dolphin_trace.py events) */
     const char *pad_script; /* NULL ou roteiro de botões (am/pad_script.h) */
+    bool render;            /* M6: rasterizar e copiar o EFB (--gfx soft) ou só contar (--gfx off) */
+    const char *shots;      /* NULL ou "quadro:arquivo.png,...": XFB do quadro em PNG (como dolphin_trace --shots) */
+    u32 window_scale;       /* 0 = sem janela; senão a janela SDL3 mostra o XFB com esse fator */
 } GameRunConfig;
 
 /* Abre o disco, registra os ganchos (OSLink, quadros) e confere que todos passam pelo chassi. */
@@ -25,6 +28,9 @@ bool game_run_frame_target_reached(void);
  * threads do SO e para com am_fatal (um jogo esperando algo que a runtime nunca entrega). */
 #define GAME_RUN_STALL_FIELDS 1200U
 void game_run_tick(const CPUState *cpu);
+
+/* A janela foi fechada pelo usuário (a execução parou por isso). */
+bool game_run_window_closed(void);
 
 /* Resumo no log: módulos ligados, DVD, VI, DSP, GX. */
 void game_run_report(void);

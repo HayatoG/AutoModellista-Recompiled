@@ -19,6 +19,10 @@
  *   --disc <dir>               raiz da árvore extraída (sys/ e files/); padrão: <--sys>/..
  *   --pad-script <roteiro>     botões do controle 1 por quadro, "200:D_LEFT:8,240:A:8" (am/pad_script.h)
  *   --events <arquivo>         log de eventos do M5 (main, OSLink, leituras do DVD) para comparar com o Dolphin
+ *   --gfx soft|off             M6: GX em software (padrão) ou só contar comandos, como no M5
+ *   --shot <q:arq.png,...>     M6: no início do quadro q grava o XFB em PNG (o mesmo que dolphin_trace.py --shots)
+ *   --window <escala>          M6: janela SDL3 com o XFB que o VI mostra (1, 2...); com --shot grava também
+ *                              <arq>_janela.png, lido de volta do que a janela desenhou
  *   --verbose                  log de depuração (acessos MMIO, UART)
  *
  * Caminhos relativos de --trace/--dump-boot-state são resolvidos em $AM_LOG_DIR quando definido (os scripts usam
@@ -62,6 +66,9 @@ typedef struct Options {
     const char *disc_root;
     const char *events;
     const char *pad_script;
+    const char *shots;
+    u64 window_scale;
+    bool gfx_off;
     bool stop_given;
     bool verbose;
 } Options;
@@ -127,6 +134,12 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->events = value;
     } else if (strcmp(name, "--pad-script") == 0) {
         o->pad_script = value;
+    } else if (strcmp(name, "--shot") == 0) {
+        o->shots = value;
+    } else if (strcmp(name, "--window") == 0 && parse_u64(value, &n) && n > 0U && n <= 8U) {
+        o->window_scale = n;
+    } else if (strcmp(name, "--gfx") == 0 && (strcmp(value, "soft") == 0 || strcmp(value, "off") == 0)) {
+        o->gfx_off = strcmp(value, "off") == 0;
     } else if (strcmp(name, "--max-steps") == 0 && parse_u64(value, &n)) {
         o->max_steps = n;
     } else if (strcmp(name, "--trace-max-mb") == 0 && parse_u64(value, &n) && n > 0U) {
@@ -177,6 +190,34 @@ static const char *log_path(const char *path, char *buf, size_t size) {
     }
     const int n = snprintf(buf, size, "%s/%s", dir, path);
     return n > 0 && (size_t)n < size ? buf : path;
+}
+
+/* --shot: cada caminho relativo vai para $AM_LOG_DIR, como em log_path. */
+static const char *log_path_list(const char *list, char *buf, size_t size) {
+    const char *dir = getenv("AM_LOG_DIR");
+    if (list == NULL || dir == NULL || dir[0] == '\0') {
+        return list;
+    }
+    size_t used = 0;
+    buf[0] = '\0';
+    for (const char *p = list; *p != '\0';) {
+        const char *colon = strchr(p, ':');
+        const char *comma = strchr(p, ',');
+        const size_t item = comma != NULL ? (size_t)(comma - p) : strlen(p);
+        if (colon == NULL || (comma != NULL && colon > comma)) {
+            return list; /* formato inválido: game_run reclama */
+        }
+        const size_t head = (size_t)(colon - p) + 1U;
+        const bool relative = colon[1] != '/';
+        const int n = snprintf(buf + used, size - used, "%s%.*s%s%s%.*s", used != 0U ? "," : "", (int)head, p,
+                               relative ? dir : "", relative ? "/" : "", (int)(item - head), colon + 1);
+        if (n < 0 || (size_t)n >= size - used) {
+            return list;
+        }
+        used += (size_t)n;
+        p += item + (comma != NULL ? 1U : 0U);
+    }
+    return buf;
 }
 
 static bool load_one(const char *dir, const char *name, LoadedFile *out) {
@@ -311,6 +352,8 @@ static void report(const CPUState *cpu, ChassisStop stop, const ChassisStats *st
     if (stop == CHASSIS_STOP_ADDRESS) {
         AM_LOG_INFO("parada em 0x%08X (lr=0x%08X)%s", cpu->pc, cpu->lr,
                     cpu->pc == GAME_ADDR_MAIN ? ": M4: main alcançado" : "");
+    } else if (stop == CHASSIS_STOP_HOOK && game_run_window_closed()) {
+        AM_LOG_INFO("parada em 0x%08X: janela fechada no quadro %" PRIu64, cpu->pc, game_run_frames());
     } else if (stop == CHASSIS_STOP_HOOK && game_run_frame_target_reached()) {
         AM_LOG_INFO("parada em 0x%08X: M5: %" PRIu64 " quadros completos do laço fn_80051034", cpu->pc,
                     game_run_frames());
@@ -353,11 +396,15 @@ static int run_boot(CPUState *cpu, const Options *o) {
     int status = EXIT_FAILURE;
     char disc_buf[1024];
     char events_buf[1024];
+    char shots_buf[4096];
     (void)snprintf(disc_buf, sizeof(disc_buf), "%s/..", o->sys_dir);
     const GameRunConfig run = {.disc_root = o->disc_root != NULL ? o->disc_root : disc_buf,
                                .frames = o->frames,
                                .events = log_path(o->events, events_buf, sizeof(events_buf)),
-                               .pad_script = o->pad_script};
+                               .pad_script = o->pad_script,
+                               .render = !o->gfx_off,
+                               .shots = log_path_list(o->shots, shots_buf, sizeof(shots_buf)),
+                               .window_scale = (u32)o->window_scale};
     if (load_sys(o->sys_dir, &files) && prepare(cpu, o, &files, &dol) && game_run_init(&run) &&
         check_hooks(&files, &dol)) {
         char dump_buf[1024];
