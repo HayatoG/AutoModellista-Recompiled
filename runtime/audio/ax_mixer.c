@@ -175,7 +175,10 @@ static void compressor(u16 threshold, u16 release_frames, u32 table_addr) {
 }
 
 static s16 clamp16(s32 v) {
-    return (s16)(v < -0x8000 ? -0x8000 : (v > 0x7FFF ? 0x7FFF : v));
+    if (v < -0x8000) {
+        return -0x8000;
+    }
+    return (s16)(v > 0x7FFF ? 0x7FFF : v);
 }
 
 /* OutputSamples: surround (int) em `surround_addr`; L/R saturados em 16 bits, intercalados R, L, big-endian. */
@@ -234,6 +237,56 @@ static u32 arg32(CmdList *l) {
     return (hi << 16) | arg16(l);
 }
 
+/* Comandos que trocam buffers com a CPU ou fecham o quadro; devolve false se `cmd` não é um deles. */
+static bool run_exchange(CmdList *l, u16 cmd) {
+    switch (cmd) {
+    case CMD_MIX_AUXA:
+    case CMD_MIX_AUXB: {
+        const u32 w = arg32(l);
+        mix_aux(cmd - CMD_MIX_AUXA, w, arg32(l));
+        return true;
+    }
+    case CMD_MIX_AUXB_NOWRITE:
+        mix_aux(1, 0, arg32(l));
+        return true;
+    case CMD_MIX_AUXB_LR: {
+        const u32 ul = arg32(l);
+        mix_auxb_lr(ul, arg32(l));
+        return true;
+    }
+    case CMD_SEND_AUX_AND_MIX: {
+        u32 a[6];
+        for (u32 i = 0; i < 6U; i++) {
+            a[i] = arg32(l);
+        }
+        send_aux_and_mix(a);
+        return true;
+    }
+    case CMD_COMPRESSOR: {
+        const u16 threshold = arg16(l);
+        const u16 frames = arg16(l);
+        compressor(threshold, frames, arg32(l));
+        return true;
+    }
+    case CMD_OUTPUT: {
+        const u32 surround = arg32(l);
+        output(arg32(l), surround);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+static void run_more(CmdList *l) {
+    const u32 addr = arg32(l);
+    const u16 size = arg16(l);
+    if (size >= AX_CMDLIST_MAX) {
+        am_fatal("AX: CMD_MORE com lista de %u palavras em 0x%08X (máximo %u)", size, addr, AX_CMDLIST_MAX);
+    }
+    *l = (CmdList){.addr = addr, .idx = 0};
+}
+
 /* Um comando; devolve false em CMD_END. */
 static bool run_command(CmdList *l, u16 cmd, u32 *pb_addr) {
     switch (cmd) {
@@ -255,12 +308,6 @@ static bool run_command(CmdList *l, u16 cmd, u32 *pb_addr) {
     case CMD_PROCESS:
         ax_voice_process_list(*pb_addr, &s_mix.buf);
         return true;
-    case CMD_MIX_AUXA:
-    case CMD_MIX_AUXB: {
-        const u32 w = arg32(l);
-        mix_aux(cmd - CMD_MIX_AUXA, w, arg32(l));
-        return true;
-    }
     case CMD_UPLOAD_LRS:
         upload_lrs(arg32(l));
         return true;
@@ -271,50 +318,20 @@ static bool run_command(CmdList *l, u16 cmd, u32 *pb_addr) {
     case CMD_UNK_08:
         l->idx += 10U; /* o Dolphin também só pula */
         return true;
-    case CMD_MIX_AUXB_NOWRITE:
-        mix_aux(1, 0, arg32(l));
-        return true;
     case CMD_UNK_0A:
     case CMD_UNK_0B:
     case CMD_UNK_0C:
         return true;
-    case CMD_MORE: {
-        const u32 addr = arg32(l);
-        const u16 size = arg16(l);
-        if (size >= AX_CMDLIST_MAX) {
-            am_fatal("AX: CMD_MORE com lista de %u palavras em 0x%08X (máximo %u)", size, addr, AX_CMDLIST_MAX);
-        }
-        *l = (CmdList){.addr = addr, .idx = 0};
+    case CMD_MORE:
+        run_more(l);
         return true;
-    }
-    case CMD_OUTPUT: {
-        const u32 surround = arg32(l);
-        output(arg32(l), surround);
-        return true;
-    }
     case CMD_END:
         return false;
-    case CMD_MIX_AUXB_LR: {
-        const u32 ul = arg32(l);
-        mix_auxb_lr(ul, arg32(l));
-        return true;
-    }
-    case CMD_COMPRESSOR: {
-        const u16 threshold = arg16(l);
-        const u16 frames = arg16(l);
-        compressor(threshold, frames, arg32(l));
-        return true;
-    }
-    case CMD_SEND_AUX_AND_MIX: {
-        u32 a[6];
-        for (u32 i = 0; i < 6U; i++) {
-            a[i] = arg32(l);
-        }
-        send_aux_and_mix(a);
-        return true;
-    }
     default:
-        am_fatal("AX: comando 0x%04X desconhecido na lista em 0x%08X (palavra %u)", cmd, l->addr, l->idx - 1U);
+        if (!run_exchange(l, cmd)) {
+            am_fatal("AX: comando 0x%04X desconhecido na lista em 0x%08X (palavra %u)", cmd, l->addr, l->idx - 1U);
+        }
+        return true;
     }
 }
 

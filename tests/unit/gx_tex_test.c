@@ -162,7 +162,7 @@ TEST(sampler_wrap_and_bilinear) {
  * cache, inclusive depois de o jogo reescrever a textura (contadores de página) ou trocar a TLUT (hash). */
 static void sample_grid(u8 *out) {
     for (s32 i = 0; i < 64; i++) {
-        gx_tex_sample((i * 37) - 300, (i * 53) - 200, 0, (i & 1) != 0, 0, out + (i * 4));
+        gx_tex_sample((i * 37) - 300, (i * 53) - 200, 0, (i & 1) != 0, 0, &out[(size_t)i * 4U]);
     }
 }
 

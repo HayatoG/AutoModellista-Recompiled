@@ -62,7 +62,10 @@ static u32 hilo(const u16 *pb, u32 at) {
 
 /* AXVoice.h ClampS16. */
 static s16 clamp16(s64 v) {
-    return (s16)(v < -0x8000 ? -0x8000 : (v > 0x7FFF ? 0x7FFF : v));
+    if (v < -0x8000) {
+        return -0x8000;
+    }
+    return (s16)(v > 0x7FFF ? 0x7FFF : v);
 }
 
 static u8 aram8(u32 address) {

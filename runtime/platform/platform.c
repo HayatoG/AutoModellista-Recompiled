@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "am/platform.h"
 
-#include <stdint.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -21,7 +20,8 @@ static struct {
  * contador atômico e o último a terminar avisa quem chamou. */
 static struct {
     SDL_Thread *threads[PLATFORM_MAX_WORKERS];
-    u32 count; /* inclui quem chama */
+    u32 ids[PLATFORM_MAX_WORKERS]; /* argumento de cada thread: o número dela */
+    u32 count;                     /* inclui quem chama */
     SDL_Mutex *lock;
     SDL_Condition *start;
     SDL_Condition *done;
@@ -62,7 +62,7 @@ static void pool_take(u32 worker) {
 }
 
 static int SDLCALL pool_thread(void *arg) {
-    const u32 worker = (u32)(uintptr_t)arg;
+    const u32 worker = *(const u32 *)arg;
     u64 seen = 0;
     SDL_LockMutex(s_pool.lock);
     for (;;) {
@@ -86,7 +86,10 @@ static int SDLCALL pool_thread(void *arg) {
 
 bool platform_parallel_init(u32 workers) {
     platform_parallel_shutdown();
-    workers = workers > PLATFORM_MAX_WORKERS ? PLATFORM_MAX_WORKERS : (workers == 0U ? 1U : workers);
+    if (workers > PLATFORM_MAX_WORKERS) {
+        workers = PLATFORM_MAX_WORKERS;
+    }
+    workers = workers == 0U ? 1U : workers;
     s_pool.lock = SDL_CreateMutex();
     s_pool.start = SDL_CreateCondition();
     s_pool.done = SDL_CreateCondition();
@@ -97,7 +100,8 @@ bool platform_parallel_init(u32 workers) {
     }
     s_pool.count = 1;
     for (u32 i = 1; i < workers; i++) {
-        s_pool.threads[i] = SDL_CreateThread(pool_thread, "gx", (void *)(uintptr_t)i);
+        s_pool.ids[i] = i;
+        s_pool.threads[i] = SDL_CreateThread(pool_thread, "gx", &s_pool.ids[i]);
         if (s_pool.threads[i] == NULL) {
             set_error(SDL_GetError());
             platform_parallel_shutdown();

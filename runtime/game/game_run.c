@@ -88,7 +88,8 @@ static struct {
     u64 tex_copies_seen;
     u64 tex_copy_frame; /* último quadro com cópia do EFB para textura */
     u64 audio_frames;
-    u64 log_ms; /* relógio na última linha de progresso (quadros/s de verdade) */
+    u64 log_ms;      /* relógio na última linha de progresso (quadros/s de verdade) */
+    u64 log_skipped; /* quadros pulados até a última linha de progresso */
     u8 rgba[GAME_XFB_WIDTH * GAME_XFB_HEIGHT * 4U];
 } s_run;
 
@@ -328,9 +329,11 @@ static HookAction on_frame(CPUState *cpu, void *user) {
         const u64 dt = now - s_run.log_ms;
         s_run.log_ms = now;
         AM_LOG_INFO("quadro %" PRIu64 ": %" PRIu64 " campos de VI, %" PRIu64 " ciclos, %" PRIu64
-                    " leituras de DVD; %.1f quadros/s",
+                    " leituras de DVD; %.1f quadros/s, %" PRIu64 " desenhado(s)",
                     s_run.frames, vi_field_count(), timebase_cycles(cpu), di_stats()->reads,
-                    s_run.frames > 1U && dt > 0U ? 60000.0 / (double)dt : 0.0);
+                    s_run.frames > 1U && dt > 0U ? 60000.0 / (double)dt : 0.0,
+                    60U - (s_run.skipped - s_run.log_skipped));
+        s_run.log_skipped = s_run.skipped;
     }
     return HOOK_CONTINUE;
 }
@@ -355,9 +358,8 @@ static u32 build_modules(OsLinkModule *out) {
     return count;
 }
 
-bool game_run_init(const GameRunConfig *config) {
-    memset(&s_run, 0, sizeof(s_run));
-    s_run.config = *config;
+/* Roteiro e capturas: texto das opções validado antes de tudo. */
+static bool init_scripts(const GameRunConfig *config) {
     if (config->pad_script != NULL && !pad_script_parse(config->pad_script, &s_run.pad)) {
         AM_LOG_ERROR("roteiro de botões inválido: %s", config->pad_script);
         return false;
@@ -373,6 +375,11 @@ bool game_run_init(const GameRunConfig *config) {
             return false;
         }
     }
+    return true;
+}
+
+/* GX (trabalhadores, cache), janela e controle. */
+static bool init_video(const GameRunConfig *config) {
     gx_fifo_set_render(config->render);
     gx_tex_set_cache(config->gx_tex_cache);
     if (config->render) {
@@ -382,17 +389,22 @@ bool game_run_init(const GameRunConfig *config) {
         }
         AM_LOG_INFO("GX: rasterizador com %u trabalhador(es)", workers > 1U ? workers : 1U);
     }
-    if (config->window_scale != 0U) {
-        if (!platform_window_open("Auto Modellista Recompiled", GAME_XFB_WIDTH, GAME_XFB_HEIGHT,
-                                  config->window_scale)) {
-            AM_LOG_ERROR("janela: %s", platform_last_error());
-            return false;
-        }
-        s_run.window = true;
-        s_run.live_input = config->pad_script == NULL;
-        AM_LOG_INFO("controle: %s", s_run.live_input ? "teclado e gamepad da janela (docs/M7_MENUS.md §3)"
-                                                     : "roteiro --pad-script (a janela não lê a entrada)");
+    if (config->window_scale == 0U) {
+        return true;
     }
+    if (!platform_window_open("Auto Modellista Recompiled", GAME_XFB_WIDTH, GAME_XFB_HEIGHT, config->window_scale)) {
+        AM_LOG_ERROR("janela: %s", platform_last_error());
+        return false;
+    }
+    s_run.window = true;
+    s_run.live_input = config->pad_script == NULL;
+    AM_LOG_INFO("controle: %s", s_run.live_input ? "teclado e gamepad da janela (docs/M7_MENUS.md §3)"
+                                                 : "roteiro --pad-script (a janela não lê a entrada)");
+    return true;
+}
+
+/* --audio-dump e som. */
+static bool init_audio(const GameRunConfig *config) {
     if (config->audio_dump != NULL &&
         !audio_dump_open(config->audio_dump, DSP_AUDIO_RATE_HZ, config->audio_dump_max_mb * 1024ULL * 1024ULL)) {
         AM_LOG_ERROR("--audio-dump: não consegui criar %s", config->audio_dump);
@@ -405,6 +417,38 @@ bool game_run_init(const GameRunConfig *config) {
         }
     }
     dsp_set_audio_sink(on_audio, NULL);
+    return true;
+}
+
+/* --events e --timebase-out. */
+static bool init_logs(const GameRunConfig *config) {
+    if (config->events != NULL) {
+        s_run.events = fopen(config->events, "w");
+        if (s_run.events == NULL) {
+            AM_LOG_ERROR("não consegui criar %s", config->events);
+            return false;
+        }
+        (void)fprintf(s_run.events, "# am-events v1 source=runtime\n");
+        di_set_read_observer(on_di_read);
+    }
+    if (config->timebase_out == NULL) {
+        return true;
+    }
+    s_run.timebase = fopen(config->timebase_out, "w");
+    if (s_run.timebase == NULL) {
+        AM_LOG_ERROR("não consegui criar %s", config->timebase_out);
+        return false;
+    }
+    di_set_read_observer(on_di_read);
+    return hook_register(GAME_ADDR_DVD_IRQ_HANDLER, "__DVDInterruptHandler", on_dvd_irq, NULL);
+}
+
+bool game_run_init(const GameRunConfig *config) {
+    memset(&s_run, 0, sizeof(s_run));
+    s_run.config = *config;
+    if (!init_scripts(config) || !init_video(config) || !init_audio(config)) {
+        return false;
+    }
     const DiscResult d = disc_open(config->disc_root);
     if (d != DISC_OK) {
         AM_LOG_ERROR("disco em %s: %s", config->disc_root, disc_result_name(d));
@@ -419,24 +463,8 @@ bool game_run_init(const GameRunConfig *config) {
                                .module_count = build_modules(modules),
                                .load_rel = load_rel,
                                .on_event = on_link_event};
-    if (config->events != NULL) {
-        s_run.events = fopen(config->events, "w");
-        if (s_run.events == NULL) {
-            AM_LOG_ERROR("não consegui criar %s", config->events);
-            return false;
-        }
-        (void)fprintf(s_run.events, "# am-events v1 source=runtime\n");
-        di_set_read_observer(on_di_read);
-    }
-    if (config->timebase_out != NULL && (s_run.timebase = fopen(config->timebase_out, "w")) == NULL) {
-        AM_LOG_ERROR("não consegui criar %s", config->timebase_out);
+    if (!init_logs(config)) {
         return false;
-    }
-    if (s_run.timebase != NULL) {
-        di_set_read_observer(on_di_read);
-        if (!hook_register(GAME_ADDR_DVD_IRQ_HANDLER, "__DVDInterruptHandler", on_dvd_irq, NULL)) {
-            return false;
-        }
     }
     if (!os_link_init(&link) || !hook_register(GAME_ADDR_FRAME, "quadro (fn_80051034)", on_frame, NULL) ||
         !hook_register(GAME_ADDR_MAIN, "main", on_main, NULL)) {
@@ -511,6 +539,10 @@ bool game_run_frame_target_reached(void) {
     return s_run.target_reached;
 }
 
+static void report_audio(void);
+static void report_gx(void);
+static void report_gx_features(const GxSetupStats *su, const GxEfbStats *efb);
+
 void game_run_report(void) {
     for (u32 i = 0; i < os_link_event_count(); i++) {
         const OsLinkEvent *e = os_link_event(i);
@@ -530,6 +562,14 @@ void game_run_report(void) {
                 " interrupções de DMA de áudio",
                 dsp->ucode_crc, dsp->last_boot_len, dsp->last_boot_addr, dsp->command_lists,
                 dsp_audio_dma_interrupts());
+    report_audio();
+    report_gx();
+    AM_LOG_INFO("exceções: externa %" PRIu64 ", decrementer %" PRIu64 ", FP indisponível %" PRIu64,
+                exception_count_of(EXCEPTION_NUM_EXTERNAL), exception_count_of(EXCEPTION_NUM_DECREMENTER),
+                exception_count_of(EXCEPTION_NUM_FP_UNAVAILABLE));
+}
+
+static void report_audio(void) {
     const AxVoiceStats *ax = ax_voice_stats();
     const AxMixerStats *mix = ax_mixer_stats();
     AM_LOG_INFO("AX: %" PRIu64 " listas, %" PRIu64 " comandos (usados 0x%05X), %" PRIu64
@@ -541,6 +581,9 @@ void game_run_report(void) {
                 " atraso(s) recomeçado(s), %" PRIu64 " quadro(s) pulado(s)",
                 s_run.audio_frames, (double)s_run.audio_frames / DSP_AUDIO_RATE_HZ, DSP_AUDIO_RATE_HZ,
                 audio_dump_frames() != 0U ? ", gravados no --audio-dump" : "", s_run.pace_rebases, s_run.skipped);
+}
+
+static void report_gx(void) {
     const GxFifoStats *gx = gx_fifo_stats();
     AM_LOG_INFO("GX: %" PRIu64 " bytes no gather pipe, %" PRIu64 " comandos, %" PRIu64 " desenhos (%" PRIu64
                 " vértices), %" PRIu64 " BP, %" PRIu64 " DrawDone, %" PRIu64 " tokens, %" PRIu64 " cópias",
@@ -561,6 +604,10 @@ void game_run_report(void) {
     AM_LOG_INFO("TEV: até %u estágios num desenho; %" PRIu64 " desenhos com textura de Z, %" PRIu64
                 " com neblina, %" PRIu64 " com estágios indiretos; %" PRIu64 " cópias de Z para textura",
                 su->max_stages, su->ztex_draws, su->fog_draws, su->indirect_draws, efb->depth_copies);
+    report_gx_features(su, efb);
+}
+
+static void report_gx_features(const GxSetupStats *su, const GxEfbStats *efb) {
     const GxTexCacheStats *tc = gx_tex_cache_stats();
     AM_LOG_INFO("GX cache de texturas: %" PRIu64 " acertos, %" PRIu64 " decodificações (%" PRIu64 " texels)", tc->hits,
                 tc->misses, tc->decoded_texels);
@@ -574,7 +621,4 @@ void game_run_report(void) {
         AM_LOG_INFO("  cópia para textura: formato %u, %ux%u%s%s, %" PRIu64 " vez(es)", k->format, k->width, k->height,
                     k->half ? ", meia escala" : "", k->depth ? ", de Z" : "", k->count);
     }
-    AM_LOG_INFO("exceções: externa %" PRIu64 ", decrementer %" PRIu64 ", FP indisponível %" PRIu64,
-                exception_count_of(EXCEPTION_NUM_EXTERNAL), exception_count_of(EXCEPTION_NUM_DECREMENTER),
-                exception_count_of(EXCEPTION_NUM_FP_UNAVAILABLE));
 }

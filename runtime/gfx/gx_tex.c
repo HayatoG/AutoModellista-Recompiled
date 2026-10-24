@@ -434,7 +434,10 @@ static bool paletted(u32 format) {
 }
 
 static u32 tlut_bytes(u32 format) {
-    return format == GX_TF_C4 ? 32U : (format == GX_TF_C8 ? 512U : 32768U);
+    if (format == GX_TF_C4) {
+        return 32U;
+    }
+    return format == GX_TF_C8 ? 512U : 32768U;
 }
 
 /* Decodifica `levels` níveis numa entrada (já com a chave preenchida). */
@@ -444,7 +447,7 @@ static bool cache_fill(TexCacheEntry *e, const TexUnit *u) {
         e->offset[l] = total;
         total += (((u->width_minus_1 >> l) + 1U) * ((u->height_minus_1 >> l) + 1U)) * 4U;
     }
-    u8 *buf = realloc(e->rgba, total);
+    u8 *buf = total != 0U ? realloc(e->rgba, total) : NULL;
     if (buf == NULL) {
         return false;
     }

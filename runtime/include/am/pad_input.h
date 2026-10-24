@@ -19,9 +19,9 @@
 #include "am/types.h"
 
 /* Zona morta radial dos sticks do gamepad (fração do curso); fora dela o curso é reescalado para começar em 0. */
-#define PAD_INPUT_DEADZONE 0.12f
+#define PAD_INPUT_DEADZONE 0.12F
 /* Fração do gatilho analógico a partir da qual o clique digital (PAD_TRIGGER_L/R) é apertado. */
-#define PAD_INPUT_TRIGGER_CLICK 0.9f
+#define PAD_INPUT_TRIGGER_CLICK 0.9F
 
 void pad_input_map(const PlatformInput *in, SiPadState *out);
 

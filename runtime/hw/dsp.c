@@ -98,8 +98,9 @@ static void send_block(bool enabled) {
     if (enabled) {
         const GuestAddr at = MEM_CACHED_BASE | (s_dsp.audio_current & 0x03FFFFE0U);
         for (u32 i = 0; i < DSP_AUDIO_BLOCK_FRAMES; i++) {
-            lr[i * 2U] = (s16)mem_read16(NULL, at + (i * 4U) + 2U);
-            lr[(i * 2U) + 1U] = (s16)mem_read16(NULL, at + (i * 4U));
+            const size_t k = (size_t)i * 2U;
+            lr[k] = (s16)mem_read16(NULL, at + (i * 4U) + 2U);
+            lr[k + 1U] = (s16)mem_read16(NULL, at + (i * 4U));
         }
     }
     s_dsp.sink(lr, DSP_AUDIO_BLOCK_FRAMES, s_dsp.sink_user);

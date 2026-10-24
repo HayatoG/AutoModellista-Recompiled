@@ -118,8 +118,8 @@ TEST(compressor_attack_then_release) {
     EXPECT_TRUE(mem_init());
     ax_mixer_reset();
     for (u32 i = 0; i < N; i++) {
-        w16(TABLE + (i * 2U), 0x4000);             /* rampa de ataque 0: 0,5 */
-        w16(TABLE + ((12U * N) + i) * 2U, 0x2000); /* soltura 1 (entrada 11 + 1): 0,25 */
+        w16(TABLE + (i * 2U), 0x4000);               /* rampa de ataque 0: 0,5 */
+        w16(TABLE + (((12U * N) + i) * 2U), 0x2000); /* soltura 1 (entrada 11 + 1): 0,25 */
     }
     clear_init();
     put_init(AX_MAIN_L, 20000, 0);

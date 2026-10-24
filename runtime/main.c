@@ -27,8 +27,9 @@
  *   --audio-dump <arq.wav>     M7: grava a saída da DMA de áudio (32028 Hz, o mesmo formato do dspdump.wav do Dolphin),
  *                              no ritmo do tempo emulado: igual em qualquer velocidade e arquitetura
  *   --audio-dump-max-mb <n>    teto do --audio-dump em MiB (padrão 256); passou disso é am_fatal
- *   --audio on|off             M7: som pelo dispositivo padrão (padrão: on com --window, off sem janela)
- *   --realtime on|off          M7: segura o tempo emulado no ritmo do relógio (padrão: on com --window)
+ *   --audio on|off             M7: som pelo dispositivo padrão (padrão: on no modo interativo, --window sem
+ *                              --pad-script; off nos outros)
+ *   --realtime on|off          M7: segura o tempo emulado no ritmo do relógio (padrão: on no modo interativo)
  *   --gx-tex-cache on|off      M7: cache de texturas decodificadas (padrão on; off decodifica texel a texel, mesma
  *                              imagem)
  *   --timebase-out <arq>       M7: "quadro timebase" na entrada de cada quadro (o mesmo de dolphin_trace.py)
@@ -144,6 +145,23 @@ static bool parse_on_off(const char *text, int *out) {
     return false;
 }
 
+/* Opções on|off do M7. */
+static bool parse_switch(Options *o, const char *name, const char *value) {
+    const struct {
+        const char *name;
+        int *field;
+    } switches[] = {{"--audio", &o->audio},
+                    {"--realtime", &o->realtime},
+                    {"--frameskip", &o->frameskip},
+                    {"--gx-tex-cache", &o->gx_tex_cache}};
+    for (size_t i = 0; i < sizeof(switches) / sizeof(switches[0]); i++) {
+        if (strcmp(name, switches[i].name) == 0) {
+            return parse_on_off(value, switches[i].field);
+        }
+    }
+    return false;
+}
+
 static bool parse_option(Options *o, const char *name, const char *value) {
     u64 n = 0;
     if (strcmp(name, "--sys") == 0) {
@@ -173,10 +191,8 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->audio_dump = value;
     } else if (strcmp(name, "--audio-dump-max-mb") == 0 && parse_u64(value, &n) && n > 0U) {
         o->audio_dump_max_mb = n;
-    } else if (strcmp(name, "--audio") == 0 && parse_on_off(value, &o->audio)) {
-    } else if (strcmp(name, "--realtime") == 0 && parse_on_off(value, &o->realtime)) {
-    } else if (strcmp(name, "--frameskip") == 0 && parse_on_off(value, &o->frameskip)) {
-    } else if (strcmp(name, "--gx-tex-cache") == 0 && parse_on_off(value, &o->gx_tex_cache)) {
+    } else if (parse_switch(o, name, value)) {
+        return true;
     } else if (strcmp(name, "--timebase-out") == 0) {
         o->timebase_out = value;
     } else if (strcmp(name, "--gx-threads") == 0 && parse_u64(value, &n) && n <= 16U) {
@@ -432,6 +448,37 @@ static bool open_trace(const char *path, const Options *o) {
            trace_open(path, "dolphin_equiv=2609a", o->trace_max_mb * 1024ULL * 1024ULL);
 }
 
+/* Caminhos resolvidos em $AM_LOG_DIR: vivem enquanto a execução durar. */
+typedef struct RunPaths {
+    char disc[1024];
+    char events[1024];
+    char shots[4096];
+    char audio[1024];
+    char timebase[1024];
+} RunPaths;
+
+static GameRunConfig run_config(const Options *o, RunPaths *p) {
+    /* Modo interativo (janela sem roteiro): controle de verdade, som e tempo real por padrão. Com roteiro, a janela só
+     * assiste, na velocidade que der, como no M6. */
+    const bool interactive = o->window_scale != 0U && o->pad_script == NULL;
+    (void)snprintf(p->disc, sizeof(p->disc), "%s/..", o->sys_dir);
+    return (GameRunConfig){.disc_root = o->disc_root != NULL ? o->disc_root : p->disc,
+                           .frames = o->frames,
+                           .events = log_path(o->events, p->events, sizeof(p->events)),
+                           .pad_script = o->pad_script,
+                           .render = !o->gfx_off,
+                           .shots = log_path_list(o->shots, p->shots, sizeof(p->shots)),
+                           .window_scale = (u32)o->window_scale,
+                           .audio_dump = log_path(o->audio_dump, p->audio, sizeof(p->audio)),
+                           .audio_dump_max_mb = o->audio_dump_max_mb,
+                           .audio_out = o->audio >= 0 ? o->audio == 1 : interactive,
+                           .realtime = o->realtime >= 0 ? o->realtime == 1 : interactive,
+                           .gx_threads = (u32)o->gx_threads,
+                           .gx_tex_cache = o->gx_tex_cache != 0,
+                           .frameskip = o->frameskip != 0,
+                           .timebase_out = log_path(o->timebase_out, p->timebase, sizeof(p->timebase))};
+}
+
 static int run_boot(CPUState *cpu, const Options *o) {
     if (!recomp_is_generated()) {
         AM_LOG_ERROR("--sys exige o C gerado (compile com AM_WITH_GENERATED=ON)");
@@ -440,28 +487,8 @@ static int run_boot(CPUState *cpu, const Options *o) {
     SysFiles files = {0};
     DolImage dol;
     int status = EXIT_FAILURE;
-    char disc_buf[1024];
-    char events_buf[1024];
-    char shots_buf[4096];
-    char audio_buf[1024];
-    char tb_buf[1024];
-    const bool window = o->window_scale != 0U;
-    (void)snprintf(disc_buf, sizeof(disc_buf), "%s/..", o->sys_dir);
-    const GameRunConfig run = {.disc_root = o->disc_root != NULL ? o->disc_root : disc_buf,
-                               .frames = o->frames,
-                               .events = log_path(o->events, events_buf, sizeof(events_buf)),
-                               .pad_script = o->pad_script,
-                               .render = !o->gfx_off,
-                               .shots = log_path_list(o->shots, shots_buf, sizeof(shots_buf)),
-                               .window_scale = (u32)o->window_scale,
-                               .audio_dump = log_path(o->audio_dump, audio_buf, sizeof(audio_buf)),
-                               .audio_dump_max_mb = o->audio_dump_max_mb,
-                               .audio_out = o->audio >= 0 ? o->audio == 1 : window,
-                               .realtime = o->realtime >= 0 ? o->realtime == 1 : window,
-                               .gx_threads = (u32)o->gx_threads,
-                               .gx_tex_cache = o->gx_tex_cache != 0,
-                               .frameskip = o->frameskip != 0,
-                               .timebase_out = log_path(o->timebase_out, tb_buf, sizeof(tb_buf))};
+    RunPaths paths;
+    const GameRunConfig run = run_config(o, &paths);
     if (load_sys(o->sys_dir, &files) && prepare(cpu, o, &files, &dol) && game_run_init(&run) &&
         check_hooks(&files, &dol)) {
         char dump_buf[1024];

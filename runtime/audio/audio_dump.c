@@ -61,9 +61,10 @@ void audio_dump_write(const s16 *lr, u32 frames) {
     for (u32 done = 0; done < frames;) {
         const u32 n = frames - done < 256U ? frames - done : 256U;
         for (u32 i = 0; i < n * 2U; i++) {
-            const u16 v = (u16)lr[(done * 2U) + i]; /* little-endian, como o WAV pede */
-            buf[i * 2U] = (u8)v;
-            buf[(i * 2U) + 1U] = (u8)(v >> 8);
+            const u16 v = (u16)lr[((size_t)done * 2U) + i]; /* little-endian, como o WAV pede */
+            const size_t k = (size_t)i * 2U;
+            buf[k] = (u8)v;
+            buf[k + 1U] = (u8)(v >> 8);
         }
         if (fwrite(buf, 4, n, s_dump.file) != n) {
             am_fatal("--audio-dump: erro de escrita em %s", s_dump.path);
