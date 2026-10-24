@@ -53,6 +53,7 @@ OS_LINK_FIXED = 0x800C5C94
 OS_UNLINK = 0x800C5F08
 DVD_READ = 0x800CDC70  # Read(addr r3, length r4, offset r5, cb r6): escreve DICMDBUF/DIMAR/DILENGTH e DICR
 FRAME = 0x80051034
+DVD_IRQ = 0x800CD89C  # __DVDInterruptHandler (só com --timebase-out)
 FRAME_RETURN = 0x8004839C
 # VISetNextFrameBuffer (0x800D358C) guarda o ponteiro do próximo XFB nesta variável do vi.c, que o VIFlush
 # (0x800D345C) copia para o registro do VI (REA/Ghidra; analysis/known_addresses.md).
@@ -109,6 +110,8 @@ def launch(args) -> subprocess.Popen:
         "-C", "Dolphin.Input.BackgroundInput=True",
         "-e", args.iso,
     ]
+    for extra in args.dolphin_config:
+        cmd[-2:-2] = ["-C", extra]
     if getattr(args, "audio_dump", None):
         # M7: o Dolphin grava a saída da DMA de áudio (dspdump.wav) e a do streaming do disco (dtkdump.wav) em
         # <user>/Dump/Audio; DumpAudioSilent evita a pergunta de apagar arquivo existente. Antes do -e, como os outros.
@@ -382,6 +385,8 @@ def cmd_events(args) -> int:
     if steps and args.user_dir == DEFAULT_USER:
         args.user_dir = DEFAULT_USER_PIPE
     pad = PadPipe(args.user_dir) if steps else None
+    # M7: timebase na entrada de cada quadro ("quadro tb"), para comparar o tempo emulado com o da runtime.
+    tb_out = open(args.timebase_out, "w") if args.timebase_out else None
     proc = launch(args)
     client = None
     lines: list[str] = []
@@ -394,6 +399,8 @@ def cmd_events(args) -> int:
             pad.open()
         for a in (MAIN, OS_LINK, OS_LINK_FIXED, OS_UNLINK, DVD_READ, FRAME):
             client.add_breakpoint(a)
+        if tb_out is not None:
+            client.add_breakpoint(DVD_IRQ)
         while True:
             if time.monotonic() - t0 > args.timeout:
                 reason = f"tempo limite de {args.timeout}s"
@@ -409,11 +416,20 @@ def cmd_events(args) -> int:
                 lines.append(f"{kind} frame={frames} id={mid} real=0x{r[0]:08X}")
             elif pc == DVD_READ:
                 lines.append(f"di_read frame={frames} offset=0x{r[2]:09X} length=0x{r[1]:X} dst=0x{r[0] & 0x03FFFFFF:08X}")
+                if tb_out is not None:
+                    tb = (client.read_reg(gdb.REG_TBU) << 32) | client.read_reg(gdb.REG_TBL)
+                    tb_out.write(f"read 0x{r[2]:09X} 0x{r[1]:X} {tb}\n")
+            elif pc == DVD_IRQ:
+                tb = (client.read_reg(gdb.REG_TBU) << 32) | client.read_reg(gdb.REG_TBL)
+                tb_out.write(f"dvdirq {tb}\n")
             elif pc == FRAME and lr == FRAME_RETURN:
                 if frames >= args.frames:
                     reason = "frames"
                     break
                 frames += 1
+                if tb_out is not None:
+                    tb = (client.read_reg(gdb.REG_TBU) << 32) | client.read_reg(gdb.REG_TBL)
+                    tb_out.write(f"{frames} {tb}\n")
                 if pad is not None:
                     pad.set(pad_buttons(steps, frames))
                 xfb = int.from_bytes(client.read_mem(VI_NEXT_FB_VAR, 4), "big") if frames in shots else 0
@@ -426,6 +442,8 @@ def cmd_events(args) -> int:
         elapsed = time.monotonic() - t0
         if pad is not None:
             pad.close()
+        if tb_out is not None:
+            tb_out.close()
         stop(proc, client)
         if args.audio_dump:
             collect_audio_dump(args)
@@ -445,6 +463,8 @@ def main() -> int:
     ap.add_argument("--dsp-hle", type=lambda s: s.lower() in ("1", "true", "yes"), default=True)
     ap.add_argument("--dolphin-log", default=None)
     ap.add_argument("--rtc", type=int, default=0, help="relógio inicial em segundos desde 2000-01-01 (= --rtc da runtime)")
+    ap.add_argument("--dolphin-config", action="append", default=[],
+                    help="M7: opção extra do Dolphin, 'Sistema.Seção.Chave=valor' (repetível)")
     ap.add_argument("--video", default="Null", help="backend de vídeo do Dolphin (Null; Metal para --shots, que precisa do XFB na RAM)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("boot-state")
@@ -463,6 +483,7 @@ def main() -> int:
     e.add_argument("--pad-script", default=None, help="roteiro de botões (formato de am/pad_script.h)")
     e.add_argument("--shots", default=None, help="quadros cujo XFB vira PNG ao lado de --out (ex.: 300,800)")
     e.add_argument("--audio-dump", default=None, help="M7: grava o dspdump.wav do Dolphin neste arquivo")
+    e.add_argument("--timebase-out", default=None, help="M7: grava 'quadro timebase' na entrada de cada quadro")
     args = ap.parse_args()
     if args.cmd == "events":
         return cmd_events(args)
