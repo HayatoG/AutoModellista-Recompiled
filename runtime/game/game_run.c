@@ -17,6 +17,7 @@
 #include "am/dsp_hle.h"
 #include "am/exception.h"
 #include "am/exi_card.h"
+#include "am/front.h"
 #include "am/game.h"
 #include "am/game_diag.h"
 #include "am/gather_pipe.h"
@@ -38,6 +39,7 @@
 #include "am/platform.h"
 #include "am/platform_gpu.h"
 #include "am/recomp.h"
+#include "am/settings.h"
 #include "am/si.h"
 #include "am/timebase.h"
 #include "am/vi.h"
@@ -350,6 +352,9 @@ static HookAction on_frame(CPUState *cpu, void *user) {
         decide_skip(pace());
     }
     update_pad();
+    if (s_run.config.front != NULL) {
+        overlay_frame(!last_skipped);
+    }
     if (!capture_frame(cpu, !last_skipped)) {
         s_run.window_closed = true;
         return HOOK_STOP;
@@ -408,6 +413,21 @@ static bool init_scripts(const GameRunConfig *config) {
     return true;
 }
 
+/* M9 parte 5: teclas, botões e gamepad escolhidos na tela inicial, volume e o contador de quadros. */
+static void apply_front(struct Settings *s) {
+    const char *keys[PAD_CONTROL_COUNT];
+    for (u32 i = 0; i < (u32)PAD_CONTROL_COUNT; i++) {
+        keys[i] = s->keys[i];
+    }
+    if (!platform_input_set_keys(keys, PAD_CONTROL_COUNT)) {
+        AM_LOG_WARN("controle: alguma tecla do arquivo de configuração não existe; ficou sem tecla");
+    }
+    pad_input_set_bindings(&s->pad);
+    platform_gamepad_select(s->gamepad);
+    platform_audio_set_volume((float)s->volume / 100.0F);
+    overlay_start(s);
+}
+
 /* GX (trabalhadores, cache), janela e controle. */
 /* config é o s_run.config: sem GPU utilizável, o desenho cai no software e config->gpu fica false. */
 static bool init_video(GameRunConfig *config) {
@@ -452,6 +472,9 @@ static bool init_video(GameRunConfig *config) {
     }
     s_run.window = true;
     s_run.live_input = config->pad_script == NULL;
+    if (s_run.live_input && config->front != NULL) {
+        apply_front(config->front);
+    }
     AM_LOG_INFO("controle: %s", s_run.live_input ? "teclado e gamepad da janela (docs/M7_MENUS.md §3)"
                                                  : "roteiro --pad-script (a janela não lê a entrada)");
     return true;
@@ -544,6 +567,9 @@ void game_run_shutdown(void) {
         s_run.timebase = NULL;
     }
     dsp_set_audio_sink(NULL, NULL);
+    if (s_run.config.front != NULL) {
+        overlay_stop();
+    }
     gx_fifo_thread_stop();
     gx_raster_set_parallel(NULL, 1);
     platform_parallel_shutdown();

@@ -42,6 +42,10 @@ am_add_unit_test(pad_script)
 am_add_unit_test(pad_input)
 am_add_unit_test(dvd_timing)
 am_add_unit_test(memcard)
+am_add_unit_test(sha256)
+# M9 parte 5: configurações (INI) e banner do disco; a am_front puxa a plataforma, mas os testes não abrem janela.
+am_add_unit_test(settings)
+target_link_libraries(settings_test PRIVATE am_front)
 
 # Impasse isolado do jogo: as threads sintéticas esperam umas pelas outras; o chassi tem de parar com o watchdog.
 add_test(NAME sched_deadlock COMMAND sched_test deadlock)

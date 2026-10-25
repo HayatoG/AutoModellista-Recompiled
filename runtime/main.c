@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Executável da runtime.
  *
- *   automodellista                       autoteste do M3: liga o C gerado e confere o dispatcher (usado no CI)
+ *   automodellista                       M9 parte 5: tela inicial (com o C gerado ligado); sem ele, o autoteste do M3
+ *   automodellista --selftest            autoteste do M3: liga o C gerado e confere o dispatcher (usado no CI)
  *   automodellista --sys <dir> [opções]  M4: carrega o DOL de <dir> (sys/ do dtk disc extract) e roda até main
  *   automodellista --sys <dir> --frames <n>  M5: roda o jogo (disco, RELs) até completar n quadros do laço principal
  *
@@ -57,6 +58,16 @@
  *                              cartão ("No Memory Card" no boot), para os roteiros e os golden não mudarem
  *   --verbose                  log de depuração (acessos MMIO, UART)
  *
+ * M9 parte 5 (docs/M9_PARTE5_LAUNCHER.md): no modo interativo (sem --sys, ou janela sem --pad-script) a runtime lê as
+ * configurações do jogador (settings.ini) e mostra a tela inicial; a linha de comando tem prioridade sobre o arquivo.
+ * Os roteiros (--pad-script, sem janela) não leem o arquivo nem mostram nada além do jogo.
+ *   --no-launcher              pula a tela inicial (o jogo começa direto, com as configurações do arquivo)
+ *   --interactive              modo interativo com --sys mesmo sem --window (a escala vem do arquivo)
+ *   --fps-overlay on|off       contador de quadros sobre o jogo (F3 alterna)
+ *   --volume <0..100>          volume geral da saída de som (F9/F10 mudam de 10 em 10)
+ *   --fullscreen on|off        tela cheia (F11 ou Alt+Enter alternam)
+ *   --vsync on|off             a apresentação espera o retraço do monitor (padrão off: o ritmo é o do VI emulado)
+ *
  * Caminhos relativos de --trace/--dump-boot-state são resolvidos em $AM_LOG_DIR quando definido (os scripts usam
  * /Volumes/AMRecomp/logs): saída de execução nunca vai para o repositório. */
 #include <inttypes.h>
@@ -71,6 +82,7 @@
 #include "am/dol.h"
 #include "am/exception.h"
 #include "am/exi.h"
+#include "am/front.h"
 #include "am/game.h"
 #include "am/game_run.h"
 #include "am/guest_cpu.h"
@@ -80,8 +92,10 @@
 #include "am/memcard.h"
 #include "am/platform.h"
 #include "am/platform_gpu.h"
+#include "am/platform_ui.h"
 #include "am/ppc_sys.h"
 #include "am/recomp.h"
+#include "am/settings.h"
 #include "am/timebase.h"
 #include "am/trace.h"
 
@@ -120,6 +134,17 @@ typedef struct Options {
     int gpu_shader; /* PlatformGpuShader */
     bool stop_given;
     bool verbose;
+    /* M9 parte 5: -1 = não dado (vale o arquivo de configuração no modo interativo) */
+    int fps_overlay;
+    int fullscreen;
+    int vsync;
+    int volume;
+    bool gfx_given;
+    bool window_given;
+    bool max_seconds_given;
+    bool no_launcher;
+    bool interactive;
+    bool selftest;
 } Options;
 
 typedef struct LoadedFile {
@@ -181,7 +206,10 @@ static bool parse_switch(Options *o, const char *name, const char *value) {
                     {"--realtime", &o->realtime},
                     {"--frameskip", &o->frameskip},
                     {"--gx-thread", &o->gx_thread},
-                    {"--gx-tex-cache", &o->gx_tex_cache}};
+                    {"--gx-tex-cache", &o->gx_tex_cache},
+                    {"--fps-overlay", &o->fps_overlay},
+                    {"--fullscreen", &o->fullscreen},
+                    {"--vsync", &o->vsync}};
     for (size_t i = 0; i < sizeof(switches) / sizeof(switches[0]); i++) {
         if (strcmp(name, switches[i].name) == 0) {
             return parse_on_off(value, switches[i].field);
@@ -213,10 +241,14 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->shots = value;
     } else if (strcmp(name, "--window") == 0 && parse_u64(value, &n) && n > 0U && n <= 8U) {
         o->window_scale = n;
+        o->window_given = true;
     } else if (strcmp(name, "--gfx") == 0 &&
                (strcmp(value, "soft") == 0 || strcmp(value, "off") == 0 || strcmp(value, "gpu") == 0)) {
         o->gfx_off = strcmp(value, "off") == 0;
         o->gfx_gpu = strcmp(value, "gpu") == 0;
+        o->gfx_given = true;
+    } else if (strcmp(name, "--volume") == 0 && parse_u64(value, &n) && n <= 100U) {
+        o->volume = (int)n;
     } else if (strcmp(name, "--gpu-shader") == 0 &&
                (strcmp(value, "auto") == 0 || strcmp(value, "hand") == 0 || strcmp(value, "hlsl") == 0)) {
         o->gpu_shader = strcmp(value, "hand") == 0   ? PLATFORM_GPU_SHADER_HAND
@@ -246,6 +278,7 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->trace_max_mb = n;
     } else if (strcmp(name, "--max-seconds") == 0 && parse_u64(value, &n)) {
         o->max_seconds = n;
+        o->max_seconds_given = true;
     } else if (strcmp(name, "--same-pc-limit") == 0 && parse_u64(value, &n) && n > 0U) {
         o->same_pc_limit = n;
     } else if (strcmp(name, "--rtc") == 0 && parse_u64(value, &n)) {
@@ -271,11 +304,21 @@ static bool parse_args(int argc, char **argv, Options *o) {
                    .frameskip = -1,
                    .gx_thread = -1,
                    .gx_depth = 3U,
+                   .fps_overlay = -1,
+                   .fullscreen = -1,
+                   .vsync = -1,
+                   .volume = -1,
                    .max_seconds = 120U,
                    .same_pc_limit = CHASSIS_DEFAULT_SAME_PC_LIMIT};
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--verbose") == 0) {
             o->verbose = true;
+        } else if (strcmp(argv[i], "--no-launcher") == 0) {
+            o->no_launcher = true;
+        } else if (strcmp(argv[i], "--interactive") == 0) {
+            o->interactive = true;
+        } else if (strcmp(argv[i], "--selftest") == 0) {
+            o->selftest = true;
         } else if (i + 1 < argc && parse_option(o, argv[i], argv[i + 1])) {
             i++;
         } else {
@@ -502,7 +545,7 @@ typedef struct RunPaths {
     char timebase[1024];
 } RunPaths;
 
-static GameRunConfig run_config(const Options *o, RunPaths *p) {
+static GameRunConfig run_config(const Options *o, RunPaths *p, Settings *front) {
     /* Modo interativo (janela sem roteiro): controle de verdade, som e tempo real por padrão. Com roteiro, a janela só
      * assiste, na velocidade que der, como no M6. */
     const bool interactive = o->window_scale != 0U && o->pad_script == NULL;
@@ -527,7 +570,8 @@ static GameRunConfig run_config(const Options *o, RunPaths *p) {
                            .frameskip = o->frameskip != 0,
                            .timebase_out = log_path(o->timebase_out, p->timebase, sizeof(p->timebase)),
                            .profile = o->profile,
-                           .probes = o->probes};
+                           .probes = o->probes,
+                           .front = front};
 }
 
 /* Memory card do slot A (docs/M8_PARTE2B_CARD.md): o arquivo escolhido, ou o padrão do modo interativo. Grava de volta
@@ -597,7 +641,7 @@ static bool card_setup(const Options *o, bool interactive) {
     return ok;
 }
 
-static int run_boot(CPUState *cpu, const Options *o) {
+static int run_boot(CPUState *cpu, const Options *o, Settings *front) {
     if (!recomp_is_generated()) {
         AM_LOG_ERROR("--sys exige o C gerado (compile com AM_WITH_GENERATED=ON)");
         return EXIT_FAILURE;
@@ -606,7 +650,7 @@ static int run_boot(CPUState *cpu, const Options *o) {
     DolImage dol;
     int status = EXIT_FAILURE;
     RunPaths paths;
-    const GameRunConfig run = run_config(o, &paths);
+    const GameRunConfig run = run_config(o, &paths, front);
     if (!card_setup(o, o->window_scale != 0U && o->pad_script == NULL)) {
         return EXIT_FAILURE;
     }
@@ -632,7 +676,8 @@ static int run_boot(CPUState *cpu, const Options *o) {
             trace_close();
             report(cpu, stop, &stats);
             const bool frames_ok = stop == CHASSIS_STOP_HOOK && game_run_frame_target_reached();
-            status = stop == CHASSIS_STOP_ADDRESS || frames_ok ? EXIT_SUCCESS : EXIT_FAILURE;
+            const bool closed = stop == CHASSIS_STOP_HOOK && game_run_window_closed(); /* o jogador fechou */
+            status = stop == CHASSIS_STOP_ADDRESS || frames_ok || closed ? EXIT_SUCCESS : EXIT_FAILURE;
         }
     }
     game_run_shutdown();
@@ -648,6 +693,43 @@ static int run_selftest(void) {
         return EXIT_SUCCESS;
     }
     return EXIT_FAILURE;
+}
+
+/* M9 parte 5: modo interativo = sem --sys (com o C gerado) ou janela sem roteiro. Os roteiros nunca entram aqui. */
+static bool interactive_session(const Options *o) {
+    return !o->selftest && recomp_is_generated() &&
+           (o->sys_dir == NULL || o->interactive || (o->window_scale != 0U && o->pad_script == NULL));
+}
+
+/* Configurações e tela inicial; o que o jogador escolheu vira as opções da execução. */
+static int run_session(CPUState *cpu, Options *o) {
+    const FrontOverrides ov = {.sys_dir = o->sys_dir,
+                               .gpu = o->gfx_given && !o->gfx_off ? (o->gfx_gpu ? 1 : 0) : -1,
+                               .window_scale = o->window_given ? (u32)o->window_scale : 0U,
+                               .fullscreen = o->fullscreen,
+                               .vsync = o->vsync,
+                               .fps_overlay = o->fps_overlay,
+                               .volume = o->volume,
+                               .memcard = o->memcard,
+                               .no_launcher = o->no_launcher,
+                               .gpu_shader = o->gpu_shader};
+    static FrontSession fs;
+    const FrontStart start = front_session_begin(&fs, &ov, "Auto Modellista Recompiled");
+    if (start != FRONT_PLAY) {
+        return start == FRONT_QUIT ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    o->sys_dir = fs.sys_dir;
+    o->gfx_gpu = !o->gfx_off && fs.eff.gpu;
+    o->window_scale = fs.eff.window_scale;
+    o->memcard = fs.eff.memcard[0] != '\0' ? fs.eff.memcard : NULL;
+    if (o->frames == 0U) { /* sem --frames: até a janela fechar */
+        o->frames = UINT64_MAX;
+        o->stop_at = o->stop_given ? o->stop_at : 0U;
+    }
+    o->max_seconds = o->max_seconds_given ? o->max_seconds : 0U;
+    const int status = run_boot(cpu, o, &fs.eff);
+    front_session_end(&fs);
+    return status;
 }
 
 int main(int argc, char **argv) {
@@ -674,7 +756,11 @@ int main(int argc, char **argv) {
         const size_t chunks = recomp_register_all();
         AM_LOG_INFO("C gerado: %s; %zu trecho(s) no dispatcher", recomp_is_generated() ? "ligado" : "ausente (stub)",
                     chunks);
-        status = opts.sys_dir != NULL ? run_boot(&cpu, &opts) : run_selftest();
+        if (interactive_session(&opts)) {
+            status = run_session(&cpu, &opts);
+        } else {
+            status = opts.sys_dir != NULL ? run_boot(&cpu, &opts, NULL) : run_selftest();
+        }
         am_fatal_set_cpu(NULL);
         guest_cpu_destroy(&cpu);
     }

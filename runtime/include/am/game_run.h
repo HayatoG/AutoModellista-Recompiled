@@ -6,6 +6,8 @@
 
 #include "am/types.h"
 
+struct Settings;
+
 typedef struct GameRunConfig {
     const char *disc_root;    /* contém sys/ e files/ */
     u64 frames;               /* 0 = sem parada por quadros */
@@ -28,6 +30,8 @@ typedef struct GameRunConfig {
     u32 gx_depth;             /* M8: eventos que o GX pode ficar atrás da CPU com a GPU (am/gx_fifo.h; 0..3) */
     const char *profile;      /* M8: NULL ou "<q0>:<q1>:<arq>" (am/game_diag.h) */
     const char *probes;       /* M8: NULL ou "<q0>:<hex>,..." (am/game_diag.h) */
+    struct Settings *front;   /* M9 parte 5: modo interativo com as configurações do jogador (teclas, gamepad,
+                                 volume, contador de quadros; am/front.h); NULL nos roteiros */
 } GameRunConfig;
 
 /* Abre o disco, registra os ganchos (OSLink, quadros) e confere que todos passam pelo chassi. */

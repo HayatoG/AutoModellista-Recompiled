@@ -4,6 +4,10 @@
 #ifndef AM_GAME_H
 #define AM_GAME_H
 
+/* SHA-256 do main.dol de que o C foi gerado (o mesmo de analysis/iso/main_dol.sha256); a tela inicial confere a
+ * pasta escolhida com ele (M9 parte 5). É um hash, não bytes do jogo. */
+#define GAME_MAIN_DOL_SHA256 "75b22d528ebf702972931f901f48ce0e81cbf2b98567b3471d75182c1bdee71c"
+
 #define GAME_ADDR_START   0x80003154U /* __start (entry point do cabeçalho do DOL) */
 #define GAME_ADDR_OS_INIT 0x800C25DCU /* OSInit */
 #define GAME_ADDR_MAIN    0x800719ACU /* main */

@@ -1,0 +1,99 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* M9 parte 5: o settings.ini (leitura, escrita e volta) e o banner do disco decodificado pelo GX (bytes sintéticos). */
+#include <string.h>
+
+#include "am/banner.h"
+#include "am/pad_input.h"
+#include "am/settings.h"
+
+#include "am_test.h"
+
+TEST(defaults_follow_dolphin) {
+    Settings s;
+    settings_defaults(&s);
+    EXPECT_TRUE(s.gpu);
+    EXPECT_EQ(s.window_scale, 2U);
+    EXPECT_EQ(s.volume, 100U);
+    EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_A], "X") == 0);
+    EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_START], "Return") == 0);
+    EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_HALF], "Left Shift") == 0);
+    EXPECT_EQ(s.pad.pad[PAD_CONTROL_Z], (1U << PLATFORM_PAD_LEFT_SHOULDER) | (1U << PLATFORM_PAD_RIGHT_SHOULDER));
+}
+
+TEST(parse_overrides_and_counts_bad_lines) {
+    static const char text[] = "# comentário\n"
+                               "[game]\n dir = /jogos/am \n"
+                               "[video]\nbackend = soft\nscale = 3\nfullscreen = 1\nvsync = on\nfps_overlay = true\n"
+                               "scale = 99\n"
+                               "[audio]\nvolume = 35\n"
+                               "[input]\ngamepad = Xbox Wireless Controller\n"
+                               "[keyboard]\nA = Space\n"
+                               "[gamepad]\nA = east+south\nB =\nZ = nada\n"
+                               "linha sem igual\n";
+    Settings s;
+    settings_defaults(&s);
+    const u32 bad = settings_parse(text, sizeof(text) - 1U, &s);
+    EXPECT_EQ(bad, 3U); /* scale = 99, Z = nada, linha sem igual */
+    EXPECT_TRUE(strcmp(s.game_dir, "/jogos/am") == 0);
+    EXPECT_TRUE(!s.gpu);
+    EXPECT_EQ(s.window_scale, 3U);
+    EXPECT_TRUE(s.fullscreen && s.vsync && s.fps_overlay);
+    EXPECT_EQ(s.volume, 35U);
+    EXPECT_TRUE(strcmp(s.gamepad, "Xbox Wireless Controller") == 0);
+    EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_A], "Space") == 0);
+    EXPECT_EQ(s.pad.pad[PAD_CONTROL_A], (1U << PLATFORM_PAD_EAST) | (1U << PLATFORM_PAD_SOUTH));
+    EXPECT_EQ(s.pad.pad[PAD_CONTROL_B], 0U);
+    EXPECT_EQ(s.pad.pad[PAD_CONTROL_Z], (1U << PLATFORM_PAD_LEFT_SHOULDER) | (1U << PLATFORM_PAD_RIGHT_SHOULDER));
+}
+
+TEST(format_round_trip) {
+    Settings a;
+    settings_defaults(&a);
+    (void)strcpy(a.game_dir, "C:\\Jogos\\Auto Modellista");
+    (void)strcpy(a.memcard, "/tmp/cartao.raw");
+    a.gpu = false;
+    a.volume = 0;
+    a.pad.pad[PAD_CONTROL_L] = 1U << PLATFORM_PAD_LEFT_SHOULDER;
+    (void)strcpy(a.keys[PAD_CONTROL_C_UP], "Keypad 8");
+    static char text[16384];
+    const size_t n = settings_format(&a, text, sizeof(text));
+    EXPECT_TRUE(n > 0U);
+    Settings b;
+    settings_defaults(&b);
+    EXPECT_EQ(settings_parse(text, n, &b), 0U);
+    EXPECT_TRUE(memcmp(&a, &b, sizeof(a)) == 0);
+    EXPECT_EQ(settings_format(&a, text, 64), 0U); /* não coube */
+}
+
+/* Banner de 96x32 em RGB5A3 (blocos 4x4): o texel (0,0) opaco vermelho, o (5,1) com alfa; o nome longo em 0x1860. */
+TEST(banner_decodes_rgb5a3_tiles) {
+    static u8 bnr[0x1960];
+    memset(bnr, 0, sizeof(bnr));
+    memcpy(bnr, "BNR1", 4);
+    bnr[0x20] = 0xFC; /* 1 11111 00000 00000: vermelho opaco */
+    bnr[0x21] = 0x00;
+    const u32 tile = 1U; /* (5,1): bloco 1 (x 4..7), linha 1, coluna 1 */
+    const u32 at = 0x20U + (tile * 32U) + ((1U * 4U) + 1U) * 2U;
+    bnr[at] = 0x30; /* 0 011 0000 0000 1111: alfa 3/7, azul */
+    bnr[at + 1U] = 0x0F;
+    memcpy(bnr + 0x1860, "  auto modellista  ", 19);
+    Banner b;
+    EXPECT_TRUE(banner_decode(bnr, sizeof(bnr), &b));
+    EXPECT_EQ(b.rgba[0], 255U);
+    EXPECT_EQ(b.rgba[1], 0U);
+    EXPECT_EQ(b.rgba[3], 255U);
+    const u8 *p = &b.rgba[((1U * BANNER_WIDTH) + 5U) * 4U];
+    EXPECT_EQ(p[2], 255U);
+    EXPECT_TRUE(p[3] > 0U && p[3] < 255U);
+    EXPECT_TRUE(strcmp(b.name, "auto modellista") == 0);
+    bnr[0] = 'X';
+    EXPECT_TRUE(!banner_decode(bnr, sizeof(bnr), &b));
+}
+
+int main(void) {
+    RUN_TEST(defaults_follow_dolphin);
+    RUN_TEST(parse_overrides_and_counts_bad_lines);
+    RUN_TEST(format_round_trip);
+    RUN_TEST(banner_decodes_rgb5a3_tiles);
+    return am_test_finish();
+}
