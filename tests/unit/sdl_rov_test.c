@@ -1,13 +1,18 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* M9 parte 1b: o patch da SDL (patches/sdl/) de ponta a ponta no Metal. Um fragment shader lê e grava uma textura
- * R32_UINT de storage (SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) dentro de [[raster_order_group(0)]]:
- * centenas de triângulos sobrepostos cobrem a textura inteira e cada um faz v = v * 31 + (tri + 1). O resultado só
- * bate com a conta da CPU se os fragmentos de cada pixel rodarem na ordem da API (dentro de um desenho, entre
- * desenhos e entre passes). Também confere a numeração do Metal: textura de storage só de leitura em [[texture(0)]]
- * (a semente) e a gravável logo depois, em [[texture(1)]] (docs/M9_PARTE1B_SDL.md §2).
+/* M9 partes 1b e 3a: o patch da SDL (patches/sdl/) de ponta a ponta. Um fragment shader lê e grava uma textura
+ * R32_UINT de storage (SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) na ordem da rasterização: centenas de
+ * triângulos sobrepostos cobrem a textura inteira e cada um faz v = v * 31 + (tri + 1). O resultado só bate com a
+ * conta da CPU se os fragmentos de cada pixel rodarem na ordem da API (dentro de um desenho, entre desenhos e entre
+ * passes). Também confere a numeração dos registros: textura de storage só de leitura primeiro (a semente) e a
+ * gravável logo depois (docs/M9_PARTE1B_SDL.md §2).
  *
- *   sdl_rov_test           o teste (sai com 77, "pulado", sem SDL remendada ou sem GPU Metal)
- *   sdl_rov_test --no-rog  o mesmo shader sem raster_order_group: só informa quantos pixels saíram errados */
+ * Shader por backend: no Metal, MSL à mão com [[raster_order_group(0)]] ([[texture(0)]] e [[texture(1)]]); no Vulkan
+ * e no D3D12, o SPIR-V e o DXIL de tests/shaders/rov_min.hlsl (RasterizerOrderedTexture2D, interlock no SPIR-V; set
+ * 2, bindings 0 e 1), embutidos em tests/shaders/rov_min_shaders.h (docs/M9_PARTE3A_LINUX.md §3).
+ *
+ *   sdl_rov_test             o teste (sai com 77, "pulado", sem SDL remendada ou sem GPU)
+ *   sdl_rov_test --no-order  o mesmo shader sem a ordem (sem raster_order_group / sem interlock): só informa quantos
+ *                            pixels saíram errados (--no-rog é o nome antigo) */
 #include <stdio.h>
 #include <string.h>
 
@@ -27,9 +32,13 @@
 
 #ifdef SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE
 
+#include "../shaders/rov_min_shaders.h"
 #include "am_test.h"
 
-/* MSL à mão por enquanto (o HLSL → MSL do shadercross é outra peça do M9). %s vira o atributo de ordem ou nada.
+/* Formatos que o teste oferece à SDL; ela escolhe o backend e o teste, o shader do formato que veio. */
+#define ROV_FORMATS (SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL)
+
+/* MSL à mão para o Metal (o metallib do HLSL precisaria do Xcode no build). %s vira o atributo de ordem ou nada.
  * Cada triângulo cobre a textura toda; o índice do triângulo vem do vertex_id, que no Metal já inclui o
  * first_vertex do desenho. O color target é só para o passe ter um attachment (o Metal pede tamanho). */
 static const char s_msl_fmt[] =
@@ -63,13 +72,20 @@ static u32 seed_of(u32 i) {
     return i * 2654435761U ^ 0x9E3779B9U;
 }
 
-static SDL_GPUShader *make_shader(const char *src, const char *entry, SDL_GPUShaderStage stage, u32 storage, u32 rw) {
+typedef struct RovCode {
+    const u8 *code;
+    size_t size;
+    const char *entry;
+} RovCode;
+
+static SDL_GPUShader *make_shader(SDL_GPUShaderFormat format, RovCode c, SDL_GPUShaderStage stage, u32 storage,
+                                  u32 rw) {
     const SDL_PropertiesID props = SDL_CreateProperties();
     (void)SDL_SetNumberProperty(props, SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER, rw);
-    const SDL_GPUShaderCreateInfo info = {.code_size = strlen(src),
-                                          .code = (const Uint8 *)src,
-                                          .entrypoint = entry,
-                                          .format = SDL_GPU_SHADERFORMAT_MSL,
+    const SDL_GPUShaderCreateInfo info = {.code_size = c.size,
+                                          .code = c.code,
+                                          .entrypoint = c.entry,
+                                          .format = format,
                                           .stage = stage,
                                           .num_storage_textures = storage,
                                           .props = props};
@@ -78,15 +94,38 @@ static SDL_GPUShader *make_shader(const char *src, const char *entry, SDL_GPUSha
     return sh;
 }
 
-static bool make_pipeline(bool rog) {
+/* O shader do formato do device; ordered = com raster_order_group / interlock / ROV. */
+static bool make_pipeline(bool ordered) {
     static char src[sizeof(s_msl_fmt) + 32];
-    (void)snprintf(src, sizeof(src), s_msl_fmt, rog ? ", raster_order_group(0)" : "");
-    SDL_GPUShader *vs = make_shader(src, "rov_vs", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
-    SDL_GPUShader *fs = make_shader(src, "rov_fs", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(s_rov.device);
+    SDL_GPUShaderFormat format;
+    RovCode vc;
+    RovCode fc;
+    if ((formats & SDL_GPU_SHADERFORMAT_MSL) != 0U) {
+        (void)snprintf(src, sizeof(src), s_msl_fmt, ordered ? ", raster_order_group(0)" : "");
+        format = SDL_GPU_SHADERFORMAT_MSL;
+        vc = (RovCode){(const u8 *)src, strlen(src), "rov_vs"};
+        fc = (RovCode){(const u8 *)src, strlen(src), "rov_fs"};
+    } else if ((formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0U) {
+        format = SDL_GPU_SHADERFORMAT_SPIRV;
+        vc = (RovCode){s_rov_vs_spirv, sizeof(s_rov_vs_spirv), "vs_main"};
+        fc = ordered ? (RovCode){s_rov_fs_spirv, sizeof(s_rov_fs_spirv), "ps_main"}
+                     : (RovCode){s_rov_fs_nolock_spirv, sizeof(s_rov_fs_nolock_spirv), "ps_main"};
+    } else {
+        format = SDL_GPU_SHADERFORMAT_DXIL;
+        vc = (RovCode){s_rov_vs_dxil, sizeof(s_rov_vs_dxil), "vs_main"};
+        fc = ordered ? (RovCode){s_rov_fs_dxil, sizeof(s_rov_fs_dxil), "ps_main"}
+                     : (RovCode){s_rov_fs_nolock_dxil, sizeof(s_rov_fs_nolock_dxil), "ps_main"};
+    }
+    SDL_GPUShader *vs = make_shader(format, vc, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
+    SDL_GPUShader *fs = make_shader(format, fc, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
     if (vs == NULL || fs == NULL) {
         (void)printf("  shader: %s\n", SDL_GetError());
         return false;
     }
+    (void)printf("  shader: %s\n", format == SDL_GPU_SHADERFORMAT_MSL     ? "MSL à mão"
+                                   : format == SDL_GPU_SHADERFORMAT_SPIRV ? "SPIR-V de rov_min.hlsl"
+                                                                          : "DXIL de rov_min.hlsl");
     const SDL_GPUColorTargetDescription target = {.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM};
     const SDL_GPUGraphicsPipelineCreateInfo info = {
         .vertex_shader = vs,
@@ -192,18 +231,21 @@ static u32 count_wrong(void) {
 }
 
 static int open_device(void) {
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    /* Sem tela (CI, Linux sem X11/Wayland), o driver offscreen da SDL ainda carrega o Vulkan. */
+    if (!SDL_Init(SDL_INIT_VIDEO) && (!SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen") || !SDL_Init(SDL_INIT_VIDEO))) {
         (void)printf("pulado: SDL_Init(VIDEO): %s\n", SDL_GetError());
         return ROV_SKIP;
     }
     const SDL_PropertiesID props = SDL_CreateProperties();
     (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
+    (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+    (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, true);
     (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, true);
     (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, true);
     s_rov.device = SDL_CreateGPUDeviceWithProperties(props);
     SDL_DestroyProperties(props);
     if (s_rov.device == NULL) {
-        (void)printf("pulado: sem GPU com MSL: %s\n", SDL_GetError());
+        (void)printf("pulado: sem GPU com MSL, SPIR-V ou DXIL: %s\n", SDL_GetError());
         return ROV_SKIP;
     }
     const SDL_PropertiesID dev = SDL_GetGPUDeviceProperties(s_rov.device);
@@ -216,7 +258,7 @@ static int open_device(void) {
 
 /* Sem pedir o recurso na criação, a flag nova é recusada (quem não usa o patch não vê diferença). */
 TEST(recurso_desligado_por_padrao) {
-    SDL_GPUDevice *plain = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, false, NULL);
+    SDL_GPUDevice *plain = SDL_CreateGPUDevice(ROV_FORMATS, false, NULL);
     EXPECT_NOT_NULL(plain);
     if (plain == NULL) {
         return;
@@ -248,11 +290,11 @@ TEST(contador_na_ordem_da_api) {
     (void)printf("  %u triângulos por pixel em 3 desenhos e 2 passes: %u de %u pixels diferentes da CPU\n",
                  ROV_TRIS_TOTAL, wrong, ROV_PIXELS);
     EXPECT_EQ(wrong, 0);
-    EXPECT_EQ(s_rov.result[0] != 0xDEADBEEFU, 1); /* a semente veio de [[texture(0)]], não do lixo */
+    EXPECT_EQ(s_rov.result[0] != 0xDEADBEEFU, 1); /* a semente veio da textura só de leitura, não do lixo */
 }
 
 int main(int argc, char **argv) {
-    const bool no_rog = argc > 1 && strcmp(argv[1], "--no-rog") == 0;
+    const bool no_order = argc > 1 && (strcmp(argv[1], "--no-order") == 0 || strcmp(argv[1], "--no-rog") == 0);
     for (u32 i = 0; i < ROV_PIXELS; i++) {
         s_rov.seed_texels[i] = seed_of(i);
     }
@@ -267,10 +309,10 @@ int main(int argc, char **argv) {
         (void)printf("texturas: %s\n", SDL_GetError());
         return 1;
     }
-    if (no_rog) {
+    if (no_order) {
         const bool ok = make_pipeline(false) && run();
-        (void)printf("sem raster_order_group: %u de %u pixels diferentes da CPU\n", ok ? count_wrong() : ROV_PIXELS,
-                     ROV_PIXELS);
+        (void)printf("sem ordem (sem raster_order_group / interlock): %u de %u pixels diferentes da CPU\n",
+                     ok ? count_wrong() : ROV_PIXELS, ROV_PIXELS);
         return ok ? 0 : 1;
     }
     RUN_TEST(recurso_desligado_por_padrao);

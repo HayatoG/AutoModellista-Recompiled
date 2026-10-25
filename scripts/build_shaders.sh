@@ -2,7 +2,7 @@
 # Compila os ubershaders do GX offline e gera os headers C que a runtime embute. Tudo o que sai é versionado: o build
 # normal não precisa de compilador de shader e a runtime nunca compila shader em tempo de execução
 # (docs/PLANO_PORT_C.md §3).
-#   scripts/build_shaders.sh [hand|hlsl|all]   (padrão: all)
+#   scripts/build_shaders.sh [hand|hlsl|rov|all]   (padrão: all)
 #
 # hand (M8): runtime/shaders/gx_ubershader.metal (MSL à mão, framebuffer fetch) -> gx_ubershader.metallib e
 #   gx_ubershader_metallib.h. Precisa do Metal Toolchain do Xcode (xcrun metal / metallib).
@@ -11,11 +11,14 @@
 #   runtime/shaders/generated/ para leitura e diff. Precisa do shadercross ($SHADERCROSS, padrão o de
 #   scripts/build_shadercross.sh), do Metal Toolchain e, para conferir o SPIR-V, do spirv-val (Homebrew).
 #   docs/M9_PARTE1B_HLSL.md §2.
+# rov (M9 parte 3a): tests/shaders/rov_min.hlsl -> SPIR-V e DXIL do teste sdl_rov (com interlock/ROV e, com
+#   -DAM_NO_INTERLOCK, o controle sem ordem) em tests/shaders/rov_min_shaders.h. Precisa do shadercross e do
+#   spirv-val/spirv-dis. docs/M9_PARTE3A_LINUX.md §3.
 set -euo pipefail
 ROOT=${0:A:h:h}
 OUT=$ROOT/runtime/shaders
 WHAT=${1:-all}
-[[ $WHAT == hand || $WHAT == hlsl || $WHAT == all ]] || { echo "uso: $0 [hand|hlsl|all]" >&2; exit 2; }
+[[ $WHAT == hand || $WHAT == hlsl || $WHAT == rov || $WHAT == all ]] || { echo "uso: $0 [hand|hlsl|rov|all]" >&2; exit 2; }
 TMP=${TMPDIR:-/tmp}/am_shaders.$$
 mkdir -p $TMP
 trap 'rm -rf $TMP' EXIT
@@ -87,4 +90,32 @@ if [[ $WHAT == hlsl || $WHAT == all ]]; then
   echo "hlsl: DXIL $(wc -c < $TMP/gx_vs.dxil | tr -d ' ')+$(wc -c < $TMP/gx_fs.dxil | tr -d ' ')," \
     "SPIR-V $(wc -c < $TMP/gx_vs.spv | tr -d ' ')+$(wc -c < $TMP/gx_fs.spv | tr -d ' ')," \
     "metallib $(wc -c < $TMP/hlsl.metallib | tr -d ' ') bytes em gx_ubershader_hlsl.h"
+fi
+
+if [[ $WHAT == rov || $WHAT == all ]]; then
+  SC=${SHADERCROSS:-/Volumes/AMRecomp/ext/shadercross/bin/shadercross}
+  [[ -x $SC ]] || { echo "falta o shadercross em $SC (scripts/build_shadercross.sh)" >&2; exit 1; }
+  export DYLD_LIBRARY_PATH=${SC:h:h}/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}
+  SRC=$ROOT/tests/shaders/rov_min.hlsl
+  for d in SPIRV:spv DXIL:dxil; do
+    fmt=${d%%:*}; ext=${d##*:}
+    $SC $SRC -s HLSL -d $fmt -t vertex -e vs_main -o $TMP/rov_vs.$ext
+    $SC $SRC -s HLSL -d $fmt -t fragment -e ps_main -o $TMP/rov_fs.$ext
+    $SC $SRC -s HLSL -d $fmt -t fragment -e ps_main -DAM_NO_INTERLOCK -o $TMP/rov_fs_nolock.$ext
+  done
+  for f in rov_vs rov_fs rov_fs_nolock; do
+    spirv-val --target-env vulkan1.2 $TMP/$f.spv || { echo "spirv-val recusou $f" >&2; exit 1; }
+    [[ $(head -c 4 $TMP/$f.dxil) == DXBC ]] || { echo "DXIL de $f sem contêiner DXBC" >&2; exit 1; }
+  done
+  spirv-dis $TMP/rov_fs.spv -o $TMP/rov_fs.spvasm
+  spirv-dis $TMP/rov_fs_nolock.spv -o $TMP/rov_fs_nolock.spvasm
+  grep -q 'PixelInterlockOrderedEXT' $TMP/rov_fs.spvasm \
+    && [[ $(grep -c 'OpBeginInvocationInterlockEXT' $TMP/rov_fs.spvasm) == 1 ]] \
+    || { echo "SPIR-V do rov_fs sem PixelInterlockOrderedEXT ou com mais de uma região ordenada" >&2; exit 1; }
+  ! grep -q 'InterlockEXT' $TMP/rov_fs_nolock.spvasm || { echo "rov_fs_nolock com interlock" >&2; exit 1; }
+  embed $ROOT/tests/shaders/rov_min_shaders.h rov_min.hlsl \
+    s_rov_vs_spirv $TMP/rov_vs.spv s_rov_fs_spirv $TMP/rov_fs.spv s_rov_fs_nolock_spirv $TMP/rov_fs_nolock.spv \
+    s_rov_vs_dxil $TMP/rov_vs.dxil s_rov_fs_dxil $TMP/rov_fs.dxil s_rov_fs_nolock_dxil $TMP/rov_fs_nolock.dxil
+  echo "rov: SPIR-V $(wc -c < $TMP/rov_vs.spv | tr -d ' ')+$(wc -c < $TMP/rov_fs.spv | tr -d ' ')+$(wc -c < $TMP/rov_fs_nolock.spv | tr -d ' ')," \
+    "DXIL $(wc -c < $TMP/rov_vs.dxil | tr -d ' ')+$(wc -c < $TMP/rov_fs.dxil | tr -d ' ')+$(wc -c < $TMP/rov_fs_nolock.dxil | tr -d ' ') bytes em tests/shaders/rov_min_shaders.h"
 fi
