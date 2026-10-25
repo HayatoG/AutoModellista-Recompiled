@@ -80,8 +80,9 @@ mão.
 
 ## 3. Controle
 
-Sem `--pad-script`, a janela é o controle 1 (o roteiro continua com prioridade para os testes). O mapeamento é fixo,
-em `runtime/include/am/pad_input.h`:
+Sem `--pad-script`, a janela é o controle 1 (o roteiro continua com prioridade para os testes). O mapeamento padrão
+está em `runtime/include/am/pad_input.h` (desde o M9 parte 5, remapeável na tela inicial; `docs/M9_PARTE5_LAUNCHER.md`
+§3):
 
 | GameCube | Teclado (padrão do Dolphin, `GCPadEmu.cpp`) | Gamepad (SDL_Gamepad, por posição) |
 | --- | --- | --- |
