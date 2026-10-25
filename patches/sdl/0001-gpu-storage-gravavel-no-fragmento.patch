@@ -1,0 +1,1378 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HayatoG <22659047+HayatoG@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 01:06:03 -0300
+Subject: [PATCH] =?UTF-8?q?GPU:=20texturas=20de=20storage=20grav=C3=A1veis?=
+ =?UTF-8?q?=20no=20fragment=20shader,=20na=20ordem=20da=20rasteriza=C3=A7?=
+ =?UTF-8?q?=C3=A3o?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Recurso opcional, pedido na criação do device com
+SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN; sem
+ele nada muda para quem usa a SDL.
+
+- API: flag SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE, propriedade de
+  shader SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER,
+  SDL_BindGPUFragmentReadWriteStorageTextures() e as propriedades de device
+  SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN e
+  SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN.
+- Registros: SPIR-V set 2 depois dos storage buffers; DXIL (u[n], space2);
+  MSL [[texture]] depois das texturas de storage só de leitura.
+- D3D12: faixa UAV visível ao pixel shader, descritores UAV, estado padrão
+  UNORDERED_ACCESS com barreira UAV no fim do passe, ROVsSupported.
+- Vulkan: modo GRAPHICS_STORAGE_READ_WRITE (GENERAL, SHADER_READ|WRITE),
+  fragmentStoresAndAtomics, VK_EXT_fragment_shader_interlock com
+  fragmentShaderPixelInterlock no pNext, barreira de memória no fim do passe.
+- Metal: MTLTextureUsageShaderRead|Write, amarração no fragmento,
+  rasterOrderGroupsSupported e readWriteTextureSupport.
+---
+ include/SDL3/SDL_gpu.h                  |  74 ++++++++-
+ src/dynapi/SDL_dynapi.sym               |   1 +
+ src/dynapi/SDL_dynapi_overrides.h       |   1 +
+ src/dynapi/SDL_dynapi_procs.h           |   1 +
+ src/gpu/SDL_gpu.c                       | 103 ++++++++++++-
+ src/gpu/SDL_sysgpu.h                    |  12 ++
+ src/gpu/d3d12/SDL_gpu_d3d12.c           | 138 ++++++++++++++++-
+ src/gpu/metal/SDL_gpu_metal.m           |  86 +++++++++++
+ src/gpu/vulkan/SDL_gpu_vulkan.c         | 197 ++++++++++++++++++++++--
+ src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h |   2 +
+ 10 files changed, 594 insertions(+), 21 deletions(-)
+
+diff --git a/include/SDL3/SDL_gpu.h b/include/SDL3/SDL_gpu.h
+index b3e9a895..4de802d0 100644
+--- a/include/SDL3/SDL_gpu.h
++++ b/include/SDL3/SDL_gpu.h
+@@ -910,6 +910,7 @@ typedef Uint32 SDL_GPUTextureUsageFlags;
+ #define SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ                    (1u << 4) /**< Texture supports storage reads in the compute stage. */
+ #define SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE                   (1u << 5) /**< Texture supports storage writes in the compute stage. */
+ #define SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE (1u << 6) /**< Texture supports reads and writes in the same compute shader. This is NOT equivalent to READ | WRITE. */
++#define SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE             (1u << 7) /**< Texture supports reads and writes in the same fragment shader (see SDL_BindGPUFragmentReadWriteStorageTextures). Only available when SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN is true. Cannot be combined with SAMPLER or GRAPHICS_STORAGE_READ. */
+ 
+ /**
+  * Specifies the type of a texture.
+@@ -2184,7 +2185,7 @@ typedef struct SDL_GPUStorageBufferReadWriteBinding
+  */
+ typedef struct SDL_GPUStorageTextureReadWriteBinding
+ {
+-    SDL_GPUTexture *texture;  /**< The texture to bind. Must have been created with SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE or SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE. */
++    SDL_GPUTexture *texture;  /**< The texture to bind. Must have been created with SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE or SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE (compute), or SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE (SDL_BindGPUFragmentReadWriteStorageTextures). */
+     Uint32 mip_level;         /**< The mip level index to bind. */
+     Uint32 layer;             /**< The layer index to bind. */
+     bool cycle;               /**< true cycles the texture if it is already bound. */
+@@ -2292,6 +2293,15 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDevice(
+  *   SDL_GPUSamplerCreateInfo must be set to false. Disabling optional
+  *   features allows the application to run on some older Android devices.
+  *   Defaults to true.
++ * - `SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN`:
++ *   Request read-write storage textures in fragment shaders
++ *   (SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE), with rasterizer
++ *   ordered access when the hardware has it (ROV on D3D12,
++ *   VK_EXT_fragment_shader_interlock on Vulkan, raster order groups on
++ *   Metal). This is optional: device creation does not fail when the
++ *   hardware lacks it; check SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN
++ *   and SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN afterwards.
++ *   Defaults to false.
+  *
+  * These are the current shader format properties:
+  *
+@@ -2381,6 +2391,7 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDeviceWithProperties(
+ #define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN               "SDL.gpu.device.create.feature.depth_clamping"
+ #define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN "SDL.gpu.device.create.feature.indirect_draw_first_instance"
+ #define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN                   "SDL.gpu.device.create.feature.anisotropy"
++#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN  "SDL.gpu.device.create.feature.graphics_storage_read_write"
+ #define SDL_PROP_GPU_DEVICE_CREATE_SHADERS_PRIVATE_BOOLEAN                      "SDL.gpu.device.create.shaders.private"
+ #define SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN                        "SDL.gpu.device.create.shaders.spirv"
+ #define SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXBC_BOOLEAN                         "SDL.gpu.device.create.shaders.dxbc"
+@@ -2579,6 +2590,20 @@ extern SDL_DECLSPEC SDL_GPUShaderFormat SDLCALL SDL_GetGPUShaderFormats(SDL_GPUD
+  * Driver Branch: promo490_3_Google
+  * ```
+  *
++ * Read-write storage textures in fragment shaders (only reported when
++ * SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN was
++ * set at device creation):
++ *
++ * - `SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN`: true if
++ *   SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE and
++ *   SDL_BindGPUFragmentReadWriteStorageTextures() can be used.
++ * - `SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN`: true if, in
++ *   addition, overlapping fragments can access those textures in rasterizer
++ *   order: RasterizerOrderedTexture2D in HLSL/DXIL (D3D12 ROVsSupported),
++ *   the FragmentShaderPixelInterlockEXT capability in SPIR-V
++ *   (fragmentShaderPixelInterlock of VK_EXT_fragment_shader_interlock) and
++ *   [[raster_order_group(n)]] in MSL (areRasterOrderGroupsSupported).
++ *
+  * \param device a GPU context to query.
+  * \returns a valid property ID on success or 0 on failure; call
+  *          SDL_GetError() for more information.
+@@ -2593,6 +2618,8 @@ extern SDL_DECLSPEC SDL_PropertiesID SDLCALL SDL_GetGPUDeviceProperties(SDL_GPUD
+ #define SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING        "SDL.gpu.device.driver_name"
+ #define SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING     "SDL.gpu.device.driver_version"
+ #define SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING        "SDL.gpu.device.driver_info"
++#define SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN "SDL.gpu.device.graphics_storage_read_write"
++#define SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN      "SDL.gpu.device.raster_ordered_storage"
+ 
+ 
+ /* State Creation */
+@@ -2762,6 +2789,15 @@ extern SDL_DECLSPEC SDL_GPUSampler * SDLCALL SDL_CreateGPUSampler(
+  * There are optional properties that can be provided through `props`. These
+  * are the supported properties:
+  *
++ * - `SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER`: the
++ *   number of read-write storage textures of a fragment shader, defaults to
++ *   0. Requires SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN. They
++ *   are bound with SDL_BindGPUFragmentReadWriteStorageTextures() and come
++ *   after every read-only resource of the stage: in SPIR-V, set 2 with
++ *   bindings starting at (num_samplers + num_storage_textures +
++ *   num_storage_buffers); in DXIL/DXBC, (u[n], space2) starting at u0; in
++ *   MSL, [[texture]] indices starting at (num_samplers +
++ *   num_storage_textures).
+  * - `SDL_PROP_GPU_SHADER_CREATE_NAME_STRING`: a name that can be displayed in
+  *   debugging tools.
+  *
+@@ -2780,6 +2816,7 @@ extern SDL_DECLSPEC SDL_GPUShader * SDLCALL SDL_CreateGPUShader(
+     const SDL_GPUShaderCreateInfo *createinfo);
+ 
+ #define SDL_PROP_GPU_SHADER_CREATE_NAME_STRING "SDL.gpu.shader.create.name"
++#define SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER "SDL.gpu.shader.create.num_readwrite_storage_textures"
+ 
+ /**
+  * Creates a texture object to be used in graphics or compute workflows.
+@@ -3520,6 +3557,41 @@ extern SDL_DECLSPEC void SDLCALL SDL_BindGPUFragmentStorageTextures(
+     SDL_GPUTexture *const *storage_textures,
+     Uint32 num_bindings);
+ 
++/**
++ * Binds read-write storage textures for use on the fragment shader.
++ *
++ * These textures must have been created with
++ * SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE, and the device must report
++ * SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN. Each binding
++ * selects one mip level and one layer. Cycling is not possible inside a
++ * render pass, so `cycle` must be false.
++ *
++ * Writes made by one render pass are visible to every later pass, copy or
++ * download. Inside a render pass, overlapping fragments are only ordered if
++ * the shader asks for it (ROV, fragment shader interlock or raster order
++ * groups; see SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN).
++ *
++ * Be sure your shader is set up according to the requirements documented in
++ * SDL_CreateGPUShader() (SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER).
++ *
++ * \param render_pass a render pass handle.
++ * \param first_slot the fragment read-write storage texture slot to begin
++ *                   binding from.
++ * \param storage_texture_bindings an array of read-write storage texture
++ *                                 bindings.
++ * \param num_bindings the number of bindings in the array.
++ *
++ * \since This function is a local patch on SDL 3.4.18 (Auto Modellista
++ *        Recompiled); it is not part of upstream SDL.
++ *
++ * \sa SDL_CreateGPUShader
++ */
++extern SDL_DECLSPEC void SDLCALL SDL_BindGPUFragmentReadWriteStorageTextures(
++    SDL_GPURenderPass *render_pass,
++    Uint32 first_slot,
++    const SDL_GPUStorageTextureReadWriteBinding *storage_texture_bindings,
++    Uint32 num_bindings);
++
+ /**
+  * Binds storage buffers for use on the fragment shader.
+  *
+diff --git a/src/dynapi/SDL_dynapi.sym b/src/dynapi/SDL_dynapi.sym
+index ec2e97be..f1857f86 100644
+--- a/src/dynapi/SDL_dynapi.sym
++++ b/src/dynapi/SDL_dynapi.sym
+@@ -1271,6 +1271,7 @@ SDL3_0.0.0 {
+     SDL_LoadSurface_IO;
+     SDL_LoadSurface;
+     SDL_SetWindowFillDocument;
++    SDL_BindGPUFragmentReadWriteStorageTextures;
+     # extra symbols go here (don't modify this line)
+   local: *;
+ };
+diff --git a/src/dynapi/SDL_dynapi_overrides.h b/src/dynapi/SDL_dynapi_overrides.h
+index bf8d6427..39e3ba58 100644
+--- a/src/dynapi/SDL_dynapi_overrides.h
++++ b/src/dynapi/SDL_dynapi_overrides.h
+@@ -1297,3 +1297,4 @@
+ #define SDL_LoadSurface_IO SDL_LoadSurface_IO_REAL
+ #define SDL_LoadSurface SDL_LoadSurface_REAL
+ #define SDL_SetWindowFillDocument SDL_SetWindowFillDocument_REAL
++#define SDL_BindGPUFragmentReadWriteStorageTextures SDL_BindGPUFragmentReadWriteStorageTextures_REAL
+diff --git a/src/dynapi/SDL_dynapi_procs.h b/src/dynapi/SDL_dynapi_procs.h
+index 78a896a5..6d68345a 100644
+--- a/src/dynapi/SDL_dynapi_procs.h
++++ b/src/dynapi/SDL_dynapi_procs.h
+@@ -1305,3 +1305,4 @@ SDL_DYNAPI_PROC(SDL_Surface*,SDL_RotateSurface,(SDL_Surface *a,float b),(a,b),re
+ SDL_DYNAPI_PROC(SDL_Surface*,SDL_LoadSurface_IO,(SDL_IOStream *a,bool b),(a,b),return)
+ SDL_DYNAPI_PROC(SDL_Surface*,SDL_LoadSurface,(const char *a),(a),return)
+ SDL_DYNAPI_PROC(bool,SDL_SetWindowFillDocument,(SDL_Window *a,bool b),(a,b),return)
++SDL_DYNAPI_PROC(void,SDL_BindGPUFragmentReadWriteStorageTextures,(SDL_GPURenderPass *a,Uint32 b,const SDL_GPUStorageTextureReadWriteBinding *c,Uint32 d),(a,b,c,d),)
+diff --git a/src/gpu/SDL_gpu.c b/src/gpu/SDL_gpu.c
+index c51f7f0a..5c1e5053 100644
+--- a/src/gpu/SDL_gpu.c
++++ b/src/gpu/SDL_gpu.c
+@@ -560,6 +560,11 @@ static void SDL_GPU_CheckGraphicsBindings(SDL_GPURenderPass *render_pass)
+             SDL_assert_release(!"Missing fragment storage buffer binding!");
+         }
+     }
++    for (Uint32 i = 0; i < pipeline->num_fragment_read_write_storage_textures; i += 1) {
++        if (!rp->fragment_read_write_storage_texture_bound[i]) {
++            SDL_assert_release(!"Missing fragment read-write storage texture binding!");
++        }
++    }
+ }
+ 
+ static void SDL_GPU_CheckComputeBindings(SDL_GPUComputePass *compute_pass)
+@@ -737,6 +742,9 @@ SDL_GPUDevice *SDL_CreateGPUDeviceWithProperties(SDL_PropertiesID props)
+             if (!SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, true)) {
+                 result->validate_feature_anisotropy_disabled = true;
+             }
++            result->graphics_storage_read_write =
++                SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, false) &&
++                SDL_GetBooleanProperty(result->GetDeviceProperties(result), SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, false);
+             if (result->debug_mode) {
+                 result->max_viewport_width = SDL_MAX_UINT32;
+                 result->max_viewport_height = SDL_MAX_UINT32;
+@@ -932,11 +940,15 @@ bool SDL_GPUTextureSupportsFormat(
+     }
+ 
+     if ((usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE) ||
+-        (usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) {
++        (usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE) ||
++        (usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE)) {
+         if (!TextureFormatIsComputeWritable[format]) {
+             return false;
+         }
+     }
++    if ((usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) && !device->graphics_storage_read_write) {
++        return false;
++    }
+ 
+     return device->SupportsTextureFormat(
+         device->driverData,
+@@ -1229,6 +1241,24 @@ SDL_GPUShader *SDL_CreateGPUShader(
+         }
+     }
+ 
++    if (createinfo->props != 0) {
++        Sint64 num_rw = SDL_GetNumberProperty(createinfo->props, SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER, 0);
++        if (num_rw != 0) {
++            if (!device->graphics_storage_read_write) {
++                SDL_SetError("Fragment read-write storage textures are not enabled on this device");
++                return NULL;
++            }
++            if (createinfo->stage != SDL_GPU_SHADERSTAGE_FRAGMENT) {
++                SDL_SetError("Read-write storage textures are only supported in fragment shaders");
++                return NULL;
++            }
++            if (num_rw < 0 || num_rw > MAX_FRAGMENT_WRITE_TEXTURES) {
++                SDL_SetError("Fragment read-write storage texture count must be between 0 and %d", MAX_FRAGMENT_WRITE_TEXTURES);
++                return NULL;
++            }
++        }
++    }
++
+     return device->CreateShader(
+         device->driverData,
+         createinfo);
+@@ -1245,6 +1275,11 @@ SDL_GPUTexture *SDL_CreateGPUTexture(
+         return NULL;
+     }
+ 
++    if ((createinfo->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) && !device->graphics_storage_read_write) {
++        SDL_SetError("Fragment read-write storage textures are not enabled on this device");
++        return NULL;
++    }
++
+     if (device->debug_mode) {
+         bool failed = false;
+ 
+@@ -1271,6 +1306,16 @@ SDL_GPUTexture *SDL_CreateGPUTexture(
+             SDL_assert_release(!"For any texture: usage cannot contain both GRAPHICS_STORAGE_READ and SAMPLER");
+             failed = true;
+         }
++        if ((createinfo->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) &&
++            (createinfo->usage & (SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ))) {
++            SDL_assert_release(!"For any texture: usage cannot contain both GRAPHICS_STORAGE_READ_WRITE and SAMPLER or GRAPHICS_STORAGE_READ");
++            failed = true;
++        }
++        if (createinfo->sample_count > SDL_GPU_SAMPLECOUNT_1 &&
++            (createinfo->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE)) {
++            SDL_assert_release(!"For multisample textures: usage cannot contain GRAPHICS_STORAGE_READ_WRITE flag");
++            failed = true;
++        }
+         if (createinfo->sample_count > SDL_GPU_SAMPLECOUNT_1 &&
+             (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE)) {
+             SDL_assert_release(!"For multisample textures: usage cannot contain COMPUTE_STORAGE_WRITE flag");
+@@ -2282,6 +2327,61 @@ void SDL_BindGPUFragmentStorageTextures(
+         num_bindings);
+ }
+ 
++void SDL_BindGPUFragmentReadWriteStorageTextures(
++    SDL_GPURenderPass *render_pass,
++    Uint32 first_slot,
++    const SDL_GPUStorageTextureReadWriteBinding *storage_texture_bindings,
++    Uint32 num_bindings)
++{
++    CHECK_PARAM(render_pass == NULL) {
++        SDL_InvalidParamError("render_pass");
++        return;
++    }
++    CHECK_PARAM(storage_texture_bindings == NULL && num_bindings > 0) {
++        SDL_InvalidParamError("storage_texture_bindings");
++        return;
++    }
++    CHECK_PARAM(first_slot + num_bindings > MAX_FRAGMENT_WRITE_TEXTURES) {
++        SDL_SetError("first_slot + num_bindings exceeds MAX_FRAGMENT_WRITE_TEXTURES");
++        return;
++    }
++    CHECK_PARAM(!RENDERPASS_DEVICE->graphics_storage_read_write) {
++        SDL_SetError("Fragment read-write storage textures are not enabled on this device");
++        return;
++    }
++
++    if (RENDERPASS_DEVICE->debug_mode) {
++        CHECK_RENDERPASS
++
++        for (Uint32 i = 0; i < num_bindings; i += 1) {
++            TextureCommonHeader *header = (TextureCommonHeader *)storage_texture_bindings[i].texture;
++            if (header == NULL || !(header->info.usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE)) {
++                SDL_assert_release(!"Texture must be created with GRAPHICS_STORAGE_READ_WRITE flag");
++                return;
++            }
++            if (storage_texture_bindings[i].cycle) {
++                SDL_assert_release(!"Fragment read-write storage textures cannot be cycled inside a render pass");
++                return;
++            }
++            if (storage_texture_bindings[i].layer >= header->info.layer_count_or_depth) {
++                SDL_assert_release(!"Storage texture layer index must be less than the texture's layer count!");
++                return;
++            }
++            if (storage_texture_bindings[i].mip_level >= header->info.num_levels) {
++                SDL_assert_release(!"Storage texture mip level must be less than the texture's level count!");
++                return;
++            }
++            ((RenderPass *)render_pass)->fragment_read_write_storage_texture_bound[first_slot + i] = true;
++        }
++    }
++
++    RENDERPASS_DEVICE->BindFragmentReadWriteStorageTextures(
++        RENDERPASS_COMMAND_BUFFER,
++        first_slot,
++        storage_texture_bindings,
++        num_bindings);
++}
++
+ void SDL_BindGPUFragmentStorageBuffers(
+     SDL_GPURenderPass *render_pass,
+     Uint32 first_slot,
+@@ -2459,6 +2559,7 @@ void SDL_EndGPURenderPass(
+         SDL_zeroa(commandBufferCommonHeader->render_pass.fragment_sampler_bound);
+         SDL_zeroa(commandBufferCommonHeader->render_pass.fragment_storage_texture_bound);
+         SDL_zeroa(commandBufferCommonHeader->render_pass.fragment_storage_buffer_bound);
++        SDL_zeroa(commandBufferCommonHeader->render_pass.fragment_read_write_storage_texture_bound);
+     }
+ }
+ 
+diff --git a/src/gpu/SDL_sysgpu.h b/src/gpu/SDL_sysgpu.h
+index e77d4a8c..7af3ae34 100644
+--- a/src/gpu/SDL_sysgpu.h
++++ b/src/gpu/SDL_sysgpu.h
+@@ -32,6 +32,7 @@
+ #define MAX_UNIFORM_BUFFERS_PER_STAGE  4
+ #define MAX_COMPUTE_WRITE_TEXTURES     8
+ #define MAX_COMPUTE_WRITE_BUFFERS      8
++#define MAX_FRAGMENT_WRITE_TEXTURES    4 // SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE; 4 fits D3D12 resource binding tier 1
+ #define UNIFORM_BUFFER_SIZE            32768
+ #define MAX_VERTEX_BUFFERS             16
+ #define MAX_VERTEX_ATTRIBUTES          16
+@@ -78,6 +79,7 @@ typedef struct RenderPass
+     bool fragment_sampler_bound[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     bool fragment_storage_texture_bound[MAX_STORAGE_TEXTURES_PER_STAGE];
+     bool fragment_storage_buffer_bound[MAX_STORAGE_BUFFERS_PER_STAGE];
++    bool fragment_read_write_storage_texture_bound[MAX_FRAGMENT_WRITE_TEXTURES];
+ } RenderPass;
+ 
+ typedef struct CommandBufferCommonHeader
+@@ -110,6 +112,7 @@ typedef struct GraphicsPipelineCommonHeader
+     Uint32 num_fragment_storage_textures;
+     Uint32 num_fragment_storage_buffers;
+     Uint32 num_fragment_uniform_buffers;
++    Uint32 num_fragment_read_write_storage_textures;
+ } GraphicsPipelineCommonHeader;
+ 
+ typedef struct ComputePipelineCommonHeader
+@@ -833,6 +836,12 @@ struct SDL_GPUDevice
+         SDL_GPUBuffer *const *storageBuffers,
+         Uint32 numBindings);
+ 
++    void (*BindFragmentReadWriteStorageTextures)(
++        SDL_GPUCommandBuffer *commandBuffer,
++        Uint32 firstSlot,
++        const SDL_GPUStorageTextureReadWriteBinding *storageTextureBindings,
++        Uint32 numBindings);
++
+     void (*PushVertexUniformData)(
+         SDL_GPUCommandBuffer *commandBuffer,
+         Uint32 slotIndex,
+@@ -1099,6 +1108,8 @@ struct SDL_GPUDevice
+     bool default_enable_depth_clip;
+     bool validate_feature_depth_clamp_disabled;
+     bool validate_feature_anisotropy_disabled;
++    // SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, read from the backend after creation
++    bool graphics_storage_read_write;
+     Uint32 max_viewport_width;
+     Uint32 max_viewport_height;
+ };
+@@ -1141,6 +1152,7 @@ struct SDL_GPUDevice
+     ASSIGN_DRIVER_FUNC(BindFragmentSamplers, name)          \
+     ASSIGN_DRIVER_FUNC(BindFragmentStorageTextures, name)   \
+     ASSIGN_DRIVER_FUNC(BindFragmentStorageBuffers, name)    \
++    ASSIGN_DRIVER_FUNC(BindFragmentReadWriteStorageTextures, name) \
+     ASSIGN_DRIVER_FUNC(PushVertexUniformData, name)         \
+     ASSIGN_DRIVER_FUNC(PushFragmentUniformData, name)       \
+     ASSIGN_DRIVER_FUNC(DrawIndexedPrimitives, name)         \
+diff --git a/src/gpu/d3d12/SDL_gpu_d3d12.c b/src/gpu/d3d12/SDL_gpu_d3d12.c
+index 221a6f3d..08d9fe2c 100644
+--- a/src/gpu/d3d12/SDL_gpu_d3d12.c
++++ b/src/gpu/d3d12/SDL_gpu_d3d12.c
+@@ -810,7 +810,7 @@ typedef struct D3D12TextureSubresource
+     // One per depth slice
+     D3D12StagingDescriptor *rtvHandles; // NULL if not a color target
+ 
+-    D3D12StagingDescriptor uavHandle; // NULL if not a compute storage write texture
++    D3D12StagingDescriptor uavHandle; // NULL if not a compute storage write or graphics storage read-write texture
+     D3D12StagingDescriptor dsvHandle; // NULL if not a depth stencil target
+ } D3D12TextureSubresource;
+ 
+@@ -1036,6 +1036,7 @@ struct D3D12CommandBuffer
+     bool needFragmentStorageTextureBind;
+     bool needFragmentStorageBufferBind;
+     bool needFragmentUniformBufferBind[MAX_UNIFORM_BUFFERS_PER_STAGE];
++    bool needFragmentReadWriteStorageTextureBind;
+ 
+     bool needComputeSamplerBind;
+     bool needComputeReadOnlyStorageTextureBind;
+@@ -1060,6 +1061,10 @@ struct D3D12CommandBuffer
+ 
+     D3D12UniformBuffer *fragmentUniformBuffers[MAX_UNIFORM_BUFFERS_PER_STAGE];
+ 
++    // UAVs (u[n], space2) of SDL_BindGPUFragmentReadWriteStorageTextures; the subresources get a UAV barrier at the end of the pass
++    D3D12_CPU_DESCRIPTOR_HANDLE fragmentReadWriteStorageTextureDescriptorHandles[MAX_FRAGMENT_WRITE_TEXTURES];
++    D3D12TextureSubresource *fragmentReadWriteStorageTextureSubresources[MAX_FRAGMENT_WRITE_TEXTURES];
++
+     D3D12_CPU_DESCRIPTOR_HANDLE computeSamplerTextureDescriptorHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     D3D12_CPU_DESCRIPTOR_HANDLE computeSamplerDescriptorHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     D3D12_CPU_DESCRIPTOR_HANDLE computeReadOnlyStorageTextureDescriptorHandles[MAX_STORAGE_TEXTURES_PER_STAGE];
+@@ -1118,6 +1123,7 @@ struct D3D12Shader
+     Uint32 numUniformBuffers;
+     Uint32 numStorageBuffers;
+     Uint32 numStorageTextures;
++    Uint32 numReadWriteStorageTextures; // pixel shader only, (u[n], space2)
+ };
+ 
+ typedef struct D3D12GraphicsRootSignature
+@@ -1135,6 +1141,7 @@ typedef struct D3D12GraphicsRootSignature
+     Sint32 fragmentSamplerTextureRootIndex;
+     Sint32 fragmentStorageTextureRootIndex;
+     Sint32 fragmentStorageBufferRootIndex;
++    Sint32 fragmentReadWriteStorageTextureRootIndex;
+ 
+     Sint32 fragmentUniformBufferRootIndex[MAX_UNIFORM_BUFFERS_PER_STAGE];
+ } D3D12GraphicsRootSignature;
+@@ -1858,7 +1865,8 @@ static void D3D12_INTERNAL_TextureSubresourceBarrier(
+ {
+     bool needsUAVBarrier =
+         (textureSubresource->parent->container->header.info.usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE) ||
+-        (textureSubresource->parent->container->header.info.usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE);
++        (textureSubresource->parent->container->header.info.usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE) ||
++        (textureSubresource->parent->container->header.info.usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE);
+ 
+     D3D12_INTERNAL_ResourceBarrier(
+         commandBuffer,
+@@ -1894,8 +1902,12 @@ static D3D12_RESOURCE_STATES D3D12_INTERNAL_DefaultTextureResourceState(
+     SDL_GPUTextureUsageFlags usageFlags)
+ {
+     // NOTE: order matters here!
++    // GRAPHICS_STORAGE_READ_WRITE comes first: the texture stays a UAV, so binding it inside a render pass needs no
++    // transition (SAMPLER and GRAPHICS_STORAGE_READ cannot be combined with it).
+ 
+-    if (usageFlags & SDL_GPU_TEXTUREUSAGE_SAMPLER) {
++    if (usageFlags & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) {
++        return D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
++    } else if (usageFlags & SDL_GPU_TEXTUREUSAGE_SAMPLER) {
+         return D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE;
+     } else if (usageFlags & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ) {
+         return D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE;
+@@ -2504,6 +2516,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
+     d3d12GraphicsRootSignature->fragmentSamplerTextureRootIndex = -1;
+     d3d12GraphicsRootSignature->fragmentStorageTextureRootIndex = -1;
+     d3d12GraphicsRootSignature->fragmentStorageBufferRootIndex = -1;
++    d3d12GraphicsRootSignature->fragmentReadWriteStorageTextureRootIndex = -1;
+ 
+     for (Uint32 i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
+         d3d12GraphicsRootSignature->vertexUniformBufferRootIndex[i] = -1;
+@@ -2668,6 +2681,25 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
+         parameterCount += 1;
+     }
+ 
++    if (fragmentShader->numReadWriteStorageTextures) {
++        // Fragment Read-Write Storage Textures (UAV or ROV in HLSL)
++        descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
++        descriptorRange.NumDescriptors = fragmentShader->numReadWriteStorageTextures;
++        descriptorRange.BaseShaderRegister = 0;
++        descriptorRange.RegisterSpace = 2;
++        descriptorRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
++        descriptorRanges[rangeCount] = descriptorRange;
++
++        rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++        rootParameter.DescriptorTable.NumDescriptorRanges = 1;
++        rootParameter.DescriptorTable.pDescriptorRanges = &descriptorRanges[rangeCount];
++        rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
++        rootParameters[parameterCount] = rootParameter;
++        d3d12GraphicsRootSignature->fragmentReadWriteStorageTextureRootIndex = parameterCount;
++        rangeCount += 1;
++        parameterCount += 1;
++    }
++
+     // Fragment Uniforms
+     for (Uint32 i = 0; i < fragmentShader->numUniformBuffers; i += 1) {
+         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+@@ -3313,6 +3345,7 @@ static SDL_GPUGraphicsPipeline *D3D12_CreateGraphicsPipeline(
+ 
+     pipeline->header.num_fragment_samplers = fragShader->num_samplers;
+     pipeline->header.num_fragment_storage_textures = fragShader->numStorageTextures;
++    pipeline->header.num_fragment_read_write_storage_textures = fragShader->numReadWriteStorageTextures;
+     pipeline->header.num_fragment_storage_buffers = fragShader->numStorageBuffers;
+     pipeline->header.num_fragment_uniform_buffers = fragShader->numUniformBuffers;
+ 
+@@ -3404,6 +3437,8 @@ static SDL_GPUShader *D3D12_CreateShader(
+     shader->numStorageBuffers = createinfo->num_storage_buffers;
+     shader->numStorageTextures = createinfo->num_storage_textures;
+     shader->numUniformBuffers = createinfo->num_uniform_buffers;
++    shader->numReadWriteStorageTextures = (Uint32)SDL_GetNumberProperty(
++        createinfo->props, SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER, 0);
+ 
+     shader->bytecode = bytecode;
+     shader->bytecodeSize = bytecodeSize;
+@@ -3435,7 +3470,8 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
+         (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ);
+     bool needsUAV =
+         (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE) ||
+-        (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE);
++        (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE) ||
++        (createinfo->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE);
+     HRESULT res;
+ 
+     texture = (D3D12Texture *)SDL_calloc(1, sizeof(D3D12Texture));
+@@ -4772,6 +4808,7 @@ static void D3D12_BindGraphicsPipeline(
+     d3d12CommandBuffer->needFragmentSamplerBind = true;
+     d3d12CommandBuffer->needFragmentStorageTextureBind = true;
+     d3d12CommandBuffer->needFragmentStorageBufferBind = true;
++    d3d12CommandBuffer->needFragmentReadWriteStorageTextureBind = true;
+ 
+     for (i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
+         d3d12CommandBuffer->needVertexUniformBufferBind[i] = true;
+@@ -4967,6 +5004,32 @@ static void D3D12_BindFragmentStorageTextures(
+     }
+ }
+ 
++static void D3D12_BindFragmentReadWriteStorageTextures(
++    SDL_GPUCommandBuffer *commandBuffer,
++    Uint32 firstSlot,
++    const SDL_GPUStorageTextureReadWriteBinding *storageTextureBindings,
++    Uint32 numBindings)
++{
++    D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
++
++    for (Uint32 i = 0; i < numBindings; i += 1) {
++        D3D12TextureContainer *container = (D3D12TextureContainer *)storageTextureBindings[i].texture;
++        // The default state of these textures is UNORDERED_ACCESS: no transition here, only a UAV barrier at the end of the pass.
++        D3D12TextureSubresource *subresource = D3D12_INTERNAL_FetchTextureSubresource(
++            container,
++            storageTextureBindings[i].layer,
++            storageTextureBindings[i].mip_level);
++
++        if (d3d12CommandBuffer->fragmentReadWriteStorageTextureSubresources[firstSlot + i] != subresource) {
++            D3D12_INTERNAL_TrackTexture(d3d12CommandBuffer, subresource->parent);
++
++            d3d12CommandBuffer->fragmentReadWriteStorageTextureSubresources[firstSlot + i] = subresource;
++            d3d12CommandBuffer->fragmentReadWriteStorageTextureDescriptorHandles[firstSlot + i] = subresource->uavHandle.cpuHandle;
++            d3d12CommandBuffer->needFragmentReadWriteStorageTextureBind = true;
++        }
++    }
++}
++
+ static void D3D12_BindFragmentStorageBuffers(
+     SDL_GPUCommandBuffer *commandBuffer,
+     Uint32 firstSlot,
+@@ -5280,6 +5343,27 @@ static void D3D12_INTERNAL_BindGraphicsResources(
+         commandBuffer->needFragmentStorageBufferBind = false;
+     }
+ 
++    if (commandBuffer->needFragmentReadWriteStorageTextureBind) {
++        if (graphicsPipeline->header.num_fragment_read_write_storage_textures > 0) {
++            for (Uint32 i = 0; i < graphicsPipeline->header.num_fragment_read_write_storage_textures; i += 1) {
++                cpuHandles[i] = commandBuffer->fragmentReadWriteStorageTextureDescriptorHandles[i];
++            }
++
++            D3D12_INTERNAL_WriteGPUDescriptors(
++                commandBuffer,
++                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
++                cpuHandles,
++                graphicsPipeline->header.num_fragment_read_write_storage_textures,
++                &gpuDescriptorHandle);
++
++            ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(
++                commandBuffer->graphicsCommandList,
++                graphicsPipeline->rootSignature->fragmentReadWriteStorageTextureRootIndex,
++                gpuDescriptorHandle);
++        }
++        commandBuffer->needFragmentReadWriteStorageTextureBind = false;
++    }
++
+     for (Uint32 i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
+         if (commandBuffer->needFragmentUniformBufferBind[i]) {
+             if (graphicsPipeline->header.num_fragment_uniform_buffers > i) {
+@@ -5429,6 +5513,20 @@ static void D3D12_EndRenderPass(
+         d3d12CommandBuffer->depthStencilTextureSubresource = NULL;
+     }
+ 
++    // Writes to fragment read-write storage textures must finish before anything after the pass touches them.
++    for (i = 0; i < MAX_FRAGMENT_WRITE_TEXTURES; i += 1) {
++        D3D12TextureSubresource *subresource = d3d12CommandBuffer->fragmentReadWriteStorageTextureSubresources[i];
++        if (subresource != NULL) {
++            D3D12_INTERNAL_ResourceBarrier(
++                d3d12CommandBuffer,
++                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                subresource->parent->resource,
++                subresource->index,
++                true);
++        }
++    }
++
+     d3d12CommandBuffer->currentGraphicsPipeline = NULL;
+ 
+     ID3D12GraphicsCommandList_OMSetRenderTargets(
+@@ -5456,6 +5554,8 @@ static void D3D12_EndRenderPass(
+     SDL_zeroa(d3d12CommandBuffer->fragmentSamplerDescriptorHandles);
+     SDL_zeroa(d3d12CommandBuffer->fragmentStorageTextureDescriptorHandles);
+     SDL_zeroa(d3d12CommandBuffer->fragmentStorageBufferDescriptorHandles);
++    SDL_zeroa(d3d12CommandBuffer->fragmentReadWriteStorageTextureDescriptorHandles);
++    SDL_zeroa(d3d12CommandBuffer->fragmentReadWriteStorageTextureSubresources);
+ }
+ 
+ // Compute Pass
+@@ -7561,6 +7661,8 @@ static SDL_GPUCommandBuffer *D3D12_AcquireCommandBuffer(
+     SDL_zeroa(commandBuffer->fragmentStorageTextureDescriptorHandles);
+     SDL_zeroa(commandBuffer->fragmentStorageBufferDescriptorHandles);
+     SDL_zeroa(commandBuffer->fragmentUniformBuffers);
++    SDL_zeroa(commandBuffer->fragmentReadWriteStorageTextureDescriptorHandles);
++    SDL_zeroa(commandBuffer->fragmentReadWriteStorageTextureSubresources);
+ 
+     SDL_zeroa(commandBuffer->computeSamplerTextureDescriptorHandles);
+     SDL_zeroa(commandBuffer->computeSamplerDescriptorHandles);
+@@ -8367,6 +8469,10 @@ static bool D3D12_SupportsTextureFormat(
+     if ((usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE) && !(formatSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD)) {
+         return false;
+     }
++    if ((usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) &&
++        (!(formatSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) || !(formatSupport.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE))) {
++        return false;
++    }
+     if ((usage & SDL_GPU_TEXTUREUSAGE_COLOR_TARGET) && !(formatSupport.Support1 & D3D12_FORMAT_SUPPORT1_RENDER_TARGET)) {
+         return false;
+     }
+@@ -9396,6 +9502,30 @@ static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SD
+         SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "CheckFeatureSupport for UnrestrictedBufferTextureCopyPitchSupported failed. You may need to provide a vendored D3D12Core.dll through the Agility SDK on older platforms.");
+     }
+ 
++    // Fragment read-write storage textures (opt-in): UAVs in the pixel shader exist since feature level 11_0;
++    // rasterizer ordered views are optional below 12_1.
++    if (SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, false)) {
++        D3D12_FEATURE_DATA_D3D12_OPTIONS options;
++        bool rovs = false;
++        SDL_zero(options);
++        res = ID3D12Device_CheckFeatureSupport(
++            renderer->device,
++            D3D12_FEATURE_D3D12_OPTIONS,
++            &options,
++            sizeof(options));
++        if (SUCCEEDED(res)) {
++            rovs = options.ROVsSupported ? true : false;
++        }
++        if (renderer->props == 0) {
++            renderer->props = SDL_CreateProperties();
++        }
++        SDL_SetBooleanProperty(renderer->props, SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, true);
++        SDL_SetBooleanProperty(renderer->props, SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN, rovs);
++        if (verboseLogs) {
++            SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "D3D12 rasterizer ordered views: %s", rovs ? "yes" : "no");
++        }
++    }
++
+     // Create command queue
+ #if (defined(SDL_PLATFORM_XBOXONE) || defined(SDL_PLATFORM_XBOXSERIES))
+     if (s_CommandQueue != NULL) {
+diff --git a/src/gpu/metal/SDL_gpu_metal.m b/src/gpu/metal/SDL_gpu_metal.m
+index b29cad6a..7592ba25 100644
+--- a/src/gpu/metal/SDL_gpu_metal.m
++++ b/src/gpu/metal/SDL_gpu_metal.m
+@@ -477,6 +477,7 @@ typedef struct MetalShader
+     Uint32 numUniformBuffers;
+     Uint32 numStorageBuffers;
+     Uint32 numStorageTextures;
++    Uint32 numReadWriteStorageTextures; // fragment only, [[texture]] after the read-only storage textures
+ } MetalShader;
+ 
+ typedef struct MetalGraphicsPipeline
+@@ -566,6 +567,7 @@ typedef struct MetalCommandBuffer
+     bool needFragmentStorageTextureBind;
+     bool needFragmentStorageBufferBind;
+     bool needFragmentUniformBufferBind[MAX_UNIFORM_BUFFERS_PER_STAGE];
++    bool needFragmentReadWriteStorageTextureBind;
+ 
+     bool needComputeSamplerBind;
+     bool needComputeReadOnlyStorageTextureBind;
+@@ -587,6 +589,7 @@ typedef struct MetalCommandBuffer
+     id<MTLTexture> fragmentStorageTextures[MAX_STORAGE_TEXTURES_PER_STAGE];
+     id<MTLBuffer> fragmentStorageBuffers[MAX_STORAGE_BUFFERS_PER_STAGE];
+     MetalUniformBuffer *fragmentUniformBuffers[MAX_UNIFORM_BUFFERS_PER_STAGE];
++    id<MTLTexture> fragmentReadWriteTextures[MAX_FRAGMENT_WRITE_TEXTURES];
+ 
+     id<MTLTexture> computeSamplerTextures[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     id<MTLSamplerState> computeSamplers[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+@@ -635,6 +638,7 @@ struct MetalRenderer
+     bool debugMode;
+     SDL_PropertiesID props;
+     Uint32 allowedFramesInFlight;
++    bool readWriteTextureTier2;
+ 
+     MetalWindowData **claimedWindows;
+     Uint32 claimedWindowCount;
+@@ -1240,6 +1244,7 @@ static SDL_GPUGraphicsPipeline *METAL_CreateGraphicsPipeline(
+         result->header.num_fragment_uniform_buffers = fragmentShader->numUniformBuffers;
+         result->header.num_fragment_storage_buffers = fragmentShader->numStorageBuffers;
+         result->header.num_fragment_storage_textures = fragmentShader->numStorageTextures;
++        result->header.num_fragment_read_write_storage_textures = fragmentShader->numReadWriteStorageTextures;
+         return (SDL_GPUGraphicsPipeline *)result;
+     }
+ }
+@@ -1418,6 +1423,8 @@ static SDL_GPUShader *METAL_CreateShader(
+         result->numStorageBuffers = createinfo->num_storage_buffers;
+         result->numStorageTextures = createinfo->num_storage_textures;
+         result->numUniformBuffers = createinfo->num_uniform_buffers;
++        result->numReadWriteStorageTextures = (Uint32)SDL_GetNumberProperty(
++            createinfo->props, SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER, 0);
+         return (SDL_GPUShader *)result;
+     }
+ }
+@@ -1470,6 +1477,9 @@ static MetalTexture *METAL_INTERNAL_CreateTexture(
+                              SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) {
+         textureDescriptor.usage |= MTLTextureUsageShaderWrite;
+     }
++    if (createinfo->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) {
++        textureDescriptor.usage |= MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
++    }
+ 
+     texture = [renderer->device newTextureWithDescriptor:textureDescriptor];
+     if (texture == NULL) {
+@@ -2441,6 +2451,7 @@ static void METAL_BindGraphicsPipeline(
+         metalCommandBuffer->needFragmentSamplerBind = true;
+         metalCommandBuffer->needFragmentStorageTextureBind = true;
+         metalCommandBuffer->needFragmentStorageBufferBind = true;
++        metalCommandBuffer->needFragmentReadWriteStorageTextureBind = true;
+ 
+         for (i = 0; i < MAX_UNIFORM_BUFFERS_PER_STAGE; i += 1) {
+             metalCommandBuffer->needVertexUniformBufferBind[i] = true;
+@@ -2637,6 +2648,38 @@ static void METAL_BindFragmentStorageTextures(
+     }
+ }
+ 
++static void METAL_BindFragmentReadWriteStorageTextures(
++    SDL_GPUCommandBuffer *commandBuffer,
++    Uint32 firstSlot,
++    const SDL_GPUStorageTextureReadWriteBinding *storageTextureBindings,
++    Uint32 numBindings)
++{
++    @autoreleasepool {
++        MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
++
++        for (Uint32 i = 0; i < numBindings; i += 1) {
++            MetalTextureContainer *textureContainer = (MetalTextureContainer *)storageTextureBindings[i].texture;
++            MetalTexture *texture = textureContainer->activeTexture;
++            id<MTLTexture> textureView = texture->handle;
++
++            METAL_INTERNAL_TrackTexture(metalCommandBuffer, texture);
++
++            // A single-level, single-layer texture is bound as is; otherwise one mip level and one layer, as in compute.
++            if (textureContainer->header.info.num_levels > 1 || textureContainer->header.info.layer_count_or_depth > 1) {
++                textureView = [texture->handle newTextureViewWithPixelFormat:SDLToMetal_TextureFormat(textureContainer->header.info.format)
++                                                                 textureType:SDLToMetal_TextureType(textureContainer->header.info.type, false)
++                                                                      levels:NSMakeRange(storageTextureBindings[i].mip_level, 1)
++                                                                      slices:NSMakeRange(storageTextureBindings[i].layer, 1)];
++            }
++
++            if (metalCommandBuffer->fragmentReadWriteTextures[firstSlot + i] != textureView) {
++                metalCommandBuffer->fragmentReadWriteTextures[firstSlot + i] = textureView;
++                metalCommandBuffer->needFragmentReadWriteStorageTextureBind = true;
++            }
++        }
++    }
++}
++
+ static void METAL_BindFragmentStorageBuffers(
+     SDL_GPUCommandBuffer *commandBuffer,
+     Uint32 firstSlot,
+@@ -2754,6 +2797,18 @@ static void METAL_INTERNAL_BindGraphicsResources(
+         commandBuffer->needFragmentStorageTextureBind = false;
+     }
+ 
++    // Fragment Read-Write Storage Textures: [[texture]] after the samplers and the read-only storage textures
++
++    if (commandBuffer->needFragmentReadWriteStorageTextureBind) {
++        if (graphicsPipeline->header.num_fragment_read_write_storage_textures > 0) {
++            [commandBuffer->renderEncoder setFragmentTextures:commandBuffer->fragmentReadWriteTextures
++                                                    withRange:NSMakeRange(graphicsPipeline->header.num_fragment_samplers +
++                                                                              graphicsPipeline->header.num_fragment_storage_textures,
++                                                                          graphicsPipeline->header.num_fragment_read_write_storage_textures)];
++        }
++        commandBuffer->needFragmentReadWriteStorageTextureBind = false;
++    }
++
+     // Fragment Storage Buffers
+ 
+     if (commandBuffer->needFragmentStorageBufferBind) {
+@@ -2961,6 +3016,9 @@ static void METAL_EndRenderPass(
+             metalCommandBuffer->vertexStorageBuffers[i] = nil;
+             metalCommandBuffer->fragmentStorageBuffers[i] = nil;
+         }
++        for (Uint32 i = 0; i < MAX_FRAGMENT_WRITE_TEXTURES; i += 1) {
++            metalCommandBuffer->fragmentReadWriteTextures[i] = nil;
++        }
+     }
+ }
+ 
+@@ -3485,6 +3543,9 @@ static void METAL_INTERNAL_CleanCommandBuffer(
+     for (i = 0; i < MAX_COMPUTE_WRITE_TEXTURES; i += 1) {
+         commandBuffer->computeReadWriteTextures[i] = nil;
+     }
++    for (i = 0; i < MAX_FRAGMENT_WRITE_TEXTURES; i += 1) {
++        commandBuffer->fragmentReadWriteTextures[i] = nil;
++    }
+     for (i = 0; i < MAX_COMPUTE_WRITE_BUFFERS; i += 1) {
+         commandBuffer->computeReadWriteBuffers[i] = nil;
+     }
+@@ -3498,6 +3559,7 @@ static void METAL_INTERNAL_CleanCommandBuffer(
+     commandBuffer->needFragmentSamplerBind = false;
+     commandBuffer->needFragmentStorageBufferBind = false;
+     commandBuffer->needFragmentStorageTextureBind = false;
++    commandBuffer->needFragmentReadWriteStorageTextureBind = false;
+     SDL_zeroa(commandBuffer->needFragmentUniformBufferBind);
+ 
+     commandBuffer->needComputeSamplerBind = false;
+@@ -4213,6 +4275,13 @@ static bool METAL_SupportsTextureFormat(
+             }
+         }
+ 
++        // Read-write textures in fragment shaders: tier 1 only covers the 32-bit single-channel formats
++        if ((usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) && !renderer->readWriteTextureTier2 &&
++            format != SDL_GPU_TEXTUREFORMAT_R32_UINT && format != SDL_GPU_TEXTUREFORMAT_R32_INT &&
++            format != SDL_GPU_TEXTUREFORMAT_R32_FLOAT) {
++            return false;
++        }
++
+         // Cube arrays are not supported on older iOS devices
+         if (type == SDL_GPU_TEXTURETYPE_CUBE_ARRAY) {
+ #ifdef SDL_PLATFORM_MACOS
+@@ -4608,6 +4677,23 @@ static SDL_GPUDevice *METAL_CreateDevice(bool debugMode, bool preferLowPower, SD
+             SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "Metal Device: %s", deviceName);
+         }
+ 
++        // Fragment read-write storage textures and raster order groups (opt-in)
++        if (SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, false)) {
++            bool readWrite = false;
++            bool rasterOrder = false;
++            if (@available(macOS 10.13, iOS 11.0, tvOS 11.0, *)) {
++                readWrite = device.readWriteTextureSupport != MTLReadWriteTextureTierNone;
++                rasterOrder = readWrite && device.rasterOrderGroupsSupported;
++                renderer->readWriteTextureTier2 = device.readWriteTextureSupport == MTLReadWriteTextureTier2;
++            }
++            SDL_SetBooleanProperty(renderer->props, SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, readWrite);
++            SDL_SetBooleanProperty(renderer->props, SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN, rasterOrder);
++            if (verboseLogs) {
++                SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "Metal fragment read-write storage: %s, raster order groups: %s",
++                            readWrite ? "yes" : "no", rasterOrder ? "yes" : "no");
++            }
++        }
++
+         // Remember debug mode
+         renderer->debugMode = debugMode;
+         renderer->allowedFramesInFlight = 2;
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+index 2782f41a..4e2dd4aa 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -61,6 +61,9 @@ typedef struct VulkanExtensions
+     Uint8 MSFT_layered_driver;
+     // Only required for decoding HDR ASTC textures
+     Uint8 EXT_texture_compression_astc_hdr;
++    // Rasterizer ordered fragment read-write storage textures. Only enabled on request
++    // (SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN), so not counted below.
++    Uint8 EXT_fragment_shader_interlock;
+ } VulkanExtensions;
+ 
+ // Defines
+@@ -573,6 +576,7 @@ typedef struct VulkanShader
+     Uint32 numStorageTextures;
+     Uint32 numStorageBuffers;
+     Uint32 numUniformBuffers;
++    Uint32 numReadWriteStorageTextures; // fragment only: set 2, after the storage buffers
+     SDL_AtomicInt referenceCount;
+ } VulkanShader;
+ 
+@@ -652,6 +656,7 @@ typedef enum VulkanTextureUsageMode
+     VULKAN_TEXTURE_USAGE_MODE_GRAPHICS_STORAGE_READ,
+     VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ,
+     VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE,
++    VULKAN_TEXTURE_USAGE_MODE_GRAPHICS_STORAGE_READ_WRITE,
+     VULKAN_TEXTURE_USAGE_MODE_COLOR_ATTACHMENT,
+     VULKAN_TEXTURE_USAGE_MODE_DEPTH_STENCIL_ATTACHMENT,
+     VULKAN_TEXTURE_USAGE_MODE_PRESENT
+@@ -798,6 +803,7 @@ typedef struct GraphicsPipelineResourceLayoutHashTableKey
+     Uint32 fragmentStorageTextureCount;
+     Uint32 fragmentStorageBufferCount;
+     Uint32 fragmentUniformBufferCount;
++    Uint32 fragmentReadWriteStorageTextureCount;
+ } GraphicsPipelineResourceLayoutHashTableKey;
+ 
+ typedef struct VulkanGraphicsPipelineResourceLayout
+@@ -822,6 +828,7 @@ typedef struct VulkanGraphicsPipelineResourceLayout
+     Uint32 fragmentStorageTextureCount;
+     Uint32 fragmentStorageBufferCount;
+     Uint32 fragmentUniformBufferCount;
++    Uint32 fragmentReadWriteStorageTextureCount;
+ } VulkanGraphicsPipelineResourceLayout;
+ 
+ typedef struct VulkanGraphicsPipeline
+@@ -1015,6 +1022,8 @@ typedef struct VulkanCommandBuffer
+     VkSampler fragmentSamplerBindings[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     VkImageView fragmentStorageTextureViewBindings[MAX_STORAGE_TEXTURES_PER_STAGE];
+     VkBuffer fragmentStorageBufferBindings[MAX_STORAGE_BUFFERS_PER_STAGE];
++    VkImageView fragmentReadWriteStorageTextureViewBindings[MAX_FRAGMENT_WRITE_TEXTURES];
++    bool fragmentReadWriteStorageTextureBound; // a memory barrier follows the render pass
+ 
+     VkImageView computeSamplerTextureViewBindings[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+     VkSampler computeSamplerBindings[MAX_TEXTURE_SAMPLERS_PER_STAGE];
+@@ -1139,6 +1148,9 @@ struct VulkanRenderer
+     bool supportsPortabilityEnumeration;
+     bool supportsFillModeNonSolid;
+     bool supportsMultiDrawIndirect;
++    bool requestGraphicsStorageReadWrite;
++    bool supportsGraphicsStorageReadWrite; // fragmentStoresAndAtomics
++    bool supportsRasterOrderedStorage;     // VK_EXT_fragment_shader_interlock, fragmentShaderPixelInterlock
+ 
+     VulkanMemoryAllocator *memoryAllocator;
+     VkPhysicalDeviceMemoryProperties memoryProperties;
+@@ -2741,6 +2753,10 @@ static void VULKAN_INTERNAL_TextureMemoryBarrier(
+         srcStages = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+         memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+         memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
++    } else if (sourceUsageMode == VULKAN_TEXTURE_USAGE_MODE_GRAPHICS_STORAGE_READ_WRITE) {
++        srcStages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
++        memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
++        memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+     } else if (sourceUsageMode == VULKAN_TEXTURE_USAGE_MODE_COLOR_ATTACHMENT) {
+         srcStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+         memoryBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+@@ -2778,6 +2794,10 @@ static void VULKAN_INTERNAL_TextureMemoryBarrier(
+         dstStages = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+         memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+         memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
++    } else if (destinationUsageMode == VULKAN_TEXTURE_USAGE_MODE_GRAPHICS_STORAGE_READ_WRITE) {
++        dstStages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
++        memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
++        memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+     } else if (destinationUsageMode == VULKAN_TEXTURE_USAGE_MODE_COLOR_ATTACHMENT) {
+         dstStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+         memoryBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+@@ -2897,8 +2917,12 @@ static VulkanTextureUsageMode VULKAN_INTERNAL_DefaultTextureUsageMode(
+ {
+     // NOTE: order matters here!
+     // NOTE: graphics storage bits and sampler bit are mutually exclusive!
++    // GRAPHICS_STORAGE_READ_WRITE comes first: a layout transition is not allowed inside a render pass, so the
++    // texture has to be in GENERAL already when SDL_BindGPUFragmentReadWriteStorageTextures is called.
+ 
+-    if (texture->usage & SDL_GPU_TEXTUREUSAGE_SAMPLER) {
++    if (texture->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE) {
++        return VULKAN_TEXTURE_USAGE_MODE_GRAPHICS_STORAGE_READ_WRITE;
++    } else if (texture->usage & SDL_GPU_TEXTUREUSAGE_SAMPLER) {
+         return VULKAN_TEXTURE_USAGE_MODE_SAMPLER;
+     } else if (texture->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ) {
+         return VULKAN_TEXTURE_USAGE_MODE_GRAPHICS_STORAGE_READ;
+@@ -3434,6 +3458,7 @@ static Uint32 SDLCALL VULKAN_INTERNAL_GraphicsPipelineResourceLayoutHashFunction
+     result = result * hashFactor + hashTableKey->fragmentStorageBufferCount;
+     result = result * hashFactor + hashTableKey->fragmentStorageTextureCount;
+     result = result * hashFactor + hashTableKey->fragmentUniformBufferCount;
++    result = result * hashFactor + hashTableKey->fragmentReadWriteStorageTextureCount;
+     return result;
+ }
+ static bool SDLCALL VULKAN_INTERNAL_GraphicsPipelineResourceLayoutHashKeyMatch(void *userdata, const void *aKey, const void *bKey)
+@@ -3777,13 +3802,14 @@ static bool VULKAN_INTERNAL_AllocateDescriptorsFromPool(
+         descriptorPoolSizes[i].descriptorCount = DESCRIPTOR_POOL_SIZE;
+     }
+ 
+-    // Category 2
+-    for (Uint32 i = 0; i < descriptorSetLayout->writeStorageTextureCount; i += 1) {
++    // Category 2 (after category 1: only the fragment set of a graphics pipeline has both)
++    const Uint32 writeBase = descriptorSetLayout->samplerCount + descriptorSetLayout->storageTextureCount + descriptorSetLayout->storageBufferCount;
++    for (Uint32 i = writeBase; i < writeBase + descriptorSetLayout->writeStorageTextureCount; i += 1) {
+         descriptorPoolSizes[i].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+         descriptorPoolSizes[i].descriptorCount = DESCRIPTOR_POOL_SIZE;
+     }
+ 
+-    for (Uint32 i = descriptorSetLayout->writeStorageTextureCount; i < descriptorSetLayout->writeStorageTextureCount + descriptorSetLayout->writeStorageBufferCount; i += 1) {
++    for (Uint32 i = writeBase + descriptorSetLayout->writeStorageTextureCount; i < writeBase + descriptorSetLayout->writeStorageTextureCount + descriptorSetLayout->writeStorageBufferCount; i += 1) {
+         descriptorPoolSizes[i].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+         descriptorPoolSizes[i].descriptorCount = DESCRIPTOR_POOL_SIZE;
+     }
+@@ -3914,8 +3940,9 @@ static DescriptorSetLayout *VULKAN_INTERNAL_FetchDescriptorSetLayout(
+         descriptorSetLayoutBindings[i].pImmutableSamplers = NULL;
+     }
+ 
+-    // Category 2
+-    for (Uint32 i = 0; i < writeStorageTextureCount; i += 1) {
++    // Category 2 (after category 1: only the fragment set of a graphics pipeline has both)
++    const Uint32 writeBase = samplerCount + storageTextureCount + storageBufferCount;
++    for (Uint32 i = writeBase; i < writeBase + writeStorageTextureCount; i += 1) {
+         descriptorSetLayoutBindings[i].binding = i;
+         descriptorSetLayoutBindings[i].descriptorCount = 1;
+         descriptorSetLayoutBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+@@ -3923,7 +3950,7 @@ static DescriptorSetLayout *VULKAN_INTERNAL_FetchDescriptorSetLayout(
+         descriptorSetLayoutBindings[i].pImmutableSamplers = NULL;
+     }
+ 
+-    for (Uint32 i = writeStorageTextureCount; i < writeStorageTextureCount + writeStorageBufferCount; i += 1) {
++    for (Uint32 i = writeBase + writeStorageTextureCount; i < writeBase + writeStorageTextureCount + writeStorageBufferCount; i += 1) {
+         descriptorSetLayoutBindings[i].binding = i;
+         descriptorSetLayoutBindings[i].descriptorCount = 1;
+         descriptorSetLayoutBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+@@ -4001,6 +4028,7 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
+     key.fragmentStorageTextureCount = fragmentShader->numStorageTextures;
+     key.fragmentStorageBufferCount = fragmentShader->numStorageBuffers;
+     key.fragmentUniformBufferCount = fragmentShader->numUniformBuffers;
++    key.fragmentReadWriteStorageTextureCount = fragmentShader->numReadWriteStorageTextures;
+ 
+     SDL_LockMutex(renderer->graphicsPipelineLayoutFetchLock);
+ 
+@@ -4044,7 +4072,7 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
+         fragmentShader->numSamplers,
+         fragmentShader->numStorageTextures,
+         fragmentShader->numStorageBuffers,
+-        0,
++        fragmentShader->numReadWriteStorageTextures,
+         0,
+         0);
+ 
+@@ -4072,6 +4100,7 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
+     pipelineResourceLayout->fragmentStorageTextureCount = fragmentShader->numStorageTextures;
+     pipelineResourceLayout->fragmentStorageBufferCount = fragmentShader->numStorageBuffers;
+     pipelineResourceLayout->fragmentUniformBufferCount = fragmentShader->numUniformBuffers;
++    pipelineResourceLayout->fragmentReadWriteStorageTextureCount = fragmentShader->numReadWriteStorageTextures;
+ 
+     // Create the pipeline layout
+ 
+@@ -5174,9 +5203,10 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
+         (MAX_TEXTURE_SAMPLERS_PER_STAGE +
+         MAX_STORAGE_TEXTURES_PER_STAGE +
+         MAX_STORAGE_BUFFERS_PER_STAGE +
+-        MAX_UNIFORM_BUFFERS_PER_STAGE) * 2];
++        MAX_UNIFORM_BUFFERS_PER_STAGE) * 2 +
++        MAX_FRAGMENT_WRITE_TEXTURES];
+     VkDescriptorBufferInfo bufferInfos[MAX_STORAGE_BUFFERS_PER_STAGE * 2];
+-    VkDescriptorImageInfo imageInfos[(MAX_TEXTURE_SAMPLERS_PER_STAGE + MAX_STORAGE_TEXTURES_PER_STAGE) * 2];
++    VkDescriptorImageInfo imageInfos[(MAX_TEXTURE_SAMPLERS_PER_STAGE + MAX_STORAGE_TEXTURES_PER_STAGE) * 2 + MAX_FRAGMENT_WRITE_TEXTURES];
+     Uint32 dynamicOffsets[MAX_UNIFORM_BUFFERS_PER_STAGE * 2];
+     Uint32 writeCount = 0;
+     Uint32 bufferInfoCount = 0;
+@@ -5404,6 +5434,29 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
+             bufferInfoCount += 1;
+         }
+ 
++        for (Uint32 i = 0; i < resourceLayout->fragmentReadWriteStorageTextureCount; i += 1) {
++            VkWriteDescriptorSet *currentWriteDescriptorSet = &writeDescriptorSets[writeCount];
++
++            currentWriteDescriptorSet->sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
++            currentWriteDescriptorSet->pNext = NULL;
++            currentWriteDescriptorSet->descriptorCount = 1;
++            currentWriteDescriptorSet->descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
++            currentWriteDescriptorSet->dstArrayElement = 0;
++            currentWriteDescriptorSet->dstBinding = resourceLayout->fragmentSamplerCount + resourceLayout->fragmentStorageTextureCount + resourceLayout->fragmentStorageBufferCount + i;
++            currentWriteDescriptorSet->dstSet = commandBuffer->fragmentResourceDescriptorSet;
++            currentWriteDescriptorSet->pTexelBufferView = NULL;
++            currentWriteDescriptorSet->pBufferInfo = NULL;
++
++            imageInfos[imageInfoCount].sampler = VK_NULL_HANDLE;
++            imageInfos[imageInfoCount].imageView = commandBuffer->fragmentReadWriteStorageTextureViewBindings[i];
++            imageInfos[imageInfoCount].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++
++            currentWriteDescriptorSet->pImageInfo = &imageInfos[imageInfoCount];
++
++            writeCount += 1;
++            imageInfoCount += 1;
++        }
++
+         commandBuffer->needNewFragmentResourceDescriptorSet = false;
+     }
+ 
+@@ -5786,7 +5839,8 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
+         vkUsageFlags |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+     }
+     if (createinfo->usage & (SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE |
+-                             SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) {
++                             SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE |
++                             SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE)) {
+         vkUsageFlags |= VK_IMAGE_USAGE_STORAGE_BIT;
+     }
+ 
+@@ -5920,7 +5974,8 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
+                 }
+             }
+ 
+-            if ((createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE) || (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) {
++            if ((createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE) || (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE) ||
++                (createinfo->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE)) {
+                 if (!VULKAN_INTERNAL_CreateSubresourceView(
+                     renderer,
+                     createinfo,
+@@ -6669,6 +6724,7 @@ static SDL_GPUGraphicsPipeline *VULKAN_CreateGraphicsPipeline(
+     graphicsPipeline->header.num_fragment_samplers = graphicsPipeline->resourceLayout->fragmentSamplerCount;
+     graphicsPipeline->header.num_fragment_storage_buffers = graphicsPipeline->resourceLayout->fragmentStorageBufferCount;
+     graphicsPipeline->header.num_fragment_storage_textures = graphicsPipeline->resourceLayout->fragmentStorageTextureCount;
++    graphicsPipeline->header.num_fragment_read_write_storage_textures = graphicsPipeline->resourceLayout->fragmentReadWriteStorageTextureCount;
+     graphicsPipeline->header.num_fragment_uniform_buffers = graphicsPipeline->resourceLayout->fragmentUniformBufferCount;
+ 
+     return (SDL_GPUGraphicsPipeline *)graphicsPipeline;
+@@ -6895,6 +6951,8 @@ static SDL_GPUShader *VULKAN_CreateShader(
+     vulkanShader->stage = createinfo->stage;
+     vulkanShader->numSamplers = createinfo->num_samplers;
+     vulkanShader->numStorageTextures = createinfo->num_storage_textures;
++    vulkanShader->numReadWriteStorageTextures = (Uint32)SDL_GetNumberProperty(
++        createinfo->props, SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER, 0);
+     vulkanShader->numStorageBuffers = createinfo->num_storage_buffers;
+     vulkanShader->numUniformBuffers = createinfo->num_uniform_buffers;
+ 
+@@ -7734,6 +7792,34 @@ static void VULKAN_BindFragmentStorageTextures(
+     }
+ }
+ 
++static void VULKAN_BindFragmentReadWriteStorageTextures(
++    SDL_GPUCommandBuffer *commandBuffer,
++    Uint32 firstSlot,
++    const SDL_GPUStorageTextureReadWriteBinding *storageTextureBindings,
++    Uint32 numBindings)
++{
++    VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer *)commandBuffer;
++
++    for (Uint32 i = 0; i < numBindings; i += 1) {
++        VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)storageTextureBindings[i].texture;
++        // Already in GENERAL (its default usage): no transition, which would be illegal inside the render pass.
++        VulkanTextureSubresource *subresource = VULKAN_INTERNAL_FetchTextureSubresource(
++            textureContainer,
++            storageTextureBindings[i].layer,
++            storageTextureBindings[i].mip_level);
++
++        vulkanCommandBuffer->fragmentReadWriteStorageTextureBound = true;
++        if (vulkanCommandBuffer->fragmentReadWriteStorageTextureViewBindings[firstSlot + i] != subresource->computeWriteView) {
++            VULKAN_INTERNAL_TrackTexture(
++                vulkanCommandBuffer,
++                subresource->parent);
++
++            vulkanCommandBuffer->fragmentReadWriteStorageTextureViewBindings[firstSlot + i] = subresource->computeWriteView;
++            vulkanCommandBuffer->needNewFragmentResourceDescriptorSet = true;
++        }
++    }
++}
++
+ static void VULKAN_BindFragmentStorageBuffers(
+     SDL_GPUCommandBuffer *commandBuffer,
+     Uint32 firstSlot,
+@@ -8224,6 +8310,30 @@ static void VULKAN_EndRenderPass(
+     renderer->vkCmdEndRenderPass(
+         vulkanCommandBuffer->commandBuffer);
+ 
++    // Fragment read-write storage textures stay in GENERAL, so no image barrier follows them: make their writes
++    // available to whatever comes next (another pass, a copy or a compute dispatch).
++    if (vulkanCommandBuffer->fragmentReadWriteStorageTextureBound) {
++        VkMemoryBarrier memoryBarrier;
++        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
++        memoryBarrier.pNext = NULL;
++        memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
++        memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
++                                      VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
++        renderer->vkCmdPipelineBarrier(
++            vulkanCommandBuffer->commandBuffer,
++            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
++            VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
++                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
++            0,
++            1,
++            &memoryBarrier,
++            0,
++            NULL,
++            0,
++            NULL);
++        vulkanCommandBuffer->fragmentReadWriteStorageTextureBound = false;
++    }
++
+     for (i = 0; i < vulkanCommandBuffer->colorAttachmentSubresourceCount; i += 1) {
+         VULKAN_INTERNAL_TextureSubresourceTransitionToDefaultUsage(
+             renderer,
+@@ -8276,6 +8386,7 @@ static void VULKAN_EndRenderPass(
+     SDL_zeroa(vulkanCommandBuffer->fragmentSamplerTextureViewBindings);
+     SDL_zeroa(vulkanCommandBuffer->fragmentStorageTextureViewBindings);
+     SDL_zeroa(vulkanCommandBuffer->fragmentStorageBufferBindings);
++    SDL_zeroa(vulkanCommandBuffer->fragmentReadWriteStorageTextureViewBindings);
+ }
+ 
+ static void VULKAN_BeginComputePass(
+@@ -9748,6 +9859,8 @@ static SDL_GPUCommandBuffer *VULKAN_AcquireCommandBuffer(
+     SDL_zeroa(commandBuffer->fragmentSamplerBindings);
+     SDL_zeroa(commandBuffer->fragmentStorageTextureViewBindings);
+     SDL_zeroa(commandBuffer->fragmentStorageBufferBindings);
++    SDL_zeroa(commandBuffer->fragmentReadWriteStorageTextureViewBindings);
++    commandBuffer->fragmentReadWriteStorageTextureBound = false;
+ 
+     SDL_zeroa(commandBuffer->readWriteComputeStorageTextureSubresources);
+     commandBuffer->readWriteComputeStorageTextureSubresourceCount = 0;
+@@ -11242,7 +11355,8 @@ static bool VULKAN_SupportsTextureFormat(
+     if (usage & (SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ |
+                  SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ |
+                  SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE |
+-                 SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) {
++                 SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE |
++                 SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE)) {
+         vulkanUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+     }
+ 
+@@ -11279,7 +11393,7 @@ static inline Uint8 CheckDeviceExtensions(
+         supports->ext = 1;                   \
+     }
+         CHECK(KHR_swapchain)
+-        else CHECK(KHR_maintenance1) else CHECK(KHR_driver_properties) else CHECK(KHR_portability_subset) else CHECK(MSFT_layered_driver) else CHECK(EXT_texture_compression_astc_hdr)
++        else CHECK(KHR_maintenance1) else CHECK(KHR_driver_properties) else CHECK(KHR_portability_subset) else CHECK(MSFT_layered_driver) else CHECK(EXT_texture_compression_astc_hdr) else CHECK(EXT_fragment_shader_interlock)
+ #undef CHECK
+     }
+ 
+@@ -12527,6 +12641,30 @@ static Uint8 VULKAN_INTERNAL_CreateLogicalDevice(
+         renderer->supportsMultiDrawIndirect = true;
+     }
+ 
++    // Fragment read-write storage textures (opt-in): stores from the fragment stage, plus pixel interlock for the
++    // rasterizer order when VK_EXT_fragment_shader_interlock is there.
++    VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT interlockFeatures;
++    SDL_zero(interlockFeatures);
++    interlockFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT;
++    if (renderer->requestGraphicsStorageReadWrite && haveDeviceFeatures.fragmentStoresAndAtomics) {
++        features->desiredVulkan10DeviceFeatures.fragmentStoresAndAtomics = VK_TRUE;
++        renderer->supportsGraphicsStorageReadWrite = true;
++
++        if (renderer->supports.EXT_fragment_shader_interlock && renderer->supportsPhysicalDeviceProperties2 &&
++            renderer->vkGetPhysicalDeviceFeatures2KHR != NULL) {
++            VkPhysicalDeviceFeatures2 supported;
++            SDL_zero(supported);
++            supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
++            supported.pNext = &interlockFeatures;
++            renderer->vkGetPhysicalDeviceFeatures2KHR(renderer->physicalDevice, &supported);
++            renderer->supportsRasterOrderedStorage = interlockFeatures.fragmentShaderPixelInterlock == VK_TRUE;
++            // Only the per-pixel ordered mode is used; leave the others off.
++            interlockFeatures.pNext = NULL;
++            interlockFeatures.fragmentShaderSampleInterlock = VK_FALSE;
++            interlockFeatures.fragmentShaderShadingRateInterlock = VK_FALSE;
++        }
++    }
++
+     // creating the logical device
+ 
+     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+@@ -12564,12 +12702,23 @@ static Uint8 VULKAN_INTERNAL_CreateLogicalDevice(
+ 
+     deviceExtensions = SDL_stack_alloc(
+         const char *,
+-        extensionCount + features->additionalDeviceExtensionCount);
++        extensionCount + features->additionalDeviceExtensionCount + 1);
+ 
+     CreateDeviceExtensionArray(&renderer->supports, deviceExtensions);
+     for (i = 0; i < features->additionalDeviceExtensionCount; ++i) {
+         deviceExtensions[extensionCount++] = features->additionalDeviceExtensionNames[i];
+     }
++    if (renderer->supportsRasterOrderedStorage) {
++        bool alreadyListed = false;
++        for (i = 0; i < extensionCount; ++i) {
++            if (SDL_strcmp(deviceExtensions[i], VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME) == 0) {
++                alreadyListed = true;
++            }
++        }
++        if (!alreadyListed) {
++            deviceExtensions[extensionCount++] = VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME;
++        }
++    }
+ 
+     deviceCreateInfo.enabledExtensionCount = extensionCount;
+     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
+@@ -12635,6 +12784,11 @@ static Uint8 VULKAN_INTERNAL_CreateLogicalDevice(
+         deviceCreateInfo.pEnabledFeatures = &features->desiredVulkan10DeviceFeatures;
+     }
+ 
++    if (renderer->supportsRasterOrderedStorage) {
++        interlockFeatures.pNext = (void *)deviceCreateInfo.pNext;
++        deviceCreateInfo.pNext = &interlockFeatures;
++    }
++
+     vulkanResult = renderer->vkCreateDevice(
+         renderer->physicalDevice,
+         &deviceCreateInfo,
+@@ -12911,6 +13065,9 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
+         }
+     }
+ 
++    renderer->requestGraphicsStorageReadWrite = SDL_GetBooleanProperty(
++        props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, false);
++
+     if (!VULKAN_INTERNAL_CreateLogicalDevice(renderer, &features)) {
+         SET_STRING_ERROR("Failed to create logical device!");
+         SDL_free(renderer);
+@@ -12918,6 +13075,16 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
+         return NULL;
+     }
+ 
++    if (renderer->requestGraphicsStorageReadWrite) {
++        SDL_SetBooleanProperty(renderer->props, SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, renderer->supportsGraphicsStorageReadWrite);
++        SDL_SetBooleanProperty(renderer->props, SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN, renderer->supportsRasterOrderedStorage);
++        if (verboseLogs) {
++            SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "Vulkan fragment stores: %s, fragment shader pixel interlock: %s",
++                        renderer->supportsGraphicsStorageReadWrite ? "yes" : "no",
++                        renderer->supportsRasterOrderedStorage ? "yes" : "no");
++        }
++    }
++
+     // FIXME: just move this into this function
+     result = (SDL_GPUDevice *)SDL_calloc(1, sizeof(SDL_GPUDevice));
+     ASSIGN_DRIVER(VULKAN)
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h b/src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h
+index a56beff1..ebda05ed 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h
++++ b/src/gpu/vulkan/SDL_gpu_vulkan_vkfuncs.h
+@@ -56,6 +56,8 @@ VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceFeatures2)
+ 
+ // VK_KHR_get_physical_device_properties2, needed for KHR_driver_properties
+ VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceProperties2KHR)
++// Same extension, needed for the VK_EXT_fragment_shader_interlock feature query
++VULKAN_INSTANCE_FUNCTION(vkGetPhysicalDeviceFeatures2KHR)
+ 
+ // VK_KHR_surface
+ VULKAN_INSTANCE_FUNCTION(vkDestroySurfaceKHR)
