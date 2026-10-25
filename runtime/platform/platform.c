@@ -275,8 +275,15 @@ bool platform_save_file(const char *path, const u8 *data, size_t size) {
     return true;
 }
 
+/* No macOS fica onde sempre esteve (~/Library/Application Support/automodellista/AutoModellista/, o memory card do
+ * M8); nos outros, sem a organização: $XDG_DATA_HOME/AutoModellista/ (~/.local/share/AutoModellista/) no Linux,
+ * %APPDATA%/AutoModellista/ no Windows. */
 bool platform_user_dir(char *out, size_t size) {
+#ifdef __APPLE__
     char *dir = SDL_GetPrefPath("automodellista", "AutoModellista");
+#else
+    char *dir = SDL_GetPrefPath("", "AutoModellista");
+#endif
     if (dir == NULL) {
         set_error(SDL_GetError());
         return false;
