@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           extra=()
-          if [[ "$RUNNER_OS" == "Windows" ]]; then extra+=(-DCMAKE_C_COMPILER=clang-cl); fi
+          if [[ "$RUNNER_OS" == "Windows" ]]; then extra+=(-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl); fi
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DAM_WITH_GENERATED=OFF \
@@ -86,7 +86,7 @@ jobs:
         run: |
           exe=build/runtime/automodellista
           [[ -x $exe || -x $exe.exe ]] || exe=build/runtime/automodellista.exe
-          "$exe"
+          "$exe" --selftest
 
       - name: clang-tidy
         if: matrix.tidy

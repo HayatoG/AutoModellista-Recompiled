@@ -9,7 +9,7 @@ Conteúdo
 --------
   automodellista   o executável (rpath $ORIGIN: acha a libSDL3.so.0 desta pasta)
   libSDL3.so.0     SDL @SDL_VERSION@ com o patch do projeto (texturas graváveis no fragment shader)
-  rodar.sh         abre o jogo numa janela
+  rodar.sh         abre a tela inicial (e, no JOGAR, o jogo na mesma janela)
   LEIAME.txt       este arquivo
 
 Requisitos
@@ -46,14 +46,24 @@ Confira o hash: sha256sum ~/jogos/automodellista/sys/main.dol
 
 Rodar
 -----
-    ./rodar.sh ~/jogos/automodellista                  # GPU (Vulkan), janela 2x
-    ./rodar.sh ~/jogos/automodellista --gfx soft       # GX em software
-    ./rodar.sh ~/jogos/automodellista --escala 3       # janela 3x
-    ./rodar.sh ~/jogos/automodellista --audio off      # opções extras vão direto para a runtime
+    ./rodar.sh                                         # tela inicial; na 1a vez pede a pasta do jogo
+    ./rodar.sh ~/jogos/automodellista                  # tela inicial com essa pasta
+    ./rodar.sh ~/jogos/automodellista --gfx soft       # GX em software só nesta execução
+    ./rodar.sh ~/jogos/automodellista --escala 3       # janela 3x só nesta execução
+    ./rodar.sh --no-launcher                           # direto para o jogo (pasta e opções do arquivo)
 
-Teclado como o padrão do Dolphin: X = A, Z = B, C = X, S = Y, D = Z, Return = START, setas = stick,
-TFGH = direcional, IJKL = stick C, Q/W = L/R. Gamepad também funciona. Fechar a janela encerra.
-Memory card: ~/.local/share/AutoModellista/MemoryCardA.raw (formato .raw do Dolphin, 59 blocos).
+A tela inicial mostra o banner do seu disco (files/opening.bnr) e um menu para teclado ou controle:
+JOGAR, Configurações (backend GPU/software, escala da janela, tela cheia, VSync, contador de FPS, volume,
+pasta do jogo), Controles (remapear teclado e gamepad, escolher o controle da porta 1), Memory card e Sair.
+Na primeira vez ela pede a pasta extraída (diálogo do sistema, ou digite o caminho) e confere o SHA-256 do
+main.dol. Tudo fica em ~/.local/share/AutoModellista/settings.ini; opções da linha de comando valem só na
+execução em que foram dadas.
+
+Teclado padrão (o do Dolphin): X = A, Z = B, C = X, S = Y, D = Z, Return = START, setas = stick,
+TFGH = direcional, IJKL = stick C, Q/W = L/R. Gamepad também funciona. No jogo: F3 mostra os quadros/s,
+F9/F10 (ou - e + do teclado numérico) baixam e sobem o volume, F11 ou Alt+Enter alternam a tela cheia.
+Fechar a janela encerra. Memory card: ~/.local/share/AutoModellista/MemoryCardA.raw (formato .raw do
+Dolphin, 59 blocos), ou o arquivo escolhido na tela inicial.
 
 O log sai no terminal. A primeira linha "GX: desenho na GPU (driver vulkan, HLSL (SPIR-V), fragment shader
 interlock, ...)" confirma o caminho da GPU.

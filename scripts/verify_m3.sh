@@ -20,7 +20,7 @@ for combo in "arm64 Debug" "arm64 Release" "x86_64 Debug" "x86_64 Release"; do
   cmake --build $B
   file $B/runtime/automodellista
   ctest --test-dir $B --output-on-failure | tail -3
-  $B/runtime/automodellista 2>&1 | tail -2
+  $B/runtime/automodellista --selftest 2>&1 | tail -2
   if [[ $arch == arm64 && $cfg == Debug ]]; then
     echo "== clang-tidy (compile_commands de $B)"
     find runtime tests/unit -type f -name '*.c' -print0 \

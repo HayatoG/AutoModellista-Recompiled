@@ -1,11 +1,11 @@
 #!/bin/zsh
 # Abre a runtime numa janela SDL3 (Release arm64). O GX desenha na GPU (M8, docs/M8_CORRIDA.md §3); AM_GFX=soft volta
-# ao rasterizador em software.
+# ao rasterizador em software (no jogar, sem AM_GFX vale o backend escolhido na tela inicial).
 #   scripts/assistir.sh [jogar|logo|corrida] [escala]
-#     jogar    (padrão) modo interativo: controle pelo teclado ou gamepad, som, tempo real e pulo de quadros
-#              quando não dá para desenhar todos (mapeamento em docs/M7_MENUS.md §3; teclado como o padrão
-#              do Dolphin: X = A, Z = B, C = X, S = Y, D = Z, Return = START, setas = stick, TFGH = direcional,
-#              IJKL = stick C, Q/W = L/R)
+#     jogar    (padrão) M9 parte 5: tela inicial (docs/M9_PARTE5_LAUNCHER.md) e, no JOGAR, o modo interativo:
+#              controle pelo teclado ou gamepad (remapeável na tela inicial; padrão do Dolphin: X = A, Z = B,
+#              C = X, S = Y, D = Z, Return = START, setas = stick, TFGH = direcional, IJKL = stick C, Q/W = L/R),
+#              som, tempo real e pulo de quadros. F3 mostra os quadros/s, F9/F10 o volume, F11 a tela cheia
 #     logo     roteiro fixo: abertura até o logo da Capcom (1500 quadros), sem som, na velocidade que der
 #     corrida  roteiro fixo: menus até a largada em Suzuka (6400 quadros), sem som, na velocidade que der
 # Fechar a janela encerra a execução. Log em /Volumes/AMRecomp/logs/assistir/.
@@ -20,8 +20,8 @@ mkdir -p /Volumes/AMRecomp/logs/assistir
 cd /Volumes/AMRecomp/logs/assistir
 case $modo in
   jogar)
-    # Sem --frames: roda até a janela fechar (o watchdog de tempo real fica desligado).
-    exec $BIN --sys $SYS --frames 100000000 --window $escala --gfx $GFX --max-seconds 0 ;;
+    # Sem --frames: roda até a janela fechar (o watchdog de tempo real fica desligado no modo interativo).
+    exec $BIN --sys $SYS --window $escala ${AM_GFX:+--gfx $AM_GFX} ;;
   logo) FRAMES=1500; PAD="320:D_LEFT:8,360:A:8" ;;
   corrida)
     FRAMES=6400
