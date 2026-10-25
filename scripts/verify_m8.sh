@@ -4,7 +4,9 @@
 #   - tempo emulado contra o Dolphin (--timebase-out dos dois lados, scripts/compare_timebase.py);
 #   - capturas do filme da abertura (q1600), "PRESS START" (q1800), menu principal (q2300) e largada (q6400) com o GX
 #     em software e na GPU, comparadas entre si e com o Dolphin (scripts/compare_shots.py);
-#   - a janela no modo de tempo real com a GPU: quadros/s do jogo e desenhados no menu e na corrida.
+#   - a janela no modo de tempo real com a GPU: quadros/s do jogo e desenhados no menu e na corrida;
+#   - M9: o outro ubershader da GPU (--gpu-shader hand ou hlsl, o que o padrão não usou) dá as mesmas capturas byte
+#     a byte (docs/M9_PARTE1B_HLSL.md).
 #   scripts/verify_m8.sh [--oracle] [--update-golden] [--no-window] [--cel]
 #     --oracle         roda o Dolphin de novo (capturas e timebase) em vez de usar os de $AM_LOG_DIR
 #     --update-golden  regrava tests/golden/m8_corrida.json com o resumo desta execução
@@ -42,6 +44,24 @@ echo "== clang-format"
 find runtime tests/unit -type f \( -name '*.c' -o -name '*.h' \) ! -name '*_metallib.h' -print0 \
   | xargs -0 $LLVM/clang-format --dry-run -Werror
 
+# M9: o ubershader que o --gfx gpu do log $1 não usou (o outro tem de dar a mesma imagem byte a byte).
+alt_shader() { grep -q 'MSL à mão' $1 && echo hlsl || echo hand }
+# Roda --gfx gpu com o outro ubershader e confere as capturas contra as do padrão. $1 = log do padrão, $2 = prefixo
+# das capturas do padrão, $3 = prefixo das novas, $4 = log novo, $5 = quadros, $6 = roteiro, $7... = capturas.
+check_alt_shader() {
+  local base_log=$1 base=$2 alt=$3 log=$4 frames=$5 pad=$6 sh f s=(); shift 6
+  sh=$(alt_shader $base_log)
+  for f in "$@"; do s+=("${f}:${alt}_f${f}.png"); done
+  (cd $AM_LOG_DIR && $T 3000 $B/runtime/automodellista --sys $SYS --frames $frames --pad-script "$pad" --gfx gpu \
+    --gpu-shader $sh --audio off --shot ${(j:,:)s} --max-seconds 2900 > $log 2>&1) || { tail -5 $AM_LOG_DIR/$log; exit 1; }
+  grep -q 'GX: desenho na GPU' $AM_LOG_DIR/$log || { echo "  --gpu-shader $sh: sem GPU ($(grep -m1 WARN $AM_LOG_DIR/$log))"; exit 1; }
+  for f in "$@"; do
+    cmp -s $AM_LOG_DIR/${alt}_f$f.png $AM_LOG_DIR/${base}_f$f.png \
+      || { echo "  --gpu-shader $sh: captura q$f DIFERENTE da do padrão"; exit 1; }
+  done
+  echo "  --gpu-shader $sh: $# capturas idênticas byte a byte às do padrão ($(sed -n 's/.*GX: desenho na GPU (driver \(.*\), ubershader TEV).*/\1/p' $AM_LOG_DIR/$log))"
+}
+
 # Trecho do cel-shading (docs/M8_PARTE2B_CEL.md): acelera (A) a partir do quadro 6900 e vira à direita em 7700.
 if [[ $CEL == 1 ]]; then
   CPAD="$PAD,6900:A:1500,7700:D_RIGHT:120"; CSHOTS=(7400 7600 7750 7850 7950 8100 8400); CF=8400
@@ -60,6 +80,7 @@ if [[ $CEL == 1 ]]; then
       --audio off --shot $(cshots $gfx) --max-seconds 2900 > cel/$gfx.log 2>&1) || { tail -5 $AM_LOG_DIR/cel/$gfx.log; exit 1; }
     echo "  cel --gfx $gfx: $(grep -E '^\[INFO\] (GX render|TEV:)' $AM_LOG_DIR/cel/$gfx.log | sed 's/^\[INFO\] //' | tr '\n' ' ')"
   done
+  check_alt_shader $AM_LOG_DIR/cel/gpu.log cel/gpu cel/gpualt cel/gpualt.log $CF "$CPAD" $CSHOTS
   for f in $CSHOTS; do
     L=$AM_LOG_DIR/cel
     python3 -I scripts/compare_shots.py $L/soft_f$f.png $L/dolphin_f$f.png --min-psnr 30 --max-bad 2 \
@@ -122,6 +143,7 @@ for arch in arm64 x86_64; do
   cmp -s $AM_LOG_DIR/runtime_tb_gputh_$arch.txt $AM_LOG_DIR/runtime_tb_$arch.txt \
     || { echo "  --gx-thread on: tempo emulado DIFERENTE"; exit 1; }
   echo "  --gx-thread on: capturas da GPU e tempo emulado idênticos; $(grep -o 'GX thread: .*' $AM_LOG_DIR/runtime_gputh_$arch.log)"
+  check_alt_shader $AM_LOG_DIR/runtime_gpu_$arch.log gpu_$arch gpualt_$arch runtime_gpualt_$arch.log $FRAMES "$PAD" $SHOTS
   grep -E "^\[INFO\] GX GPU" $AM_LOG_DIR/runtime_gpu_$arch.log | sed 's/^\[INFO\] /  /'
   python3 -I scripts/compare_timebase.py $AM_LOG_DIR/runtime_tb_$arch.txt $AM_LOG_DIR/dolphin_tb.txt --frame $FRAMES \
     --max-lag 3 --json $AM_LOG_DIR/timebase_$arch.json | sed 's/^/  /'

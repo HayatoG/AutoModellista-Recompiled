@@ -20,7 +20,12 @@
  *   --pad-script <roteiro>     botões do controle 1 por quadro, "200:D_LEFT:8,240:A:8" (am/pad_script.h)
  *   --events <arquivo>         log de eventos do M5 (main, OSLink, leituras do DVD) para comparar com o Dolphin
  *   --gfx soft|gpu|off         M6: GX em software (padrão) ou só contar comandos, como no M5; M8: gpu desenha com a
- *                              SDL3 GPU (ubershader TEV) e faz as cópias do EFB na CPU
+ *                              SDL3 GPU (ubershader TEV) e faz as cópias do EFB na CPU; sem GPU utilizável, cai no
+ *                              software com aviso
+ *   --gpu-shader auto|hand|hlsl  M9: ubershader da GPU. hand = MSL à mão do M8 (só Metal, framebuffer fetch);
+ *                              hlsl = gx_ubershader.hlsl (DXIL/SPIR-V/metallib, EFB em storage na ordem da
+ *                              rasterização; exige ROV/interlock). auto (padrão): hand no Metal, hlsl nos outros
+ *                              (docs/M9_PARTE1B_HLSL.md). As capturas são iguais byte a byte
  *   --shot <q:arq.png,...>     M6: no início do quadro q grava o XFB em PNG (o mesmo que dolphin_trace.py --shots)
  *   --window <escala>          M6: janela SDL3 com o XFB que o VI mostra (1, 2...); com --shot grava também
  *                              <arq>_janela.png, lido de volta do que a janela desenhou. M7: sem --pad-script, o
@@ -74,6 +79,7 @@
 #include "am/mem.h"
 #include "am/memcard.h"
 #include "am/platform.h"
+#include "am/platform_gpu.h"
 #include "am/ppc_sys.h"
 #include "am/recomp.h"
 #include "am/timebase.h"
@@ -111,6 +117,7 @@ typedef struct Options {
     const char *memcard;
     bool gfx_off;
     bool gfx_gpu;
+    int gpu_shader; /* PlatformGpuShader */
     bool stop_given;
     bool verbose;
 } Options;
@@ -210,6 +217,11 @@ static bool parse_option(Options *o, const char *name, const char *value) {
                (strcmp(value, "soft") == 0 || strcmp(value, "off") == 0 || strcmp(value, "gpu") == 0)) {
         o->gfx_off = strcmp(value, "off") == 0;
         o->gfx_gpu = strcmp(value, "gpu") == 0;
+    } else if (strcmp(name, "--gpu-shader") == 0 &&
+               (strcmp(value, "auto") == 0 || strcmp(value, "hand") == 0 || strcmp(value, "hlsl") == 0)) {
+        o->gpu_shader = strcmp(value, "hand") == 0   ? PLATFORM_GPU_SHADER_HAND
+                        : strcmp(value, "hlsl") == 0 ? PLATFORM_GPU_SHADER_HLSL
+                                                     : PLATFORM_GPU_SHADER_AUTO;
     } else if (strcmp(name, "--audio-dump") == 0) {
         o->audio_dump = value;
     } else if (strcmp(name, "--audio-dump-max-mb") == 0 && parse_u64(value, &n) && n > 0U) {
@@ -501,6 +513,7 @@ static GameRunConfig run_config(const Options *o, RunPaths *p) {
                            .pad_script = o->pad_script,
                            .render = !o->gfx_off,
                            .gpu = o->gfx_gpu,
+                           .gpu_shader = o->gpu_shader,
                            .shots = log_path_list(o->shots, p->shots, sizeof(p->shots)),
                            .window_scale = (u32)o->window_scale,
                            .audio_dump = log_path(o->audio_dump, p->audio, sizeof(p->audio)),

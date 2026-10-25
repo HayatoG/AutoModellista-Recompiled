@@ -89,3 +89,13 @@ am_apply_strict(sdl_rov_test)
 am_apply_sanitize_link(sdl_rov_test)
 add_test(NAME sdl_rov COMMAND sdl_rov_test)
 set_tests_properties(sdl_rov PROPERTIES SKIP_RETURN_CODE 77)
+
+# M9 parte 1b: o ubershader em HLSL dá o mesmo EFB que o MSL à mão num lote sintético (docs/M9_PARTE1B_HLSL.md).
+# Sai com 77 (pulado) sem os dois caminhos.
+add_executable(gpu_shader_test unit/gpu_shader_test.c)
+target_link_libraries(gpu_shader_test PRIVATE am_platform)
+target_include_directories(gpu_shader_test PRIVATE unit)
+am_apply_strict(gpu_shader_test)
+am_apply_sanitize_link(gpu_shader_test)
+add_test(NAME gpu_shader COMMAND gpu_shader_test)
+set_tests_properties(gpu_shader PROPERTIES SKIP_RETURN_CODE 77)
