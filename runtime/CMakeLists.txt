@@ -62,10 +62,23 @@ else()
   set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
   set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+  # M9 parte 1b: patches/sdl (texturas de storage graváveis no fragment shader, na ordem da rasterização;
+  # docs/M9_PARTE1B_SDL.md). O hash dos patches entra no comando para que mudar um patch refaça o FetchContent; o
+  # script é idempotente. Com FETCHCONTENT_SOURCE_DIR_SDL3 (fonte local) nada é aplicado.
+  file(GLOB AM_SDL3_PATCHES CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/patches/sdl/*.patch")
+  list(SORT AM_SDL3_PATCHES)
+  set(AM_SDL3_PATCH_DIGEST "")
+  foreach(p IN LISTS AM_SDL3_PATCHES)
+    file(SHA256 "${p}" h)
+    string(APPEND AM_SDL3_PATCH_DIGEST "${h}\n")
+  endforeach()
+  string(SHA256 AM_SDL3_PATCH_DIGEST "${AM_SDL3_PATCH_DIGEST}")
   FetchContent_Declare(SDL3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG ${AM_SDL3_TAG}
     GIT_SHALLOW TRUE
+    PATCH_COMMAND ${CMAKE_COMMAND} -DAM_PATCH_SRC=<SOURCE_DIR> -DAM_PATCH_DIR=${PROJECT_SOURCE_DIR}/patches/sdl
+                  -DAM_PATCH_DIGEST=${AM_SDL3_PATCH_DIGEST} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/AmApplyPatches.cmake
     SYSTEM)
   FetchContent_MakeAvailable(SDL3)
 endif()
