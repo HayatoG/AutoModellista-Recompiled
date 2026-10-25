@@ -79,3 +79,13 @@ am_add_fatal_test(rel_window "\\[FATAL\\] bus: leitura de 4 byte\\(s\\) em 0x818
 am_add_fatal_test(gx_opcode "\\[FATAL\\] GX: opcode 0x01 desconhecido na FIFO")
 am_add_fatal_test(di_stream "\\[FATAL\\] DI: comando de streaming de áudio 0xE1000000")
 am_add_fatal_test(assertion "\\[FATAL\\] asserção falhou")
+
+# M9 parte 1b: o patch da SDL (patches/sdl/) de ponta a ponta numa GPU Metal. Sai com 77 (pulado) sem a SDL remendada
+# (AM_SDL3_SYSTEM=ON) ou sem GPU com MSL; docs/M9_PARTE1B_SDL.md §5.
+add_executable(sdl_rov_test unit/sdl_rov_test.c)
+target_link_libraries(sdl_rov_test PRIVATE am_platform)
+target_include_directories(sdl_rov_test PRIVATE unit)
+am_apply_strict(sdl_rov_test)
+am_apply_sanitize_link(sdl_rov_test)
+add_test(NAME sdl_rov COMMAND sdl_rov_test)
+set_tests_properties(sdl_rov PROPERTIES SKIP_RETURN_CODE 77)
