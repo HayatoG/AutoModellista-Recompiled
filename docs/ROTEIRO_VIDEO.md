@@ -305,7 +305,21 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** os dois triângulos chegam ao mesmo pixel; no Mac, eles entram numa fila e o pixel acende na ordem certa; no PC, uma cancela com o logo da SDL bloqueia a gravação, e um remendo (um band-aid animado) abre a cancela. Fechar com o contador “7 min de IA”.
 
-### 4.14 Quanto custou até aqui (tokens e tempo)
+### 4.14 M9, parte 1b: o remendo que prova que funciona
+
+**Fala:** “Com o risco mapeado, duas IAs foram ao mesmo tempo. Uma Sonnet compilou o tradutor de shaders no Mac: a previsão era de até uma hora e meia, levou quatro minutos. E ela achou uma pegadinha: se você não pede uma versão nova da linguagem do Metal, o tradutor tira a garantia de ordem do shader, sem avisar nada. Uma Opus escreveu o remendo da SDL, umas seiscentas linhas, pra que o shader possa gravar na imagem na ordem certa, no DirectX 12, no Vulkan e no Metal. E como provar que a ordem está certa? O teste desenha 384 triângulos em cima de cada pixel, e cada um faz uma conta que só dá o resultado certo se todos passarem na ordem. Com o remendo: zero pixels errados. O mesmo shader sem a garantia de ordem: todos os 4.096 errados. Esse segundo número é o que mais importa: ele prova que o teste pega o erro. E o Mac de hoje? Nenhum byte mudou. No Windows, o remendo já compila; rodar de verdade fica pra quando chegar lá.”
+
+**Na tela:**
+
+- Duas colunas com o horário real: Sonnet, tradutor de shaders, 00:46 → 01:01; Opus, remendo da SDL, 00:47 → 01:29.
+- A frase “previsto 40 a 90 min · levou 4 min”.
+- Uma grade de 64×64 pixels: toda verde com o remendo (“0 de 4.096 errados”), toda vermelha sem a ordem (“4.096 de 4.096”).
+- O tamanho do remendo por parte: Direct3D 12 134 linhas, Vulkan 184, Metal 86, API e comum o resto (594 no total).
+- A linha do `verify_m8.sh` com `OK` e “51/51 testes”, com a legenda “o caminho de hoje não mudou nenhum byte”.
+
+**Motion:** uma pilha de triângulos coloridos cai sobre um único pixel, um por vez, e um contador soma; na versão sem ordem, eles caem embaralhados e o contador fica vermelho. Depois, a grade inteira acende verde de uma vez. Fechar com um selo “Windows: compila · rodar: a gravar”.
+
+### 4.15 Quanto custou até aqui (tokens e tempo)
 
 **Fala:** “E quanto de IA foi isso? Até agora, uns 905 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 4 milhões de tokens, algo como uns 33 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos, e a peça mais longa da última parte, o relógio exato, 3 horas e meia. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31; até a corrida sair a 60 com o save funcionando, 22 horas e 32. No relógio da parede foram quase três dias, com noites de sono no meio.”
 
@@ -332,6 +346,8 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M8 parte 2b, cel-shading | Sonnet | 42 min | 27 mil | 5,7 M |
 | M8 parte 2b, junção e verificação | Opus | 1h27 | 36 mil | 9,4 M |
 | M9 parte 1a, investigação | Opus | 7 min | 34 mil | 4,0 M |
+| M9 parte 1b, tradutor de shaders | Sonnet | 15 min | 10 mil | 1,2 M |
+| M9 parte 1b, remendo da SDL | Opus | 42 min | 118 mil | 25,8 M |
 | Sessão principal | Opus | 29h+ | 504 mil | 107,4 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
@@ -384,3 +400,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 24/10/2026 (M8 parte 2a) | 4.11 nova: “M8, parte 2a: a thread que não acelerou” (GX numa thread, determinístico, sem ganho; a espera no DrawDone; a cópia como o Dolphin fica para a 2b); a cena de tokens vira 4.12 com a parte 2a e o tempo acumulado |
 | 24/10/2026 (M8 concluído) | 4.12 nova: “M8, parte 2b: quatro IAs, quatro peças” (quatro agentes em worktrees, desenho sem esperar com cópia na escrita e corrida a 60, laço do tradutor que cobrava metade e relógio exato, memory card igual ao do Dolphin, contorno confirmado, erro achado na junção); a cena de tokens vira 4.13 com as cinco linhas da parte 2b, a sessão principal e o tempo acumulado até o M8; Cap. 5 reescrito (M8 feito, M9 próximo) |
 | 25/10/2026 (M9 parte 1a) | 4.13 nova: “M9, parte 1a: o que a SDL não deixa” (a ordem dos pixels, o que o chip da Apple dá de graça, a SDL que não deixa o shader gravar, o remendo escolhido e o Direct3D 11 fora); a cena de tokens vira 4.14 com a linha da investigação |
+| 25/10/2026 (M9 parte 1b, peças 1 e 2) | 4.14 nova: “M9, parte 1b: o remendo que prova que funciona” (tradutor de shaders em 4 min e a pegadinha da versão do Metal, remendo da SDL de 594 linhas, o teste que falha sem a ordem, nenhum byte mudou no Mac); a cena de tokens vira 4.15 com as duas peças |
