@@ -89,6 +89,10 @@ u64 bus_read(GuestAddr addr, u8 size) {
 }
 
 void bus_write(GuestAddr addr, u64 value, u8 size) {
+    if ((addr & 0xFFFFF000U) == 0xCC008000U) { /* M9: o gather pipe é quase toda escrita no barramento */
+        gather_pipe_write(addr & 0xFFFU, value, size);
+        return;
+    }
     const BusRegion *r = find_region(addr);
     if (r == NULL || r->write == NULL) {
         bus_unhandled_write(addr, value, size);

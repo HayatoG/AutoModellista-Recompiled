@@ -49,6 +49,19 @@ else()
   set(AM_SANITIZE_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer)
 endif()
 
+# M9: LTO no Release. O C gerado chama mem_read*/mem_write* (core/mem.c) a cada load e store; sem LTO cada um é uma
+# chamada entre arquivos. Com ele a corrida sem GX vai de ~49 para ~69 quadros/s no M4 (docs/M9_PARTE4_DESEMPENHO.md).
+option(AM_LTO "LTO (otimização entre arquivos) nos builds Release" ON)
+if(AM_LTO AND NOT CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT am_ipo_ok OUTPUT am_ipo_msg LANGUAGES C CXX)
+  if(am_ipo_ok)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+  else()
+    message(STATUS "LTO indisponível neste compilador: ${am_ipo_msg}")
+  endif()
+endif()
+
 # M9 parte 5: a am_core chega ao executável por dois caminhos (am_recomp e am_front); o ld do Xcode avisa da
 # repetição, que é inofensiva.
 if(APPLE)

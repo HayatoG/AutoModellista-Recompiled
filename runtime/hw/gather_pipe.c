@@ -31,11 +31,20 @@ u64 gather_pipe_total_bytes(void) {
 
 /* GPFifoManager::UpdateGatherPipe. */
 static void flush(void) {
+    if (s_gp.count < GATHER_PIPE_SIZE) {
+        return;
+    }
     u32 done = 0;
     while (s_gp.count - done >= GATHER_PIPE_SIZE) {
         const u32 wptr = pi_fifo_write_pointer();
-        for (u32 i = 0; i < GATHER_PIPE_SIZE; i++) {
-            mem_write8(NULL, MEM_CACHED_BASE | (wptr + i), s_gp.buf[done + i]);
+        u8 *dst = mem_host_ptr(MEM_CACHED_BASE | wptr, GATHER_PIPE_SIZE);
+        if (dst != NULL) { /* M9: a rajada inteira de uma vez (marca as páginas antes, pela cópia na escrita) */
+            mem_mark_written((u32)(dst - mem_mem1_data()), GATHER_PIPE_SIZE);
+            memcpy(dst, &s_gp.buf[done], GATHER_PIPE_SIZE);
+        } else {
+            for (u32 i = 0; i < GATHER_PIPE_SIZE; i++) {
+                mem_write8(NULL, MEM_CACHED_BASE | (wptr + i), s_gp.buf[done + i]);
+            }
         }
         pi_fifo_advance();
         cp_gather_pipe_burst(wptr, &s_gp.buf[done]);

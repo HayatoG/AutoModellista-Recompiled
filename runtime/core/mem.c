@@ -131,7 +131,7 @@ u8 *mem_mem1_data(void) {
 /* Traduz endereço de CPU para MEM1. 0x80xxxxxx e 0xC0xxxxxx são o mesmo bloco físico (BAT padrão do SDK). Físico
  * entre 24 e 64 MiB é a janela virtual dos RELs (core/rel_map.c). O resto (MMIO em 0xCC..., cache bloqueado em
  * 0xE0...) devolve NULL e vai ao barramento. */
-static u8 *mem1_resolve(GuestAddr addr, u32 size) {
+static inline __attribute__((always_inline)) u8 *mem1_resolve(GuestAddr addr, u32 size) {
     if ((addr >> 30) < 2U) {
         return NULL;
     }
@@ -160,22 +160,53 @@ static void clear_reservation(CPUState *cpu, GuestAddr addr) {
     }
 }
 
-static u64 load_be(const u8 *p, u32 size) {
-    u64 value = 0;
-    for (u32 i = 0; i < size; i++) {
-        value = (value << 8) | p[i];
+/* M9: tamanho constante em cada mem_read/mem_write (inline) e troca de bytes em vez do laço byte a byte. */
+static inline __attribute__((always_inline)) u64 load_be(const u8 *p, u32 size) {
+    switch (size) {
+    case 1U:
+        return p[0];
+    case 2U: {
+        u16 v;
+        memcpy(&v, p, 2U);
+        return __builtin_bswap16(v);
     }
-    return value;
+    case 4U: {
+        u32 v;
+        memcpy(&v, p, 4U);
+        return __builtin_bswap32(v);
+    }
+    default: {
+        u64 v;
+        memcpy(&v, p, 8U);
+        return __builtin_bswap64(v);
+    }
+    }
 }
 
-static void store_be(u8 *p, u32 size, u64 value) {
-    for (u32 i = size; i > 0U; i--) {
-        p[i - 1U] = (u8)(value & 0xFFU);
-        value >>= 8;
+static inline __attribute__((always_inline)) void store_be(u8 *p, u32 size, u64 value) {
+    switch (size) {
+    case 1U:
+        p[0] = (u8)value;
+        break;
+    case 2U: {
+        const u16 v = __builtin_bswap16((u16)value);
+        memcpy(p, &v, 2U);
+        break;
+    }
+    case 4U: {
+        const u32 v = __builtin_bswap32((u32)value);
+        memcpy(p, &v, 4U);
+        break;
+    }
+    default: {
+        const u64 v = __builtin_bswap64(value);
+        memcpy(p, &v, 8U);
+        break;
+    }
     }
 }
 
-static u64 read_be(GuestAddr addr, u8 size) {
+static inline __attribute__((always_inline)) u64 read_be(GuestAddr addr, u8 size) {
     const u8 *p = mem1_resolve(addr, size);
     if (p == NULL) {
         return bus_read(addr, size);
@@ -183,7 +214,7 @@ static u64 read_be(GuestAddr addr, u8 size) {
     return load_be(p, size);
 }
 
-static void write_be(CPUState *cpu, GuestAddr addr, u64 value, u8 size) {
+static inline __attribute__((always_inline)) void write_be(CPUState *cpu, GuestAddr addr, u64 value, u8 size) {
     u8 *p = mem1_resolve(addr, size);
     if (p == NULL) {
         bus_write(addr, value, size);

@@ -626,6 +626,8 @@ typedef struct TexKey {
     u64 written;
     bool trusted; /* o contador de escritas vale para os bytes lidos (falso quando vêm da cópia da época) */
     u32 gx_epoch; /* época do GX da consulta (a cópia da época não muda dentro dela) */
+    u32 texmap;
+    bool viewed; /* M9: a cópia da época só é tirada quando o cache precisa dos bytes (hash ou decodificação) */
 } TexKey;
 
 #define TEX_WRITTEN_UNKNOWN UINT64_MAX /* nenhuma soma real chega aqui: obriga a conferir pelo hash */
@@ -661,7 +663,15 @@ static bool tex_view(u32 texmap, TexUnit *u, u32 addr, u32 bytes) {
 }
 
 /* Procura no balde; achando a mesma textura com conteúdo velho (ou menos níveis), devolve-a em *stale. */
-static TexCacheEntry *cache_find(const TexUnit *u, const TexKey *k, TexCacheEntry **stale) {
+/* M9: com !trusted, troca a fonte pela cópia da época na primeira vez que os bytes são lidos. */
+static void key_view(TexUnit *u, TexKey *k) {
+    if (!k->trusted && !k->viewed) {
+        (void)tex_view(k->texmap, u, k->addr, k->bytes);
+        k->viewed = true;
+    }
+}
+
+static TexCacheEntry *cache_find(TexUnit *u, TexKey *k, TexCacheEntry **stale) {
     *stale = NULL;
     for (u32 i = s_tex.heads[k->bucket]; i != 0U; i = s_tex.cache[i - 1U].next) {
         TexCacheEntry *e = &s_tex.cache[i - 1U];
@@ -672,7 +682,7 @@ static TexCacheEntry *cache_find(const TexUnit *u, const TexKey *k, TexCacheEntr
         if (e->levels >= k->levels &&
             ((k->trusted && e->written == k->written) ||
              (!k->trusted && e->view_epoch == k->gx_epoch && e->view_written == k->written) ||
-             (e->bytes == k->bytes &&
+             (e->bytes == k->bytes && (key_view(u, k), true) &&
               e->content == hash_bytes(u->src.data, k->bytes < u->src.size ? k->bytes : u->src.size)))) {
             e->written = k->trusted ? k->written : TEX_WRITTEN_UNKNOWN;
             e->view_epoch = k->trusted ? 0U : k->gx_epoch;
@@ -685,7 +695,8 @@ static TexCacheEntry *cache_find(const TexUnit *u, const TexKey *k, TexCacheEntr
 }
 
 /* Decodifica numa entrada (a velha da mesma textura, senão uma livre ou a menos usada). */
-static void cache_insert(TexUnit *u, const TexKey *k, TexCacheEntry *stale) {
+static void cache_insert(TexUnit *u, TexKey *k, TexCacheEntry *stale) {
+    key_view(u, k);
     TexCacheEntry *victim = stale != NULL ? stale : cache_victim();
     AM_ASSERT(victim != NULL, "cache de texturas sem entrada");
     if (victim != stale) {
@@ -731,21 +742,24 @@ static void cache_lookup(u32 texmap, TexUnit *u) {
     k.bytes = source_bytes(u, k.levels);
     k.tlut_hash = paletted(u->format) ? tlut_hash_of(u) : 0U;
     k.written = mem_written_sum(k.addr, k.bytes);
-    k.trusted = !tex_view(texmap, u, k.addr, k.bytes); /* depois da soma: uma escrita contada já está marcada */
+    /* depois da soma: uma escrita contada já está marcada */
+    k.trusted = k.bytes == 0U || mem_gx_unchanged(k.addr, k.bytes);
+    k.viewed = false;
+    k.texmap = texmap;
     k.gx_epoch = mem_cow_gx_current();
     k.bucket = bucket_of(k.addr);
     cache_resolve(u, &k);
     if (k.trusted && !mem_gx_unchanged(k.addr, k.bytes)) {
         /* A CPU escreveu na textura enquanto ela era lida da memória: de novo, pela cópia da época. */
-        (void)tex_view(texmap, u, k.addr, k.bytes);
         k.trusted = false;
+        k.viewed = false;
         u->cached_levels = 0;
         cache_resolve(u, &k);
     }
 }
 
 static void cache_resolve(TexUnit *u, const TexKey *kp) {
-    const TexKey k = *kp;
+    TexKey k = *kp;
     TexCacheEntry *stale = NULL;
     TexCacheEntry *e = cache_find(u, &k, &stale);
     if (e != NULL) {
