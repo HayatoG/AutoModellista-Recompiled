@@ -292,7 +292,20 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** os quatro trilhos começam juntos às 14:02 e terminam em horas diferentes; o cadeado do Dolphin pula de trilho em trilho. Na frase da cópia na escrita, uma página da memória é carimbada “cópia” antes de a CPU riscar o original. Na frase do tradutor, um laço em dois blocos aparece com o segundo bloco piscando “de graça”, e o contador de ciclos dobra quando ele acende. No fim, os quatro trilhos convergem num só (a junção), com um alerta vermelho rápido entre “cartão” e “GX” que vira verde.
 
-### 4.13 Quanto custou até aqui (tokens e tempo)
+### 4.13 M9, parte 1a: o que a SDL não deixa (a gravar)
+
+**Fala:** “Pra levar o jogo pro Windows e pro Linux, eu queria escrever o desenho uma vez só e ter DirectX 12, Vulkan e Metal de graça. Antes de escrever uma linha, mandei a IA conferir um risco. O nosso shader não usa a mistura de cores pronta da placa de vídeo: ele lê o pixel que já está na tela, faz a conta do GameCube e grava de volta. Quando dois triângulos caem no mesmo pixel, a ordem importa. No Mac isso é de graça, porque o chip da Apple deixa o shader ler o próprio pixel na ordem certa. No PC, o hardware também sabe fazer isso, mas a biblioteca que a gente usa, a SDL, simplesmente não deixa o shader gravar numa imagem. Então a decisão foi: escrever o shader uma vez, traduzir pras três APIs, e remendar a SDL. No Vulkan o remendo é de umas vinte linhas; no DirectX 12, de umas duzentas. Sete minutos de IA pra descobrir isso antes, em vez de dias depois.”
+
+**Na tela:**
+
+- Dois triângulos sobrepostos num pixel ampliado, com as setas “lê → conta do GameCube → grava”.
+- Uma tabela simples: Metal “o chip da Apple garante a ordem”; Direct3D 12 “ROV: o hardware tem, a SDL não deixa”; Vulkan “interlock: o hardware tem, a SDL não liga”; Direct3D 11 “a SDL não tem”.
+- O tamanho dos remendos: Vulkan 15 a 25 linhas, Direct3D 12 200 a 300.
+- O trecho do documento `docs/M9_PARTE1A_INVESTIGACAO.md` com a recomendação.
+
+**Motion:** os dois triângulos chegam ao mesmo pixel; no Mac, eles entram numa fila e o pixel acende na ordem certa; no PC, uma cancela com o logo da SDL bloqueia a gravação, e um remendo (um band-aid animado) abre a cancela. Fechar com o contador “7 min de IA”.
+
+### 4.14 Quanto custou até aqui (tokens e tempo)
 
 **Fala:** “E quanto de IA foi isso? Até agora, uns 905 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 4 milhões de tokens, algo como uns 33 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos, e a peça mais longa da última parte, o relógio exato, 3 horas e meia. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31; até a corrida sair a 60 com o save funcionando, 22 horas e 32. No relógio da parede foram quase três dias, com noites de sono no meio.”
 
@@ -318,6 +331,7 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M8 parte 2b, memory card | Sonnet | 1h50 | 105 mil | 33,8 M |
 | M8 parte 2b, cel-shading | Sonnet | 42 min | 27 mil | 5,7 M |
 | M8 parte 2b, junção e verificação | Opus | 1h27 | 36 mil | 9,4 M |
+| M9 parte 1a, investigação | Opus | 7 min | 34 mil | 4,0 M |
 | Sessão principal | Opus | 29h+ | 504 mil | 107,4 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
@@ -369,3 +383,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 24/10/2026 (M8 parte 1) | 4.10 nova: “M8, parte 1: o relógio e a placa de vídeo” (instruções do interpretador com 0 ciclos, laço de cache 2 → 7, defasagem 1,37 s → 0,035 s, o relógio que o Dolphin mostra, shader inteiro na GPU mais perto do Dolphin que o software, menus a 60 e corrida a 31); a cena de tokens vira 4.11, com o M8 parte 1, a sessão principal e o tempo acumulado; Cap. 5 atualizado (M8 pela metade) |
 | 24/10/2026 (M8 parte 2a) | 4.11 nova: “M8, parte 2a: a thread que não acelerou” (GX numa thread, determinístico, sem ganho; a espera no DrawDone; a cópia como o Dolphin fica para a 2b); a cena de tokens vira 4.12 com a parte 2a e o tempo acumulado |
 | 24/10/2026 (M8 concluído) | 4.12 nova: “M8, parte 2b: quatro IAs, quatro peças” (quatro agentes em worktrees, desenho sem esperar com cópia na escrita e corrida a 60, laço do tradutor que cobrava metade e relógio exato, memory card igual ao do Dolphin, contorno confirmado, erro achado na junção); a cena de tokens vira 4.13 com as cinco linhas da parte 2b, a sessão principal e o tempo acumulado até o M8; Cap. 5 reescrito (M8 feito, M9 próximo) |
+| 25/10/2026 (M9 parte 1a) | 4.13 nova: “M9, parte 1a: o que a SDL não deixa” (a ordem dos pixels, o que o chip da Apple dá de graça, a SDL que não deixa o shader gravar, o remendo escolhido e o Direct3D 11 fora), marcada “a gravar”; a cena de tokens vira 4.14 com a linha da investigação |
