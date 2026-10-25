@@ -6,17 +6,37 @@
 
 #include <SDL3/SDL.h>
 
+#include "../shaders/gx_ubershader_hlsl.h"
 #include "../shaders/gx_ubershader_metallib.h"
+
+/* M9: o caminho do HLSL só existe com a SDL de patches/sdl (sem o patch, a flag não é definida). */
+#ifdef SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE
+#define AM_GPU_HAVE_RW 1
+#else
+#define AM_GPU_HAVE_RW 0
+#endif
 
 #define EFB_PIXELS  (GPU_EFB_WIDTH * GPU_EFB_HEIGHT)
 #define EFB_BYTES   (EFB_PIXELS * 4U)
 #define EFB_BYTES_Z ((size_t)EFB_BYTES)
+
+/* Um ubershader embutido num formato: código e entrada dos dois estágios. */
+typedef struct ShaderBlob {
+    SDL_GPUShaderFormat format;
+    const u8 *vs;
+    size_t vs_size;
+    const u8 *fs;
+    size_t fs_size;
+    const char *label;
+} ShaderBlob;
 
 static struct {
     SDL_GPUDevice *device;
     SDL_GPUGraphicsPipeline *pipeline;
     SDL_GPUTexture *efb_color;
     SDL_GPUTexture *efb_depth;
+    SDL_GPUTexture *dummy; /* HLSL: color target falso do passe (máscara de escrita zero; o EFB vai pelos ROVs) */
+    bool hlsl;
     SDL_GPUBuffer *arena;
     SDL_GPUBuffer *vertices;
     u32 vertex_cap; /* em bytes */
@@ -35,20 +55,33 @@ static bool fail(const char *what) {
     return false;
 }
 
-static SDL_GPUShader *shader(const char *entry, SDL_GPUShaderStage stage, u32 uniforms, u32 storage) {
-    const SDL_GPUShaderCreateInfo info = {.code_size = sizeof(s_gx_ubershader_metallib),
-                                          .code = s_gx_ubershader_metallib,
-                                          .entrypoint = entry,
-                                          .format = SDL_GPU_SHADERFORMAT_METALLIB,
-                                          .stage = stage,
-                                          .num_uniform_buffers = uniforms,
-                                          .num_storage_buffers = storage};
-    return SDL_CreateGPUShader(s_gpu.device, &info);
+/* rw = texturas de storage graváveis do fragment shader (o EFB no caminho do HLSL). */
+static SDL_GPUShader *shader(const ShaderBlob *blob, bool fragment, u32 rw) {
+    SDL_PropertiesID props = 0;
+#if AM_GPU_HAVE_RW
+    if (rw != 0U) {
+        props = SDL_CreateProperties();
+        (void)SDL_SetNumberProperty(props, SDL_PROP_GPU_SHADER_CREATE_NUM_READWRITE_STORAGE_TEXTURES_NUMBER, rw);
+    }
+#endif
+    const SDL_GPUShaderCreateInfo info = {.code_size = fragment ? blob->fs_size : blob->vs_size,
+                                          .code = fragment ? blob->fs : blob->vs,
+                                          .entrypoint = fragment ? "gx_fs" : "gx_vs",
+                                          .format = blob->format,
+                                          .stage = fragment ? SDL_GPU_SHADERSTAGE_FRAGMENT : SDL_GPU_SHADERSTAGE_VERTEX,
+                                          .num_uniform_buffers = fragment ? 1U : 0U,
+                                          .num_storage_buffers = fragment ? 1U : 0U,
+                                          .props = props};
+    SDL_GPUShader *sh = SDL_CreateGPUShader(s_gpu.device, &info);
+    if (props != 0) {
+        SDL_DestroyProperties(props);
+    }
+    return sh;
 }
 
-static bool create_pipeline(void) {
-    SDL_GPUShader *vs = shader("gx_vs", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
-    SDL_GPUShader *fs = shader("gx_fs", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+static bool create_pipeline(const ShaderBlob *blob) {
+    SDL_GPUShader *vs = shader(blob, false, 0);
+    SDL_GPUShader *fs = shader(blob, true, s_gpu.hlsl ? 2U : 0U);
     if (vs == NULL || fs == NULL) {
         return fail("SDL_CreateGPUShader");
     }
@@ -60,6 +93,9 @@ static bool create_pipeline(void) {
     const SDL_GPUVertexBufferDescription vb = {.slot = 0, .pitch = sizeof(GpuVertex)};
     const SDL_GPUColorTargetDescription targets[2] = {{.format = SDL_GPU_TEXTUREFORMAT_R32_UINT},
                                                       {.format = SDL_GPU_TEXTUREFORMAT_R32_UINT}};
+    const SDL_GPUColorTargetDescription dummy = {
+        .format = SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+        .blend_state = {.enable_color_write_mask = true, .color_write_mask = 0}};
     const SDL_GPUGraphicsPipelineCreateInfo info = {
         .vertex_shader = vs,
         .fragment_shader = fs,
@@ -69,17 +105,18 @@ static bool create_pipeline(void) {
                                .num_vertex_attributes = 3U + GPU_TEXCOORDS},
         .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
         .rasterizer_state = {.fill_mode = SDL_GPU_FILLMODE_FILL, .cull_mode = SDL_GPU_CULLMODE_NONE},
-        .target_info = {.color_target_descriptions = targets, .num_color_targets = 2}};
+        .target_info = {.color_target_descriptions = s_gpu.hlsl ? &dummy : targets,
+                        .num_color_targets = s_gpu.hlsl ? 1U : 2U}};
     s_gpu.pipeline = SDL_CreateGPUGraphicsPipeline(s_gpu.device, &info);
     SDL_ReleaseGPUShader(s_gpu.device, vs);
     SDL_ReleaseGPUShader(s_gpu.device, fs);
     return s_gpu.pipeline != NULL || fail("SDL_CreateGPUGraphicsPipeline");
 }
 
-static SDL_GPUTexture *efb_texture(void) {
+static SDL_GPUTexture *texture(SDL_GPUTextureFormat format, SDL_GPUTextureUsageFlags usage) {
     const SDL_GPUTextureCreateInfo info = {.type = SDL_GPU_TEXTURETYPE_2D,
-                                           .format = SDL_GPU_TEXTUREFORMAT_R32_UINT,
-                                           .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                                           .format = format,
+                                           .usage = usage,
                                            .width = GPU_EFB_WIDTH,
                                            .height = GPU_EFB_HEIGHT,
                                            .layer_count_or_depth = 1,
@@ -87,30 +124,130 @@ static SDL_GPUTexture *efb_texture(void) {
     return SDL_CreateGPUTexture(s_gpu.device, &info);
 }
 
-bool platform_gpu_init(void) {
-    if (s_gpu.device != NULL) {
+/* Formatos que a runtime oferece à SDL: o metallib do M8 sempre; com o patch, também SPIR-V e DXIL (do HLSL), e o
+ * pedido do recurso de storage gravável no fragmento (docs/M9_PARTE1B_SDL.md §1). */
+static SDL_GPUDevice *create_device(void) {
+    const SDL_PropertiesID props = SDL_CreateProperties();
+    (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);
+    (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_METALLIB_BOOLEAN, true);
+#if AM_GPU_HAVE_RW
+    (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+    (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, true);
+    (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN, true);
+#endif
+    SDL_GPUDevice *device = SDL_CreateGPUDeviceWithProperties(props);
+    SDL_DestroyProperties(props);
+    return device;
+}
+
+/* O device lê e grava storage no fragmento na ordem da rasterização (ROV, interlock, raster order groups). */
+static bool raster_ordered(void) {
+#if AM_GPU_HAVE_RW
+    const SDL_PropertiesID dev = SDL_GetGPUDeviceProperties(s_gpu.device);
+    return SDL_GetBooleanProperty(dev, SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN, false);
+#else
+    return false;
+#endif
+}
+
+static ShaderBlob blob_of(SDL_GPUShaderFormat format, const u8 *vs, size_t vs_size, const u8 *fs, size_t fs_size,
+                          const char *label) {
+    return (ShaderBlob){.format = format, .vs = vs, .vs_size = vs_size, .fs = fs, .fs_size = fs_size, .label = label};
+}
+
+/* Escolhe o shader e o formato. false = o pedido não roda neste device (o erro diz por quê). */
+static bool pick_shader(PlatformGpuShader want, ShaderBlob *blob) {
+    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(s_gpu.device);
+    const bool metal = (formats & SDL_GPU_SHADERFORMAT_METALLIB) != 0U;
+    const bool rov = raster_ordered();
+    if (want == PLATFORM_GPU_SHADER_AUTO) {
+        want = metal ? PLATFORM_GPU_SHADER_HAND : PLATFORM_GPU_SHADER_HLSL;
+    }
+    if (want == PLATFORM_GPU_SHADER_HAND) {
+        if (!metal) {
+            (void)snprintf(s_gpu.error, sizeof(s_gpu.error), "o shader à mão é só para Metal (driver %s)",
+                           SDL_GetGPUDeviceDriver(s_gpu.device));
+            return false;
+        }
+        *blob = blob_of(SDL_GPU_SHADERFORMAT_METALLIB, s_gx_ubershader_metallib, sizeof(s_gx_ubershader_metallib),
+                        s_gx_ubershader_metallib, sizeof(s_gx_ubershader_metallib),
+                        "MSL à mão (metallib), framebuffer fetch");
         return true;
     }
-    if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) { /* a SDL só cria o dispositivo com o vídeo iniciado */
-        return fail("SDL_InitSubSystem(VIDEO)");
+    if (!rov) {
+        (void)snprintf(s_gpu.error, sizeof(s_gpu.error),
+                       "driver %s sem storage gravável na ordem da rasterização (ROV/interlock)%s",
+                       SDL_GetGPUDeviceDriver(s_gpu.device), AM_GPU_HAVE_RW ? "" : "; SDL sem patches/sdl");
+        return false;
     }
-    s_gpu.device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_METALLIB, false, NULL);
-    if (s_gpu.device == NULL) {
-        return fail("SDL_CreateGPUDevice (metallib)");
+    s_gpu.hlsl = true;
+    if ((formats & SDL_GPU_SHADERFORMAT_DXIL) != 0U) {
+        *blob = blob_of(SDL_GPU_SHADERFORMAT_DXIL, s_gx_hlsl_vs_dxil, sizeof(s_gx_hlsl_vs_dxil), s_gx_hlsl_fs_dxil,
+                        sizeof(s_gx_hlsl_fs_dxil), "HLSL (DXIL), ROV");
+    } else if ((formats & SDL_GPU_SHADERFORMAT_SPIRV) != 0U) {
+        *blob = blob_of(SDL_GPU_SHADERFORMAT_SPIRV, s_gx_hlsl_vs_spirv, sizeof(s_gx_hlsl_vs_spirv), s_gx_hlsl_fs_spirv,
+                        sizeof(s_gx_hlsl_fs_spirv), "HLSL (SPIR-V), fragment shader interlock");
+    } else {
+        *blob =
+            blob_of(SDL_GPU_SHADERFORMAT_METALLIB, s_gx_hlsl_metallib, sizeof(s_gx_hlsl_metallib), s_gx_hlsl_metallib,
+                    sizeof(s_gx_hlsl_metallib), "HLSL (MSL 2.3, metallib), raster order groups");
     }
-    (void)snprintf(s_gpu.name, sizeof(s_gpu.name), "%s", SDL_GetGPUDeviceDriver(s_gpu.device));
-    s_gpu.efb_color = efb_texture();
-    s_gpu.efb_depth = efb_texture();
+    return true;
+}
+
+static bool init_resources(void) {
+#if AM_GPU_HAVE_RW
+    const SDL_GPUTextureUsageFlags efb_usage = s_gpu.hlsl
+                                                   ? SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE
+                                                   : SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+#else
+    const SDL_GPUTextureUsageFlags efb_usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+#endif
+    s_gpu.efb_color = texture(SDL_GPU_TEXTUREFORMAT_R32_UINT, efb_usage);
+    s_gpu.efb_depth = texture(SDL_GPU_TEXTUREFORMAT_R32_UINT, efb_usage);
+    if (s_gpu.hlsl) {
+        s_gpu.dummy = texture(SDL_GPU_TEXTUREFORMAT_R8_UNORM, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET);
+    }
     const SDL_GPUBufferCreateInfo arena = {.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
                                            .size = GPU_ARENA_TEXELS * 4U};
     s_gpu.arena = SDL_CreateGPUBuffer(s_gpu.device, &arena);
     const SDL_GPUTransferBufferCreateInfo down = {.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
                                                   .size = 2U * EFB_BYTES};
     s_gpu.download = SDL_CreateGPUTransferBuffer(s_gpu.device, &down);
-    if (s_gpu.efb_color == NULL || s_gpu.efb_depth == NULL || s_gpu.arena == NULL || s_gpu.download == NULL) {
+    if (s_gpu.efb_color == NULL || s_gpu.efb_depth == NULL || s_gpu.arena == NULL || s_gpu.download == NULL ||
+        (s_gpu.hlsl && s_gpu.dummy == NULL)) {
         return fail("recursos da GPU");
     }
-    return create_pipeline();
+    return true;
+}
+
+bool platform_gpu_init(PlatformGpuShader want) {
+    if (s_gpu.device != NULL) {
+        return true;
+    }
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) { /* a SDL só cria o dispositivo com o vídeo iniciado */
+        return fail("SDL_InitSubSystem(VIDEO)");
+    }
+    s_gpu.device = create_device();
+    if (s_gpu.device == NULL) {
+        (void)fail("SDL_CreateGPUDevice");
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return false;
+    }
+    ShaderBlob blob;
+    if (!pick_shader(want, &blob) || !init_resources() || !create_pipeline(&blob)) {
+        char error[sizeof(s_gpu.error)];
+        (void)snprintf(error, sizeof(error), "%s", s_gpu.error);
+        platform_gpu_shutdown();
+        (void)snprintf(s_gpu.error, sizeof(s_gpu.error), "%s", error);
+        return false;
+    }
+    (void)snprintf(s_gpu.name, sizeof(s_gpu.name), "%s, %s", SDL_GetGPUDeviceDriver(s_gpu.device), blob.label);
+    return true;
+}
+
+const char *platform_gpu_error(void) {
+    return s_gpu.error;
 }
 
 const char *platform_gpu_name(void) {
@@ -219,11 +356,25 @@ static void render(SDL_GPUCommandBuffer *cmd, const GpuBatch *b) {
     if (b->draw_count == 0U) {
         return;
     }
-    const SDL_GPUColorTargetInfo targets[2] = {
-        {.texture = s_gpu.efb_color, .load_op = SDL_GPU_LOADOP_LOAD, .store_op = SDL_GPU_STOREOP_STORE},
-        {.texture = s_gpu.efb_depth, .load_op = SDL_GPU_LOADOP_LOAD, .store_op = SDL_GPU_STOREOP_STORE}};
-    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, targets, 2, NULL);
+    SDL_GPURenderPass *pass;
+    if (s_gpu.hlsl) {
+        const SDL_GPUColorTargetInfo dummy = {
+            .texture = s_gpu.dummy, .load_op = SDL_GPU_LOADOP_DONT_CARE, .store_op = SDL_GPU_STOREOP_DONT_CARE};
+        pass = SDL_BeginGPURenderPass(cmd, &dummy, 1, NULL);
+    } else {
+        const SDL_GPUColorTargetInfo targets[2] = {
+            {.texture = s_gpu.efb_color, .load_op = SDL_GPU_LOADOP_LOAD, .store_op = SDL_GPU_STOREOP_STORE},
+            {.texture = s_gpu.efb_depth, .load_op = SDL_GPU_LOADOP_LOAD, .store_op = SDL_GPU_STOREOP_STORE}};
+        pass = SDL_BeginGPURenderPass(cmd, targets, 2, NULL);
+    }
     SDL_BindGPUGraphicsPipeline(pass, s_gpu.pipeline);
+#if AM_GPU_HAVE_RW
+    if (s_gpu.hlsl) {
+        const SDL_GPUStorageTextureReadWriteBinding efb[2] = {{.texture = s_gpu.efb_color},
+                                                              {.texture = s_gpu.efb_depth}};
+        SDL_BindGPUFragmentReadWriteStorageTextures(pass, 0, efb, 2);
+    }
+#endif
     const SDL_GPUBufferBinding vb = {.buffer = s_gpu.vertices, .offset = 0};
     SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
     SDL_BindGPUFragmentStorageBuffers(pass, 0, &s_gpu.arena, 1);
@@ -300,17 +451,27 @@ void platform_gpu_shutdown(void) {
         return;
     }
     SDL_WaitForGPUIdle(s_gpu.device);
-    SDL_ReleaseGPUTransferBuffer(s_gpu.device, s_gpu.download);
+    if (s_gpu.download != NULL) {
+        SDL_ReleaseGPUTransferBuffer(s_gpu.device, s_gpu.download);
+    }
     if (s_gpu.upload != NULL) {
         SDL_ReleaseGPUTransferBuffer(s_gpu.device, s_gpu.upload);
     }
     if (s_gpu.vertices != NULL) {
         SDL_ReleaseGPUBuffer(s_gpu.device, s_gpu.vertices);
     }
-    SDL_ReleaseGPUBuffer(s_gpu.device, s_gpu.arena);
-    SDL_ReleaseGPUTexture(s_gpu.device, s_gpu.efb_color);
-    SDL_ReleaseGPUTexture(s_gpu.device, s_gpu.efb_depth);
-    SDL_ReleaseGPUGraphicsPipeline(s_gpu.device, s_gpu.pipeline);
+    if (s_gpu.arena != NULL) {
+        SDL_ReleaseGPUBuffer(s_gpu.device, s_gpu.arena);
+    }
+    SDL_GPUTexture *textures[3] = {s_gpu.efb_color, s_gpu.efb_depth, s_gpu.dummy};
+    for (u32 i = 0; i < 3U; i++) {
+        if (textures[i] != NULL) {
+            SDL_ReleaseGPUTexture(s_gpu.device, textures[i]);
+        }
+    }
+    if (s_gpu.pipeline != NULL) {
+        SDL_ReleaseGPUGraphicsPipeline(s_gpu.device, s_gpu.pipeline);
+    }
     SDL_DestroyGPUDevice(s_gpu.device);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     memset(&s_gpu, 0, sizeof(s_gpu));

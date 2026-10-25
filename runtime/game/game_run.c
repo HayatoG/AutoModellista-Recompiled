@@ -409,7 +409,8 @@ static bool init_scripts(const GameRunConfig *config) {
 }
 
 /* GX (trabalhadores, cache), janela e controle. */
-static bool init_video(const GameRunConfig *config) {
+/* config é o s_run.config: sem GPU utilizável, o desenho cai no software e config->gpu fica false. */
+static bool init_video(GameRunConfig *config) {
     gx_fifo_set_render(config->render);
     gx_tex_set_cache(config->gx_tex_cache);
     if (config->render) {
@@ -420,13 +421,14 @@ static bool init_video(const GameRunConfig *config) {
         AM_LOG_INFO("GX: rasterizador com %u trabalhador(es)", workers > 1U ? workers : 1U);
     }
     if (config->render && config->gpu) {
-        if (!platform_gpu_init()) {
-            AM_LOG_ERROR("--gfx gpu: sem GPU utilizável (SDL3 GPU com metallib)");
-            return false;
+        if (platform_gpu_init((PlatformGpuShader)config->gpu_shader)) {
+            gx_gpu_reset();
+            gx_gpu_set_backend(platform_gpu_run);
+            AM_LOG_INFO("GX: desenho na GPU (driver %s, ubershader TEV)", platform_gpu_name());
+        } else {
+            AM_LOG_WARN("--gfx gpu: sem GPU utilizável (%s); o GX desenha em software", platform_gpu_error());
+            config->gpu = false;
         }
-        gx_gpu_reset();
-        gx_gpu_set_backend(platform_gpu_run);
-        AM_LOG_INFO("GX: desenho na GPU (driver %s, ubershader TEV)", platform_gpu_name());
     }
     if (config->render && config->gx_thread) {
         static const GxFifoThreadApi s_api = {platform_thread_start, platform_thread_join,  platform_lock_create,
@@ -498,7 +500,7 @@ static bool init_logs(const GameRunConfig *config) {
 bool game_run_init(const GameRunConfig *config) {
     memset(&s_run, 0, sizeof(s_run));
     s_run.config = *config;
-    if (!init_scripts(config) || !init_video(config) || !init_audio(config)) {
+    if (!init_scripts(config) || !init_video(&s_run.config) || !init_audio(config)) {
         return false;
     }
     const DiscResult d = disc_open(config->disc_root);
