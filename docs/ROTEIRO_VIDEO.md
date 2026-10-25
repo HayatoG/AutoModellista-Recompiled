@@ -319,9 +319,22 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** uma pilha de triângulos coloridos cai sobre um único pixel, um por vez, e um contador soma; na versão sem ordem, eles caem embaralhados e o contador fica vermelho. Depois, a grade inteira acende verde de uma vez. Fechar com um selo “Windows: compila · rodar: a gravar”.
 
-### 4.15 Quanto custou até aqui (tokens e tempo)
+### 4.15 M9, parte 1b-3: o mesmo desenho, escrito uma vez
 
-**Fala:** “E quanto de IA foi isso? Até agora, uns 946 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 4,3 milhões de tokens, algo como uns 35 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos, e a peça mais longa da última parte, o relógio exato, 3 horas e meia. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31; até a corrida sair a 60 com o save funcionando, 22 horas e 32. No relógio da parede foram quase três dias, com noites de sono no meio.”
+**Fala:** “Com o tradutor e o remendo prontos, faltava o principal: reescrever o shader do desenho, umas seiscentas linhas, numa linguagem que vira DirectX 12, Vulkan e Metal. A régua era dura: no Mac, a versão nova tinha que dar exatamente a mesma imagem que a antiga, byte por byte. E deu: nos quatro quadros da verificação, nos dois builds, e nos sete quadros do carro andando. Num teste com todos os modos de mistura do GameCube, foram zero pixels diferentes em mais de 337 mil. No caminho, a mesma pegadinha voltou de outro jeito: com o shader de verdade, o tradutor tirou a garantia de ordem de novo, sem erro nenhum, por causa de um bug dele. A IA reorganizou o shader pra contornar e pôs uma trava no build que recusa a tradução se a garantia sumir. E a velocidade? Na janela, os dois ficam cravados em 60 quadros por segundo. No Mac fica o shader antigo, que é um pouco mais leve; no PC, o novo. Agora é ver se o Windows concorda.”
+
+**Na tela:**
+
+- O mesmo quadro da corrida duas vezes, lado a lado, com “MSL à mão” e “HLSL” embaixo, e o selo “idênticas byte a byte”.
+- Os números: 4 quadros em arm64 e x86\_64, 7 quadros do carro andando, “0 de 337.920 pixels diferentes”.
+- A tabela da janela: menu 61 / 60 e corrida 60,6 / 60 com os dois shaders; e “sem janela: HLSL 7 a 12% mais lento na GPU”.
+- Um esquema da trava do build: “mais de uma região ordenada → recusa”.
+
+**Motion:** um texto de shader entra num funil e sai em três cartões (DirectX 12, Vulkan, Metal); o cartão Metal desliza para cima do quadro antigo e os dois se sobrepõem perfeitamente, com um flash verde. Na frase do bug, o cartão Metal sai sem um cadeado de ordem, uma luz vermelha acende, e uma trava fecha o funil até o cadeado voltar.
+
+### 4.16 Quanto custou até aqui (tokens e tempo)
+
+**Fala:** “E quanto de IA foi isso? Até agora, uns 967 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 4,4 milhões de tokens, algo como uns 36 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos, e a peça mais longa da última parte, o relógio exato, 3 horas e meia. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31; até a corrida sair a 60 com o save funcionando, 22 horas e 32. No relógio da parede foram quase três dias, com noites de sono no meio.”
 
 **Na tela:**
 
@@ -348,7 +361,8 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M9 parte 1a, investigação | Opus | 7 min | 34 mil | 4,0 M |
 | M9 parte 1b, tradutor de shaders | Sonnet | 15 min | 10 mil | 1,2 M |
 | M9 parte 1b, remendo da SDL | Opus | 42 min | 118 mil | 25,8 M |
-| Sessão principal | Opus | 29h+ | 504 mil | 107,4 M |
+| M9 parte 1b, shader em HLSL | Opus | 54 min | 88 mil | 14,9 M |
+| Sessão principal | Opus | 37h+ | 601 mil | 124,0 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
 
@@ -364,8 +378,9 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | M8 parte 2a, GX numa thread | 17h15 | 57h56 |
 | M8 corrida a 60, cel-shading e saves | 22h32 | 65h04 |
 | M9 parte 1b, tradutor e remendo da SDL | 23h56 | 71h30 |
+| M9 parte 1, shader único | 24h52 | 72h49 |
 
-**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “946 M processados · 4,3 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”, “GPU: 16h31”, “M8: 22h32”); embaixo, uma régua mais longa e cinza mostra o calendário (65h04), com faixas de noite escurecidas. Atualizar os números na edição final.
+**Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “967 M processados · 4,4 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”, “GPU: 16h31”, “M8: 22h32”); embaixo, uma régua mais longa e cinza mostra o calendário (65h04), com faixas de noite escurecidas. Atualizar os números na edição final.
 
 ## Cap. 5 — Onde estamos e o que vem
 
@@ -402,3 +417,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 24/10/2026 (M8 concluído) | 4.12 nova: “M8, parte 2b: quatro IAs, quatro peças” (quatro agentes em worktrees, desenho sem esperar com cópia na escrita e corrida a 60, laço do tradutor que cobrava metade e relógio exato, memory card igual ao do Dolphin, contorno confirmado, erro achado na junção); a cena de tokens vira 4.13 com as cinco linhas da parte 2b, a sessão principal e o tempo acumulado até o M8; Cap. 5 reescrito (M8 feito, M9 próximo) |
 | 25/10/2026 (M9 parte 1a) | 4.13 nova: “M9, parte 1a: o que a SDL não deixa” (a ordem dos pixels, o que o chip da Apple dá de graça, a SDL que não deixa o shader gravar, o remendo escolhido e o Direct3D 11 fora); a cena de tokens vira 4.14 com a linha da investigação |
 | 25/10/2026 (M9 parte 1b, peças 1 e 2) | 4.14 nova: “M9, parte 1b: o remendo que prova que funciona” (tradutor de shaders em 4 min e a pegadinha da versão do Metal, remendo da SDL de 594 linhas, o teste que falha sem a ordem, nenhum byte mudou no Mac); a cena de tokens vira 4.15 com as duas peças |
+| 25/10/2026 (M9 parte 1 concluída) | 4.15 nova: “M9, parte 1b-3: o mesmo desenho, escrito uma vez” (ubershader em HLSL idêntico byte a byte ao feito à mão, 0 de 337.920 pixels no teste sintético, o bug do tradutor contornado com uma trava no build, 60 quadros/s com os dois); a cena de tokens vira 4.16 com a peça e a sessão principal; tempo acumulado até a parte 1 |
