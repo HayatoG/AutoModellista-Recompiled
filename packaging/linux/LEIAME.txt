@@ -1,0 +1,59 @@
+Auto Modellista Recompiled - Linux x86_64 (build de teste, M9)
+================================================================
+
+Port nativo de Auto Modellista (GameCube, GAUE08, EUA) por recompilação estática. O pacote NÃO traz nenhum
+arquivo do jogo: você precisa da sua própria cópia do disco. Uso pessoal; não redistribua (o executável foi
+recompilado a partir do código do jogo).
+
+Conteúdo
+--------
+  automodellista   o executável (rpath $ORIGIN: acha a libSDL3.so.0 desta pasta)
+  libSDL3.so.0     SDL @SDL_VERSION@ com o patch do projeto (texturas graváveis no fragment shader)
+  rodar.sh         abre o jogo numa janela
+  LEIAME.txt       este arquivo
+
+Requisitos
+----------
+- Linux x86_64 com glibc @GLIBC@ ou mais nova (o executável e a SDL só ligam com libc e libm; o build é do
+  Ubuntu 24.04, glibc 2.39, mas os símbolos usados vão só até a @GLIBC@). Fedora 39+ e Nobara atuais servem.
+- O resto a SDL abre sozinha com dlopen quando precisa: Wayland ou X11, Vulkan, áudio (PipeWire, PulseAudio
+  ou ALSA), libudev e D-Bus (gamepads), libdecor (bordas da janela no Wayland). Num desktop comum já está
+  tudo instalado. No Fedora/Nobara, se faltar algo:
+
+    sudo dnf install vulkan-loader mesa-vulkan-drivers libdecor libwayland-client libwayland-cursor \
+      libwayland-egl libxkbcommon libX11 libXcursor libXext libXfixes libXi libXrandr libXScrnSaver libXtst \
+      pipewire-libs pulseaudio-libs alsa-lib systemd-libs dbus-libs
+
+  (Nvidia: o driver proprietário já traz o Vulkan; AMD/Intel: mesa-vulkan-drivers, RADV/ANV.)
+- --gfx gpu (padrão do rodar.sh) usa Vulkan e exige VK_EXT_fragment_shader_interlock com
+  fragmentShaderPixelInterlock (Nvidia, Intel e RADV/AMD recentes têm). Sem isso a runtime avisa
+  "[WARN] --gfx gpu: sem GPU utilizável (...)" e desenha em software (mais lento, mesma imagem).
+  Para conferir: vulkaninfo | grep -i interlock
+
+Arquivos do jogo
+----------------
+O executável foi recompilado do main.dol de SHA-256
+  @MAIN_DOL_SHA256@
+(GAUE08, revisão 0). Extraia a árvore do disco da sua ISO/RVZ com o mesmo processo do repositório
+(scripts/phase1_iso.sh), o decomp-toolkit (dtk 1.8.4 ou mais novo, release "dtk-linux-x86_64" no GitHub
+encounter/decomp-toolkit):
+
+    dtk disc extract "Auto Modellista (USA).rvz" ~/jogos/automodellista
+
+Isso cria ~/jogos/automodellista/sys (main.dol, boot.bin, bi2.bin, fst.bin, apploader.img) e
+~/jogos/automodellista/files. O "Extract Entire Disc" do Dolphin dá a mesma estrutura (sys/ e files/).
+Confira o hash: sha256sum ~/jogos/automodellista/sys/main.dol
+
+Rodar
+-----
+    ./rodar.sh ~/jogos/automodellista                  # GPU (Vulkan), janela 2x
+    ./rodar.sh ~/jogos/automodellista --gfx soft       # GX em software
+    ./rodar.sh ~/jogos/automodellista --escala 3       # janela 3x
+    ./rodar.sh ~/jogos/automodellista --audio off      # opções extras vão direto para a runtime
+
+Teclado como o padrão do Dolphin: X = A, Z = B, C = X, S = Y, D = Z, Return = START, setas = stick,
+TFGH = direcional, IJKL = stick C, Q/W = L/R. Gamepad também funciona. Fechar a janela encerra.
+Memory card: ~/.local/share/AutoModellista/MemoryCardA.raw (formato .raw do Dolphin, 59 blocos).
+
+O log sai no terminal. A primeira linha "GX: desenho na GPU (driver vulkan, HLSL (SPIR-V), fragment shader
+interlock, ...)" confirma o caminho da GPU.

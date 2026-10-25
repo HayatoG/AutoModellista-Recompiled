@@ -14,6 +14,7 @@ set(AM_GENERATED_DIR "$ENV{AM_GENERATED_DIR}" CACHE PATH
 set(AM_DOLRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools/DolRecomp" CACHE PATH
     "DolRecomp no commit fixo de scripts/fetch_tools.sh (precisa de src/cpu/cpu.h e cpu.c)")
 option(AM_SDL3_SYSTEM "Usa a SDL3 instalada (find_package) em vez de baixar a tag fixa via FetchContent" OFF)
+option(AM_SDL3_SHARED "SDL3 do FetchContent como biblioteca compartilhada (pacote do Linux: libSDL3.so.0 ao lado do executável, rpath $ORIGIN; docs/M9_PARTE3A_LINUX.md)" OFF)
 option(AM_BUILD_TESTS "Compila os testes unitários (CTest)" ON)
 option(AM_SANITIZE "ASan + UBSan nos alvos da runtime (builds Debug)" OFF)
 
