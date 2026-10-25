@@ -360,7 +360,21 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** os quatro esboços aparecem como cartas; três viram e somem, a B cresce e vira a tela real. O banner de 96×32 sai de um disco girando, pixelado, e se expande até o logo da tela inicial. No fim, um F3 de teclado é apertado e o contador desliza para o canto.
 
-### 4.18 Quanto custou até aqui (tokens e tempo)
+### 4.18 M9, parte 4: o “60” que não era 60
+
+**Fala:** “Com o launcher pronto, abri o jogo e o contador mostrou 40 e poucos na corrida. Mas o M8 não tinha fechado em 60? Tinha, num trecho: a IA media a contagem regressiva, antes da largada. Com o carro andando, dava 43. Primeiro ela testou o óbvio: som, contador, tela cheia. Mudou nada, o mesmo número nas quatro. Aí desligou o desenho de vez, e mesmo assim a CPU emulada só chegava a 49. Então o problema não era a placa de vídeo. O perfil mostrou que um terço do tempo ia em ler e gravar a memória do GameCube: cada leitura do jogo traduzido virava uma chamada de função. Uma opção do compilador, a otimização entre arquivos, resolveu a maior parte: de 49 pra 69. Mais dois ajustes, e a CPU sozinha foi a 78. E aí a corrida na janela… piorou. Porque o gargalo mudou de lugar: agora era a thread do vídeo, copiando a textura inteira a cada desenho. Com a cópia só quando precisa, a corrida fechou em 60. E eu perguntei: não dá pra usar mais núcleos? O jogo foi feito pra um processador de um núcleo só. Esse pedaço não divide. O que dá é tirar o resto de cima dele.”
+
+**Na tela:**
+
+- O jogo na corrida com o contador marcando “44” no canto.
+- Quatro linhas de medição lado a lado (base, som, contador, tela cheia), todas com o mesmo 43–44.
+- O perfil: barras com `mem_read32`, `write_be` e `find_region` ocupando um terço.
+- A escada de números: 49 → 52 → 69 → 78 (sem desenho) e, na janela, 44 → 56 → 51 → 60.
+- O contador final “60.0 quadros/s · 60 desenhados” na corrida e a linha do `verify_m8.sh` com `OK`, “igual ao golden”.
+
+**Motion:** o “60” do M8 aparece num carimbo e racha quando o carro sai da largada. As quatro medições caem juntas na mesma altura, como pinos de boliche que não se mexem. No perfil, a fatia da memória pulsa e encolhe a cada mudança. Quando a janela “piora” para 51, uma seta desliza da thread da CPU para a thread do vídeo, mostrando o gargalo mudando de lugar. No fim, o ponteiro do velocímetro sobe até 60 e fica.
+
+### 4.19 Quanto custou até aqui (tokens e tempo)
 
 **Fala:** “E quanto de IA foi isso? Até agora, uns 967 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 4,4 milhões de tokens, algo como uns 36 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos, e a peça mais longa da última parte, o relógio exato, 3 horas e meia. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31; até a corrida sair a 60 com o save funcionando, 22 horas e 32. No relógio da parede foram quase três dias, com noites de sono no meio.”
 
@@ -392,6 +406,7 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M9 parte 1b, shader em HLSL | Opus | 54 min | 88 mil | 14,9 M |
 | M9 parte 3a, pacote do Linux | Opus | 16 min | 46 mil | 8,5 M |
 | M9 parte 5, launcher | Opus | 52 min | 190 mil | 36,0 M |
+| M9 parte 4, corrida a 60 | Opus | 1h44 | 49 mil | 11,6 M |
 | Sessão principal | Opus | 37h+ | 601 mil | 124,0 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
@@ -409,6 +424,8 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | M8 corrida a 60, cel-shading e saves | 22h32 | 65h04 |
 | M9 parte 1b, tradutor e remendo da SDL | 23h56 | 71h30 |
 | M9 parte 1, shader único | 24h52 | 72h49 |
+| M9 parte 5, launcher | 26h54 | 84h00 |
+| M9 parte 4, corrida a 60 | 27h58 | 87h46 |
 
 **Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “967 M processados · 4,4 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”, “GPU: 16h31”, “M8: 22h32”); embaixo, uma régua mais longa e cinza mostra o calendário (65h04), com faixas de noite escurecidas. Atualizar os números na edição final.
 
@@ -450,3 +467,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 25/10/2026 (M9 parte 1 concluída) | 4.15 nova: “M9, parte 1b-3: o mesmo desenho, escrito uma vez” (ubershader em HLSL idêntico byte a byte ao feito à mão, 0 de 337.920 pixels no teste sintético, o bug do tradutor contornado com uma trava no build, 60 quadros/s com os dois); a cena de tokens vira 4.16 com a peça e a sessão principal; tempo acumulado até a parte 1 |
 | 25/10/2026 (M9 parte 3a) | 4.16 nova: “M9, parte 3a: um Linux dentro do Mac” (OrbStack com Ubuntu x86\_64, build em 2 min 36 s, pacote de 8,2 MB sem bytes do jogo, glibc 2.38, Vulkan do lavapipe com interlock, 400 quadros na GPU); a cena de tokens vira 4.17 com a peça |
 | 25/10/2026 (M9 parte 5) | 4.17 nova: “M9, parte 5: a cara do jogo” (quatro esboços, a escolha da tela inicial, a arte tirada do banner do disco do usuário, FPS/volume/tela cheia/controles, verificações intactas); a cena de tokens vira 4.18 com a peça |
+| 25/10/2026 (M9 parte 4) | 4.18 nova: “M9, parte 4: o “60” que não era 60” (a medição do M8 era a contagem antes da largada; 43–44 em qualquer configuração; CPU sozinha a 49; perfil com um terço na memória; LTO e ajustes até 78; o gargalo passando para o GX; corrida a 60 na janela; a pergunta dos núcleos); a cena de tokens vira 4.19 com a peça e os marcos de 26h54 e 27h58 |
