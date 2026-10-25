@@ -13,7 +13,7 @@ GX) é emulado pela runtime. O Dolphin 2609a é só oráculo de desenvolvimento 
 | M6 primeiro quadro | feito (24/10 01:16) | GX em software (backend Software do Dolphin traduzido para C) |
 | M7 menus | feito (24/10 03:49) | controle, áudio AX igual ao do Dolphin, filmes SFD |
 | M8 corrida | feito (24/10 19:03) | GX na GPU (Metal), relógio exato (patch do laço contado no DolRecomp), GX sem esperar no DrawDone (cópia na escrita), memory card idêntico ao do Dolphin, cel-shading = geometria; 60 fps no Mac |
-| M9 portabilidade | em andamento | parte 1 (shader único) feita; 3a (pacote Linux) feita; 5 (launcher) feita; **2 (Windows) próxima**; 4 (velocidade x86\_64) e resto da 3 (Linux byte a byte, CI) pendentes |
+| M9 portabilidade | em andamento | parte 1 (shader único) feita; 3a (pacote Linux) feita; 5 (launcher) feita; 4 (corrida a 60 no Mac: LTO, memória, GX) feita, falta medir no x86\_64 nativo; **2 (Windows) próxima**; resto da 3 (Linux byte a byte, CI) pendentes |
 | M10 melhorias | não começado | widescreen, resolução interna, funções decompiladas |
 
 ## M9 até agora

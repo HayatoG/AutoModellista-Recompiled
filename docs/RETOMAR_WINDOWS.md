@@ -4,7 +4,7 @@ Guia para continuar o M9 numa máquina Windows com o Claude Code. Leia antes `CL
 `docs/memoria/status.md` e `docs/memoria/em_andamento.md`.
 
 ## 1. O que vem do Mac e o que não vem
-- **Vem pelo Git** (repositório privado ou `git bundle`): runtime, shaders (inclusive os headers gerados do HLSL:
+- **Vem pelo Git** (`git clone https://github.com/HayatoG/AutoModellista-Recompiled.git`, privado): runtime, shaders (inclusive os headers gerados do HLSL:
   DXIL e SPIR-V já embutidos), patches da SDL e do DolRecomp, scripts, testes, goldens, docs e esta memória.
 - **Não vem pelo Git**: a ISO e o **C gerado do jogo** (derivado do executável do jogo; nunca no GitHub). Ou ele é
   gerado de novo aqui a partir da sua ISO (passo 3), ou copiado à parte do Mac (pasta `/Volumes/AMRecomp/recomp/m5`,
