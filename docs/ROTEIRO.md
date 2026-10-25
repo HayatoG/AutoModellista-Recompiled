@@ -111,7 +111,7 @@ O que cada marco provou, em uma linha:
 
 ### Tokens e tempo por etapa
 
-Até 24/10 às 19:03 (horário de Brasília), o projeto processou cerca de 905 milhões de tokens, dos quais 4,0 milhões foram texto gerado pelos modelos. Somado dos registros de cada sessão do Claude Code, contando cada resposta uma vez.
+Até 25/10 à 01:53 (horário de Brasília), o projeto processou cerca de 946 milhões de tokens, dos quais 4,3 milhões foram texto gerado pelos modelos. Somado dos registros de cada sessão do Claude Code, contando cada resposta uma vez.
 
 | Etapa | Modelo | Início → fim | Duração | Respostas | Tokens gerados | Tokens processados |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -162,6 +162,7 @@ Do primeiro registro (22/10, 01:58) até cada marco. **Calendário** é o relóg
 | M8 parte 1: tempo de CPU e GPU | 24/10 06:21 | 52h22 | 16h31 |
 | M8 parte 2a: GX numa thread (meta não atingida) | 24/10 11:55 | 57h56 | 17h15 |
 | M8 corrida, cel-shading e saves (parte 2b) | 24/10 19:03 | 65h04 | 22h32 |
+| M9 parte 1b, peças 1 e 2: tradutor de shaders e remendo da SDL | 25/10 01:29 | 71h30 | 23h56 |
 
 - Fonte: `scripts/tempo_dev.py` sobre os registros do Claude Code (port, decomp e agentes do decomp). Com limite de 10 min, o M6 fica em 10h21; com 30 min, em 13h24 (a escolha de 15 min é da sessão principal).
 - Não entram o Codex e o opencode (rodaram em paralelo com o Claude, então não mudariam o total) nem o tempo do usuário fora das sessões.
