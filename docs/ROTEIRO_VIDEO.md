@@ -332,7 +332,21 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** um texto de shader entra num funil e sai em três cartões (DirectX 12, Vulkan, Metal); o cartão Metal desliza para cima do quadro antigo e os dois se sobrepõem perfeitamente, com um flash verde. Na frase do bug, o cartão Metal sai sem um cadeado de ordem, uma luz vermelha acende, e uma trava fecha o funil até o cadeado voltar.
 
-### 4.16 Quanto custou até aqui (tokens e tempo)
+### 4.16 M9, parte 3a: um Linux dentro do Mac
+
+**Fala:** “Eu uso Nobara no meu PC, então pedi um pacote pra rodar lá. Pra isso, instalei o OrbStack, que roda um Linux de verdade dentro do Mac, e criei um Ubuntu x86\_64, o mesmo processador do meu PC, traduzido pelo Rosetta. A IA compilou o jogo lá em dois minutos e meio, sem nenhum aviso, e montou um pacote de 8 megas: o executável, a SDL com o nosso remendo e um script pra rodar. Nada do jogo vai junto: você aponta pros arquivos da sua própria ISO. E um detalhe bonito: o Linux tem um Vulkan feito só em software, o lavapipe, que tem justamente o recurso de ordem dos pixels. Então deu pra rodar o nosso shader novo no Vulkan sem placa de vídeo nenhuma: 400 quadros, sem quebrar. Agora é com o meu PC.”
+
+**Na tela:**
+
+- O OrbStack com a máquina `am-linux-x64` (Ubuntu 24.04, amd64) rodando.
+- O build terminando: “2 min 36 s, 0 warnings”.
+- O conteúdo do pacote: `automodellista`, `libSDL3.so.0`, `rodar.sh`, `LEIAME.txt`, e o tamanho “8,2 MB”; ao lado, “glibc 2.38 ou mais nova”.
+- A linha do `vulkaninfo` com `llvmpipe` e `fragmentShaderPixelInterlock = true`.
+- “52/52 testes” e “400 quadros na GPU pelo Vulkan, sem quebrar”.
+
+**Motion:** um pinguim sai de dentro da maçã do Mac carregando uma caixa; a caixa abre e mostra os quatro arquivos; uma etiqueta “sem bytes do jogo” cola na tampa. Fechar com a caixa voando para um ícone de PC com o logo do Nobara, e o selo “a gravar: no meu PC”.
+
+### 4.17 Quanto custou até aqui (tokens e tempo)
 
 **Fala:** “E quanto de IA foi isso? Até agora, uns 967 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 4,4 milhões de tokens, algo como uns 36 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos, e a peça mais longa da última parte, o relógio exato, 3 horas e meia. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31; até a corrida sair a 60 com o save funcionando, 22 horas e 32. No relógio da parede foram quase três dias, com noites de sono no meio.”
 
@@ -362,6 +376,7 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M9 parte 1b, tradutor de shaders | Sonnet | 15 min | 10 mil | 1,2 M |
 | M9 parte 1b, remendo da SDL | Opus | 42 min | 118 mil | 25,8 M |
 | M9 parte 1b, shader em HLSL | Opus | 54 min | 88 mil | 14,9 M |
+| M9 parte 3a, pacote do Linux | Opus | 16 min | 46 mil | 8,5 M |
 | Sessão principal | Opus | 37h+ | 601 mil | 124,0 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
@@ -418,3 +433,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 25/10/2026 (M9 parte 1a) | 4.13 nova: “M9, parte 1a: o que a SDL não deixa” (a ordem dos pixels, o que o chip da Apple dá de graça, a SDL que não deixa o shader gravar, o remendo escolhido e o Direct3D 11 fora); a cena de tokens vira 4.14 com a linha da investigação |
 | 25/10/2026 (M9 parte 1b, peças 1 e 2) | 4.14 nova: “M9, parte 1b: o remendo que prova que funciona” (tradutor de shaders em 4 min e a pegadinha da versão do Metal, remendo da SDL de 594 linhas, o teste que falha sem a ordem, nenhum byte mudou no Mac); a cena de tokens vira 4.15 com as duas peças |
 | 25/10/2026 (M9 parte 1 concluída) | 4.15 nova: “M9, parte 1b-3: o mesmo desenho, escrito uma vez” (ubershader em HLSL idêntico byte a byte ao feito à mão, 0 de 337.920 pixels no teste sintético, o bug do tradutor contornado com uma trava no build, 60 quadros/s com os dois); a cena de tokens vira 4.16 com a peça e a sessão principal; tempo acumulado até a parte 1 |
+| 25/10/2026 (M9 parte 3a) | 4.16 nova: “M9, parte 3a: um Linux dentro do Mac” (OrbStack com Ubuntu x86\_64, build em 2 min 36 s, pacote de 8,2 MB sem bytes do jogo, glibc 2.38, Vulkan do lavapipe com interlock, 400 quadros na GPU); a cena de tokens vira 4.17 com a peça |
