@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.25)
-project(AutoModellistaRecompiled VERSION 0.4.0 LANGUAGES C)
+project(AutoModellistaRecompiled VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+# M9 parte 5: C++ só para o Dear ImGui e para os arquivos que chamam a API dele (runtime/platform/platform_ui.cpp e
+# runtime/front/*.cpp); sem exceções nem RTTI.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # --- Opções (docs/M3_ESQUELETO.md) ---------------------------------------------------------------------------------
@@ -19,6 +24,7 @@ option(AM_BUILD_TESTS "Compila os testes unitários (CTest)" ON)
 option(AM_SANITIZE "ASan + UBSan nos alvos da runtime (builds Debug)" OFF)
 
 set(AM_SDL3_TAG "release-3.4.18" CACHE STRING "Tag fixa da SDL3 usada pelo FetchContent")
+set(AM_IMGUI_TAG "v1.92.9" CACHE STRING "Tag fixa do Dear ImGui (MIT) usada pelo FetchContent (M9 parte 5)")
 
 if(NOT EXISTS "${AM_DOLRECOMP_DIR}/src/cpu/cpu.h")
   message(FATAL_ERROR "DolRecomp não encontrado em ${AM_DOLRECOMP_DIR}. Rode scripts/fetch_tools.sh "
@@ -30,17 +36,29 @@ endif()
 if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   set(AM_STRICT_FLAGS /clang:-Wall /clang:-Wextra /clang:-Wpedantic /clang:-Wshadow /clang:-Wconversion
                       /clang:-Wstrict-prototypes /clang:-Werror)
+  set(AM_STRICT_CXX_FLAGS /clang:-Wall /clang:-Wextra /clang:-Wpedantic /clang:-Wshadow /clang:-Wconversion
+                          /clang:-Werror /GR- /EHs-c-)
+  set(AM_CXX_LEAN_FLAGS /GR- /EHs-c-)
   set(AM_GENERATED_FLAGS /w /clang:-O1 /clang:-g0)
   set(AM_SANITIZE_FLAGS /fsanitize=address)
 else()
   set(AM_STRICT_FLAGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wstrict-prototypes -Werror)
+  set(AM_STRICT_CXX_FLAGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -fno-exceptions -fno-rtti)
+  set(AM_CXX_LEAN_FLAGS -fno-exceptions -fno-rtti -fno-threadsafe-statics)
   set(AM_GENERATED_FLAGS -w -O1 -g0)
   set(AM_SANITIZE_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer)
 endif()
 
+# M9 parte 5: a am_core chega ao executável por dois caminhos (am_recomp e am_front); o ld do Xcode avisa da
+# repetição, que é inofensiva.
+if(APPLE)
+  add_link_options(LINKER:-no_warn_duplicate_libraries)
+endif()
+
 # Alvos com código nosso: warnings estritos (PADROES_DE_CODIGO.md §1).
 function(am_apply_strict target)
-  target_compile_options(${target} PRIVATE ${AM_STRICT_FLAGS})
+  target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:C>:${AM_STRICT_FLAGS}>
+                                           $<$<COMPILE_LANGUAGE:CXX>:${AM_STRICT_CXX_FLAGS}>)
   if(AM_SANITIZE)
     target_compile_options(${target} PRIVATE ${AM_SANITIZE_FLAGS})
   endif()

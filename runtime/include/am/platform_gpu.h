@@ -6,6 +6,10 @@
 
 #include "am/gpu_batch.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Qual ubershader usar. HAND: o MSL à mão do M8 (runtime/shaders/gx_ubershader.metal), EFB em dois color targets
  * lidos por framebuffer fetch: só Metal em GPU da Apple. HLSL: o de runtime/shaders/gx_ubershader.hlsl (DXIL,
  * SPIR-V ou metallib, conforme o backend), EFB em duas texturas de storage graváveis na ordem da rasterização: exige
@@ -26,7 +30,14 @@ bool platform_gpu_run(const GpuBatch *batch);
 void platform_gpu_shutdown(void);
 /* Driver, shader e formato ("metal, HLSL (metallib), raster order groups"...), para o log. */
 const char *platform_gpu_name(void);
+/* M9 parte 5: driver da SDL ("metal", "vulkan", "direct3d12") e nome da placa; "" sem device. */
+const char *platform_gpu_driver(void);
+const char *platform_gpu_adapter(void);
 /* Tempo total (µs) esperando a GPU terminar nas leituras do EFB e quantas leituras houve. */
 u64 platform_gpu_wait_us(u64 *readbacks);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* AM_PLATFORM_GPU_H */

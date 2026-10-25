@@ -8,6 +8,7 @@
 
 #include "../shaders/gx_ubershader_hlsl.h"
 #include "../shaders/gx_ubershader_metallib.h"
+#include "platform_internal.h"
 
 /* M9: o caminho do HLSL só existe com a SDL de patches/sdl (sem o patch, a flag não é definida). */
 #ifdef SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE
@@ -130,6 +131,8 @@ static SDL_GPUDevice *create_device(void) {
     const SDL_PropertiesID props = SDL_CreateProperties();
     (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);
     (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_METALLIB_BOOLEAN, true);
+    /* M9 parte 5: o backend do ImGui para a SDL GPU traz DXBC para o D3D12 (o device do D3D12 aceita os dois). */
+    (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXBC_BOOLEAN, true);
 #if AM_GPU_HAVE_RW
     (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
     (void)SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, true);
@@ -244,6 +247,23 @@ bool platform_gpu_init(PlatformGpuShader want) {
     }
     (void)snprintf(s_gpu.name, sizeof(s_gpu.name), "%s, %s", SDL_GetGPUDeviceDriver(s_gpu.device), blob.label);
     return true;
+}
+
+SDL_GPUDevice *platform_gpu_device(void) {
+    return s_gpu.device;
+}
+
+const char *platform_gpu_driver(void) {
+    return s_gpu.device != NULL ? SDL_GetGPUDeviceDriver(s_gpu.device) : "";
+}
+
+const char *platform_gpu_adapter(void) {
+    if (s_gpu.device == NULL) {
+        return "";
+    }
+    const char *name =
+        SDL_GetStringProperty(SDL_GetGPUDeviceProperties(s_gpu.device), SDL_PROP_GPU_DEVICE_NAME_STRING, NULL);
+    return name != NULL ? name : "";
 }
 
 const char *platform_gpu_error(void) {
@@ -450,6 +470,7 @@ void platform_gpu_shutdown(void) {
     if (s_gpu.device == NULL) {
         return;
     }
+    platform_window_release_gpu(); /* M9 parte 5: a janela pode estar no swapchain deste device */
     SDL_WaitForGPUIdle(s_gpu.device);
     if (s_gpu.download != NULL) {
         SDL_ReleaseGPUTransferBuffer(s_gpu.device, s_gpu.download);

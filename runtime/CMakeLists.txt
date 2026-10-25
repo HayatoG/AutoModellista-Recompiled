@@ -27,7 +27,7 @@ endif()
 add_library(am_core STATIC
   core/log.c core/mem.c core/dispatch.c core/guest_cpu.c
   core/timebase.c core/ppc_sys.c core/dol.c core/boot.c core/trace.c core/chassis.c core/disc.c core/rel_map.c core/hook.c
-  core/pad_script.c core/pad_input.c core/profile.c
+  core/pad_script.c core/pad_input.c core/profile.c core/sha256.c
   os/exception.c os/os_link.c os/os_threads.c
   hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/dvd_timing.c hw/si.c hw/exi.c hw/exi_card.c hw/memcard.c hw/vi.c
   hw/cp.c hw/pe.c hw/gather_pipe.c
@@ -88,14 +88,47 @@ else()
   FetchContent_MakeAvailable(SDL3)
 endif()
 
-add_library(am_platform STATIC platform/platform.c platform/platform_gpu.c)
+# --- Dear ImGui (M9 parte 5): tela inicial e contador de quadros. Versão fixa, sem cópia no repositório; os backends
+# são os oficiais da SDL3 (eventos), da SDL_GPU (shaders SPIR-V/DXBC/metallib embutidos no próprio backend) e do
+# SDL_Renderer. Código de terceiros: sem os warnings estritos.
+include(FetchContent)
+FetchContent_Declare(imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG ${AM_IMGUI_TAG}
+  GIT_SHALLOW TRUE
+  SYSTEM)
+FetchContent_MakeAvailable(imgui) # o ImGui não tem CMakeLists: só baixa
+add_library(am_imgui STATIC
+  ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlgpu3.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp)
+target_include_directories(am_imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_compile_definitions(am_imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS IMGUI_DISABLE_DEMO_WINDOWS
+                                           IMGUI_DISABLE_DEBUG_TOOLS)
+target_compile_options(am_imgui PRIVATE ${AM_CXX_LEAN_FLAGS})
+target_link_libraries(am_imgui PUBLIC SDL3::SDL3)
+# Linux: a libstdc++ entra estática, para o pacote continuar dependendo só de libc/libm (docs/M9_PARTE3A_LINUX.md).
+if(UNIX AND NOT APPLE)
+  target_link_options(am_imgui INTERFACE -static-libstdc++ -static-libgcc)
+endif()
+
+add_library(am_platform STATIC platform/platform.c platform/platform_gpu.c platform/platform_window.c
+  platform/platform_present_gpu.c platform/platform_ui.cpp)
 target_include_directories(am_platform PUBLIC include)
-target_link_libraries(am_platform PUBLIC SDL3::SDL3)
+target_link_libraries(am_platform PUBLIC SDL3::SDL3 PRIVATE am_imgui)
 am_apply_strict(am_platform)
+
+# --- am_front (M9 parte 5): configurações, pasta do jogo, banner, tela inicial e contador de quadros -----------------
+add_library(am_front STATIC front/settings.c front/gamedir.c front/banner.c front/session.c front/launcher.cpp
+  front/overlay.cpp)
+target_include_directories(am_front PUBLIC include)
+target_link_libraries(am_front PUBLIC am_core am_platform PRIVATE am_imgui)
+am_apply_strict(am_front)
 
 # --- Executável -----------------------------------------------------------------------------------------------------
 add_executable(automodellista main.c game/game_run.c game/game_diag.c)
-target_link_libraries(automodellista PRIVATE am_recomp am_platform)
+target_link_libraries(automodellista PRIVATE am_recomp am_front am_platform)
 am_apply_strict(automodellista)
 am_apply_sanitize_link(automodellista)
 
