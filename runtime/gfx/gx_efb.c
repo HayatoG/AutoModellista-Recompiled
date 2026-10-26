@@ -6,6 +6,7 @@
 #include "am/gx_efb.h"
 
 #include <math.h>
+#include <stdatomic.h>
 #include <string.h>
 
 #include "am/gx_bp.h"
@@ -672,22 +673,78 @@ static u8 xfb_channel(f64 v) {
     return (u8)gx_clamp_s32(i, 0, 255);
 }
 
+/* M9 parte 6 (60 FPS): a conversão roda na thread do GX a cada imagem da janela (~2 ms por 640x480 medidos no jogo).
+ * Cada termo da fórmula depende de um byte só, então vira uma tabela de 256 doubles. Cada entrada é a MESMA expressão
+ * da conversão original, e a soma por pixel é a mesma, na mesma ordem: o double, o byte e a captura saem iguais bit a
+ * bit (tests/unit/gx_xfb_test.c confere as 16.777.216 combinações de Y, U e V). */
+typedef struct XfbTables {
+    f64 luma[256];    /* 1.164 * (y - 16) */
+    f64 red_v[256];   /* 1.596 * (v - 128) */
+    f64 green_u[256]; /* 0.392 * (u - 128) */
+    f64 green_v[256]; /* 0.813 * (v - 128) */
+    f64 blue_u[256];  /* 2.017 * (u - 128) */
+} XfbTables;
+
+static struct {
+    XfbTables t;
+    _Atomic int state; /* 0 vazio, 1 calculando, 2 pronto: a thread do GX e a da CPU (capturas) podem chegar juntas */
+} s_xfb;
+
+static const XfbTables *xfb_tables(void) {
+    if (atomic_load_explicit(&s_xfb.state, memory_order_acquire) == 2) {
+        return &s_xfb.t;
+    }
+    int expected = 0;
+    if (atomic_compare_exchange_strong(&s_xfb.state, &expected, 1)) {
+        for (u32 i = 0; i < 256U; i++) {
+            const f64 centered = (f64)i - 128.0;
+            s_xfb.t.luma[i] = 1.164 * ((f64)i - 16.0);
+            s_xfb.t.red_v[i] = 1.596 * centered;
+            s_xfb.t.green_u[i] = 0.392 * centered;
+            s_xfb.t.green_v[i] = 0.813 * centered;
+            s_xfb.t.blue_u[i] = 2.017 * centered;
+        }
+        atomic_store_explicit(&s_xfb.state, 2, memory_order_release);
+    } else {
+        while (atomic_load_explicit(&s_xfb.state, memory_order_acquire) != 2) {
+        }
+    }
+    return &s_xfb.t;
+}
+
+/* Um pixel: a soma na ordem da fórmula original, ((c - 0.392 u) - 0.813 v) no verde. */
+static void xfb_pixel(const XfbTables *t, u32 y, u32 u, u32 v, u8 *px) {
+    const f64 c = t->luma[y];
+    px[0] = xfb_channel(c + t->red_v[v]);
+    px[1] = xfb_channel((c - t->green_u[u]) - t->green_v[v]);
+    px[2] = xfb_channel(c + t->blue_u[u]);
+    px[3] = 0xFF;
+}
+
 void gx_efb_xfb_to_rgba(GuestAddr addr, u32 width, u32 height, u32 stride, u8 *rgba) {
+    const XfbTables *t = xfb_tables();
+    const u32 row_bytes = ((width + 1U) / 2U) * 4U; /* uma palavra por par de pixels; a última cobre a largura ímpar */
     for (u32 y = 0; y < height; y++) {
         const GuestAddr line = MEM_CACHED_BASE | ((addr + (y * stride)) & 0x01FFFFFFU);
-        for (u32 x = 0; x + 1U < width + 1U; x += 2U) {
-            const u32 w = mem_read32(NULL, line + (x * 2U));
-            const f64 u = (f64)((w >> 16) & 0xFFU) - 128.0;
-            const f64 v = (f64)(w & 0xFFU) - 128.0;
-            const u32 ys[2] = {w >> 24, (w >> 8) & 0xFFU};
-            for (u32 k = 0; k < 2U && x + k < width; k++) {
-                const f64 c = 1.164 * ((f64)ys[k] - 16.0);
-                u8 *px = &rgba[(((size_t)y * width) + x + k) * 4U];
-                px[0] = xfb_channel(c + (1.596 * v));
-                px[1] = xfb_channel(c - (0.392 * u) - (0.813 * v));
-                px[2] = xfb_channel(c + (2.017 * u));
-                px[3] = 0xFF;
+        /* A linha inteira na MEM1 vira leitura direta; fora dela (MMIO, cruzando o fim da MEM1 ou a janela dos RELs)
+         * cada palavra passa por mem_read32, como antes. */
+        const u8 *host = row_bytes != 0U ? mem_host_ptr(line, row_bytes) : NULL;
+        u8 *out = &rgba[(size_t)y * width * 4U];
+        for (u32 x = 0; x < width; x += 2U) {
+            u32 w;
+            if (host != NULL) {
+                memcpy(&w, &host[(size_t)x * 2U], sizeof(w));
+                w = __builtin_bswap32(w);
+            } else {
+                w = mem_read32(NULL, line + (x * 2U));
             }
+            const u32 u = (w >> 16U) & 0xFFU;
+            const u32 v = w & 0xFFU;
+            xfb_pixel(t, w >> 24U, u, v, out);
+            if (x + 1U < width) {
+                xfb_pixel(t, (w >> 8U) & 0xFFU, u, v, out + 4);
+            }
+            out += 8;
         }
     }
 }
