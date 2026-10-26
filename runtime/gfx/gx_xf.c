@@ -43,10 +43,17 @@ void gx_xf_reset(void) {
 }
 
 /* Endereços fora das faixas documentadas são ignorados (Dolphin XFStructs.cpp: LoadXFReg só avisa). */
+static u32 s_xf_reg_generation;
+
+u32 gx_xf_reg_generation(void) {
+    return s_xf_reg_generation;
+}
+
 void gx_xf_write(u32 addr, u32 value) {
     if (addr < GX_XF_END &&
         (addr < 0x100U || (addr >= XF_NRM_MATRICES && addr < XF_LIGHTS_END) || addr >= GX_XF_REGS)) {
         s_xf.mem[addr] = value;
+        s_xf_reg_generation += addr >= GX_XF_REGS ? 1U : 0U;
     }
 }
 

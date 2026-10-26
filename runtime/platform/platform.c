@@ -11,6 +11,12 @@
 #include <pthread.h>
 #include <pthread/qos.h>
 #endif
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <stdlib.h>
+#include <windows.h>
+#endif
 
 static struct {
     bool ready;
@@ -46,10 +52,53 @@ static void set_error(const char *msg) {
     platform_set_error(msg);
 }
 
+#ifdef _WIN32
+/* M9 parte 6: um processador lógico por núcleo físico. A CPU emulada e o GX são duas threads quentes; o Windows às
+ * vezes as põe nos dois lados (SMT) do mesmo núcleo, e as duas andam a meia velocidade: na corrida com a GPU (Ryzen 7
+ * 5700X3D) a média foi de 59 para 72 quadros/s só com esta máscara. AM_ALL_CPUS=1 deixa todos os lógicos. */
+static void one_cpu_per_core(void) {
+    const char *all = getenv("AM_ALL_CPUS");
+    if (all != NULL && all[0] == '1') {
+        return;
+    }
+    DWORD len = 0;
+    (void)GetLogicalProcessorInformationEx(RelationProcessorCore, NULL, &len);
+    if (len == 0U) {
+        return;
+    }
+    u8 *buf = malloc(len);
+    if (buf == NULL) {
+        return;
+    }
+    DWORD_PTR mask = 0;
+    if (GetLogicalProcessorInformationEx(RelationProcessorCore, (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)buf, &len)) {
+        for (DWORD off = 0; off < len;) {
+            const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info =
+                (const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)(buf + off);
+            const KAFFINITY core = info->Processor.GroupMask[0].Mask;
+            if (info->Processor.GroupMask[0].Group == 0U && core != 0U) {
+                mask |= core & (~core + 1U); /* o primeiro lógico do núcleo */
+            }
+            off += info->Size;
+        }
+    }
+    free(buf);
+    DWORD_PTR process = 0;
+    DWORD_PTR system = 0;
+    if (mask != 0U && GetProcessAffinityMask(GetCurrentProcess(), &process, &system) && (mask & process) != 0U &&
+        (mask & process) != process) {
+        (void)SetProcessAffinityMask(GetCurrentProcess(), mask & process);
+    }
+}
+#endif
+
 bool platform_init(void) {
     if (s_platform.ready) {
         return true;
     }
+#ifdef _WIN32
+    one_cpu_per_core();
+#endif
     /* Nenhum subsistema aqui: o vídeo sobe com a janela (M6); áudio e gamepad entram no M7. */
     if (!SDL_Init(0)) {
         set_error(SDL_GetError());

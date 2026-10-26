@@ -87,6 +87,9 @@ void gx_bp_reset(void);
 /* `value` com 24 bits; devolve o que a escrita disparou. */
 GxBpEvent gx_bp_write(u8 reg, u32 value);
 u32 gx_bp_reg(u8 reg);
+/* M9 parte 6: sobe a cada gx_bp_write (qualquer valor: alguns registradores são comandos, como LOADTLUT). Com o mesmo
+ * número, todo estado do desenho que vem dos registradores BP é o mesmo (gx_setup_begin reaproveita). */
+u32 gx_bp_generation(void);
 
 /* Registrador `kind` (GX_BP_TX_SETMODE0, ...) da unidade de textura `texmap` (0..7). */
 u32 gx_bp_tex_reg(u32 kind, u32 texmap);

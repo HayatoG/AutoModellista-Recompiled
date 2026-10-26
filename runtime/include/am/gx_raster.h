@@ -36,6 +36,8 @@ void gx_raster_flush(void);
 
 /* Lê do BP o scissor, os contadores do GENMODE e as escalas de textura; chamar antes de cada desenho. */
 void gx_raster_begin_draw(void);
+/* M9 parte 6: o mesmo desenho de antes em estado (nenhuma escrita de BP/XF no meio): só começa o desenho na GPU. */
+void gx_raster_begin_draw_same(void);
 
 /* Triângulo de frente (já recortado, com screen[] calculado). */
 void gx_raster_triangle(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2);

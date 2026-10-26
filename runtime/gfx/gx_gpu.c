@@ -40,9 +40,14 @@ static struct {
     s32 rects[GX_RASTER_MAX_RECTS][6];
     u32 rect_count;
     u32 texgens;
-    GpuDrawUniforms u; /* do desenho atual */
+    GpuDrawUniforms u;     /* do desenho atual */
+    GpuDrawUniforms u_tev; /* M9 parte 6: só o fill_tev do último desenho com estado novo */
+    bool u_tev_valid;
     HeldTri *held;
     u32 held_count, held_cap;
+    u32 mergeable; /* M9 parte 6: 1 + índice do último comando de um retângulo só, que o próximo desenho pode continuar */
+    s32 mergeable_rect[6];
+    u32 begun; /* desenhos começados desde o último envio (o ritmo dos lotes parciais, com ou sem junção) */
     GxGpuStats stats;
 } s_gpu;
 
@@ -119,6 +124,8 @@ static void submit_rows(bool readback, u32 top, u32 bottom, bool depth_too) {
     s_gpu.upload_count = 0;
     s_gpu.staging_used = 0;
     s_gpu.efb_dirty = false;
+    s_gpu.mergeable = 0;
+    s_gpu.begun = 0;
 }
 
 static void submit_lot(bool readback) {
@@ -247,21 +254,55 @@ static void fill_tev(GpuDrawUniforms *u) {
 
 static GpuDraw *draw_for_rect(u32 r);
 
+/* M9 parte 6: a corrida tem ~2.400 desenhos por quadro, de ~4 vértices; com o mesmo estado (uniformes, retângulo) e os
+ * vértices logo depois, o desenho novo continua o comando anterior em vez de abrir outro. A GPU desenha os triângulos
+ * na mesma ordem (o ROV mistura por ordem de primitiva), então a imagem é a mesma, com menos chamadas no driver. */
+static bool continue_last_draw(void) {
+    if (s_gpu.mergeable == 0U || s_gpu.mergeable != s_gpu.draw_count) {
+        return false;
+    }
+    const GpuDraw *d = &s_gpu.draws[s_gpu.mergeable - 1U];
+    if (d->first_vertex + d->vertex_count != s_gpu.vert_count ||
+        memcmp(s_gpu.mergeable_rect, s_gpu.rects[0], sizeof(s_gpu.mergeable_rect)) != 0 ||
+        memcmp(&d->u, &s_gpu.u, sizeof(s_gpu.u)) != 0) {
+        return false;
+    }
+    s_gpu.stats.merged_draws++;
+    return true;
+}
+
+static void begin_draw(bool same_state);
+
 void gx_gpu_begin_draw(void) {
+    begin_draw(false);
+}
+
+void gx_gpu_begin_draw_same(void) {
+    begin_draw(true);
+}
+
+static void begin_draw(bool same_state) {
     gx_gpu_end_draw();
-    if (s_gpu.draw_count >= PARTIAL_DRAWS) {
+    if (s_gpu.begun >= PARTIAL_DRAWS) {
         submit_lot(false);
         s_gpu.stats.partial_batches++;
     }
-    memset(&s_gpu.u, 0, sizeof(s_gpu.u));
-    fill_tev(&s_gpu.u);
+    s_gpu.begun++;
+    if (!same_state || !s_gpu.u_tev_valid) {
+        memset(&s_gpu.u_tev, 0, sizeof(s_gpu.u_tev));
+        fill_tev(&s_gpu.u_tev);
+        s_gpu.u_tev_valid = true;
+    }
+    s_gpu.u = s_gpu.u_tev;
     fill_textures(&s_gpu.u);
     s_gpu.texgens = s_gpu.u.texgens;
     s_gpu.rect_count = gx_raster_rects(s_gpu.rects, GX_RASTER_MAX_RECTS);
     s_gpu.held_count = 0;
     s_gpu.in_draw = true;
-    if (s_gpu.rect_count == 1U) {
+    if (s_gpu.rect_count == 1U && !continue_last_draw()) {
         (void)draw_for_rect(0); /* o caso comum: os triângulos entram direto neste comando */
+        s_gpu.mergeable = s_gpu.draw_count;
+        memcpy(s_gpu.mergeable_rect, s_gpu.rects[0], sizeof(s_gpu.mergeable_rect));
     }
     s_gpu.stats.draws++;
     s_gpu.stats.indirect_draws += s_gpu.u.ind_stages != 0U ? 1U : 0U;
@@ -324,6 +365,7 @@ void gx_gpu_end_draw(void) {
     if (s_gpu.rect_count <= 1U) {
         return;
     }
+    s_gpu.mergeable = 0;
     for (u32 r = 0; r < s_gpu.rect_count; r++) {
         GpuDraw *d = draw_for_rect(r);
         s_gpu.verts = grow(s_gpu.verts, &s_gpu.vert_cap, s_gpu.vert_count + (3U * s_gpu.held_count), sizeof(GpuVertex));
@@ -344,6 +386,7 @@ void gx_gpu_sync(void) {
 
 /* Limpeza na GPU: um retângulo com o shader no modo de limpeza (as mesmas máscaras do ClearEfb de gx_efb.c). */
 static void push_clear(const GxEfbClear *c) {
+    s_gpu.mergeable = 0;
     s_gpu.draws = grow(s_gpu.draws, &s_gpu.draw_cap, s_gpu.draw_count + 1U, sizeof(GpuDraw));
     GpuDraw *d = &s_gpu.draws[s_gpu.draw_count++];
     memset(d, 0, sizeof(*d));

@@ -187,6 +187,12 @@ void gx_raster_begin_draw(void) {
     }
 }
 
+void gx_raster_begin_draw_same(void) {
+    if (gx_gpu_active()) {
+        gx_gpu_begin_draw_same();
+    }
+}
+
 static s32 iround(f32 x) {
     const s32 t = (s32)x;
     return (x - (f32)t) >= 0.5F ? t + 1 : t;

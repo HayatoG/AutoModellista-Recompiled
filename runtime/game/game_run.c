@@ -704,13 +704,15 @@ static void report_gx(void) {
         AM_LOG_INFO("GX GPU: %" PRIu64 " lotes (%" PRIu64 " parciais), %" PRIu64 " desenhos, %" PRIu64
                     " triângulos; %" PRIu64 " texturas enviadas (%" PRIu64
                     " texels), buffer de texels recomeçado %" PRIu64 " vez(es); sem suporte: %" PRIu64
-                    " desenhos com indireto, %" PRIu64 " com zfreeze",
+                    " desenhos com indireto, %" PRIu64 " com zfreeze; %" PRIu64 " desenhos juntados ao anterior",
                     g->batches, g->partial_batches, g->draws, g->triangles, g->texture_uploads, g->uploaded_texels,
-                    g->arena_resets, g->indirect_draws, g->zfreeze_draws);
+                    g->arena_resets, g->indirect_draws, g->zfreeze_draws, g->merged_draws);
         u64 readbacks = 0;
         const u64 wait_us = platform_gpu_wait_us(&readbacks);
         AM_LOG_INFO("GX GPU: %" PRIu64 " leituras do EFB, espera média pela GPU de %" PRIu64 " µs", readbacks,
                     readbacks != 0U ? wait_us / readbacks : 0U);
+        AM_LOG_INFO("GX: %" PRIu64 " de %" PRIu64 " desenhos reaproveitaram texturas e estado do anterior",
+                    gx_setup_stats()->state_reuses, gx_setup_stats()->draws);
     }
     if (gx_fifo_threaded()) {
         u64 syncs = 0;

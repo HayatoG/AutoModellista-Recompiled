@@ -21,6 +21,7 @@
 
 typedef struct GxSetupStats {
     u64 draws;
+    u64 state_reuses; /* M9 parte 6: desenhos que reaproveitaram texturas e estado do anterior (nenhuma escrita no meio) */
     u64 vertices;
     u64 culled;   /* triângulos descartados pela face */
     u64 rejected; /* triângulos inteiramente fora do volume de visão */

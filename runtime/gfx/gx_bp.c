@@ -112,7 +112,14 @@ static void preload(void) {
     }
 }
 
+static u32 s_bp_generation;
+
+u32 gx_bp_generation(void) {
+    return s_bp_generation;
+}
+
 GxBpEvent gx_bp_write(u8 reg, u32 value) {
+    s_bp_generation++;
     const u32 newval = (s_bp.regs[reg] & ~s_bp.mask) | (value & s_bp.mask);
     if (reg != GX_BP_MASK) {
         s_bp.mask = BP_MASK_ALL;

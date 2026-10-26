@@ -25,6 +25,7 @@ typedef struct GxGpuStats {
     u64 arena_resets;
     u64 indirect_draws; /* desenhos com estágios indiretos (não feitos na GPU) */
     u64 zfreeze_draws;
+    u64 merged_draws; /* M9 parte 6: desenhos que continuaram o comando anterior (mesmo estado) */
 } GxGpuStats;
 
 /* Quem executa o lote (platform_gpu_run; nos testes, um falso). NULL desliga o backend (volta ao software). */
@@ -36,6 +37,8 @@ void gx_gpu_reset(void);
 /* Chamados pelo GX quando ativo: estado do desenho (depois de gx_tex_prepare e gx_raster_begin_draw), cada
  * triângulo de frente, fim do desenho. */
 void gx_gpu_begin_draw(void);
+/* O mesmo, com o estado de BP/XF do desenho anterior (gx_raster_begin_draw_same): reaproveita a parte do TEV. */
+void gx_gpu_begin_draw_same(void);
 void gx_gpu_triangle(const GxXfVertex *v0, const GxXfVertex *v1, const GxXfVertex *v2);
 void gx_gpu_end_draw(void);
 /* Desenha o que falta e traz o EFB inteiro da GPU para a CPU (gx_efb.c). */

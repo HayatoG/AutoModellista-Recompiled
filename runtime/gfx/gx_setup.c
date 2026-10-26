@@ -14,6 +14,7 @@
 #include "am/gx_vtx.h"
 #include "am/gx_xf.h"
 #include "am/log.h"
+#include "am/mem.h"
 
 #define CLIPPED_MAX 33U
 #define INDICES_MAX (CLIPPED_MAX + 3U)
@@ -41,6 +42,10 @@ static struct {
     u32 texgens;
     GxXfVertex clipped[CLIPPED_MAX];
     GxXfVertex *list[INDICES_MAX];
+    bool state_valid; /* M9 parte 6: gerações de BP/XF e época da memória do último desenho */
+    u32 bp_gen;
+    u32 xf_gen;
+    u32 mem_epoch;
     GxSetupStats stats;
 } s_setup;
 
@@ -96,15 +101,37 @@ void gx_setup_begin(u32 primitive, u32 vat) {
     s_setup.stats.ztex_draws += ((gx_bp_reg(GX_BP_ZTEX2) >> 2) & 3U) != 0U ? 1U : 0U;
     s_setup.stats.fog_draws += ((gx_bp_reg(GX_BP_FOGPARAM3) >> 21) & 7U) != 0U ? 1U : 0U;
     note_features(gen, stages);
-    s_setup.texgens = gx_xf_num_texgens();
-    for (u32 n = 0; n < GX_TEXCOORD_MAX; n++) { /* TCInfo.scale_minus_1 + 1 (SU_SSIZE/TSIZE) */
-        s_setup.tex_scale[n][0] = (f32)((gx_bp_reg((u8)(GX_BP_SU_SSIZE + (2U * n))) & 0xFFFFU) + 1U);
-        s_setup.tex_scale[n][1] = (f32)((gx_bp_reg((u8)(GX_BP_SU_SSIZE + (2U * n) + 1U)) & 0xFFFFU) + 1U);
+    /* M9 parte 6: sem escrita de BP nem de registrador do XF desde o desenho anterior, TEV, EFB, rasterizador e
+     * escalas são os mesmos (só dependem desses registradores). As texturas também, se a memória que o GX vê não mudou:
+     * com a thread do GX, dentro da mesma época ela é fixa (mem.h); sem ela, a CPU pode ter escrito no meio. */
+    const u32 bp_gen = gx_bp_generation();
+    const u32 xf_gen = gx_xf_reg_generation();
+    const u32 mem_epoch = mem_cow_active() ? mem_cow_gx_current() : 0U;
+    const bool same = s_setup.state_valid && bp_gen == s_setup.bp_gen && xf_gen == s_setup.xf_gen;
+    const bool same_tex = same && mem_cow_active() && mem_epoch == s_setup.mem_epoch;
+    s_setup.state_valid = true;
+    s_setup.bp_gen = bp_gen;
+    s_setup.xf_gen = xf_gen;
+    s_setup.mem_epoch = mem_epoch;
+    if (!same) {
+        s_setup.texgens = gx_xf_num_texgens();
+        for (u32 n = 0; n < GX_TEXCOORD_MAX; n++) { /* TCInfo.scale_minus_1 + 1 (SU_SSIZE/TSIZE) */
+            s_setup.tex_scale[n][0] = (f32)((gx_bp_reg((u8)(GX_BP_SU_SSIZE + (2U * n))) & 0xFFFFU) + 1U);
+            s_setup.tex_scale[n][1] = (f32)((gx_bp_reg((u8)(GX_BP_SU_SSIZE + (2U * n) + 1U)) & 0xFFFFU) + 1U);
+        }
     }
-    gx_tex_prepare();
-    gx_tev_begin_draw();
-    gx_efb_begin_draw();
-    gx_raster_begin_draw();
+    if (!same_tex) {
+        gx_tex_prepare();
+    } else {
+        s_setup.stats.state_reuses++;
+    }
+    if (!same) {
+        gx_tev_begin_draw();
+        gx_efb_begin_draw();
+        gx_raster_begin_draw();
+    } else {
+        gx_raster_begin_draw_same();
+    }
 }
 
 /* OutputVertexData::Lerp: floats linearmente, cores em ponto fixo de 8 bits. */

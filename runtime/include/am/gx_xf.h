@@ -57,6 +57,9 @@ void gx_xf_default_matrices(GxVertex *v);
 
 GxViewport gx_xf_viewport(void);
 u32 gx_xf_num_texgens(void);
+/* M9 parte 6: sobe a cada escrita nos registradores do XF (de GX_XF_REGS em diante: viewport, texgens, canais), não nas
+ * matrizes nem nas luzes, que só mudam os vértices. */
+u32 gx_xf_reg_generation(void);
 
 /* Posição, normais, cores e texcoords (sem a escala de textura do BP). */
 void gx_xf_transform(const GxVertex *in, GxXfVertex *out);
