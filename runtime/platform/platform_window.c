@@ -200,6 +200,10 @@ const char *platform_window_presenter(void) {
     return s_win.presenter;
 }
 
+u64 platform_window_dropped_frames(void) {
+    return present_gpu_dropped();
+}
+
 /* ---- eventos --------------------------------------------------------------------------------------------------------
  */
 

@@ -26,6 +26,8 @@ bool present_gpu_attach(SDL_Window *window, SDL_GPUDevice *device, bool vsync);
 void present_gpu_detach(void);
 void present_gpu_set_vsync(bool on);
 SDL_GPUTextureFormat present_gpu_format(void);
+/* 60 FPS: quadros descartados porque o swapchain não deu textura. */
+u64 present_gpu_dropped(void);
 /* Envia a imagem (rgba NULL = só o fundo preto), a interface já montada (ui) e apresenta. false = erro. */
 bool present_gpu_frame(const u8 *rgba, u32 width, u32 height, const char *save_png, bool ui);
 

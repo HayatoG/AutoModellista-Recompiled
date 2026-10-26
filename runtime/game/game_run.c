@@ -108,7 +108,10 @@ static struct {
     struct {
         u64 wall_ns, cycles, fields, gx_wait_ns, gx_busy_ns, gpu_wait_us, readbacks, cow, xfb_seq;
         u64 present_ns, sleep_ns;
-        bool presented, unique, started;
+        u64 wait_ns[4]; /* 60 FPS: espera por motivo até o último quadro (DrawDone, token, leitura, fila cheia) */
+        u64 gx_draws, gx_triangles, gx_uploads, gx_resets, gx_texels;
+        u64 last_shown_ns, gap_ns; /* instante da última apresentação que mostrou, e o intervalo até a de agora */
+        bool presented, unique, shown, started;
     } ft;
     u8 rgba[GAME_XFB_WIDTH * GAME_XFB_HEIGHT * 4U];
 } s_run;
@@ -247,11 +250,18 @@ static bool capture_frame(CPUState *cpu, bool refresh) {
             }
         }
         const u64 t0 = frame_trace_on() ? platform_ticks_ns() : 0U;
+        const u64 dropped0 = frame_trace_on() ? platform_window_dropped_frames() : 0U;
         const PlatformWindowResult r =
             platform_window_present(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, shot != NULL ? window_png : NULL);
         if (frame_trace_on()) {
-            s_run.ft.present_ns += platform_ticks_ns() - t0;
+            const u64 t1 = platform_ticks_ns();
+            s_run.ft.present_ns += t1 - t0;
             s_run.ft.presented = true;
+            if (platform_window_dropped_frames() == dropped0) { /* o swapchain deu textura: a imagem foi mostrada */
+                s_run.ft.shown = true;
+                s_run.ft.gap_ns = s_run.ft.last_shown_ns != 0U ? t1 - s_run.ft.last_shown_ns : 0U;
+                s_run.ft.last_shown_ns = t1;
+            }
             s_run.ft.unique = s_run.ft.unique || unique;
         }
         if (r == PLATFORM_WINDOW_ERROR) {
@@ -369,6 +379,16 @@ static void trace_frame(const CPUState *cpu) {
     const u64 gx_wait = wait_ns[0] + wait_ns[1] + wait_ns[2] + (gx_fifo_threaded() ? gx_fifo_thread_full_ns() : 0U);
     const u64 gx_busy = gx_fifo_threaded() ? gx_fifo_thread_busy_ns() : 0U;
     const u64 cow = mem_cow_copies();
+    const u64 wait_now[4] = {wait_ns[0], wait_ns[1], wait_ns[2], gx_fifo_threaded() ? gx_fifo_thread_full_ns() : 0U};
+    u32 lag_max = 0;
+    u32 queue_max = 0;
+    if (gx_fifo_threaded()) {
+        gx_fifo_thread_take_peaks(&lag_max, &queue_max); /* zera: os picos são do intervalo */
+    }
+    GxGpuStats gpu_now = {0};
+    if (gx_gpu_active()) {
+        gpu_now = *gx_gpu_stats();
+    }
     if (s_run.ft.started && frame_trace_wants(s_run.frames - 1U)) {
         const FrameTraceRow row = {.frame = s_run.frames - 1U,
                                    .wall_ns = now - s_run.ft.wall_ns,
@@ -383,9 +403,30 @@ static void trace_frame(const CPUState *cpu) {
                                    .gx_busy_ns = gx_busy - s_run.ft.gx_busy_ns,
                                    .gpu_wait_us = gpu_us - s_run.ft.gpu_wait_us,
                                    .readbacks = (u32)(readbacks - s_run.ft.readbacks),
-                                   .cow_copies = (u32)(cow - s_run.ft.cow)};
+                                   .cow_copies = (u32)(cow - s_run.ft.cow),
+                                   .wait_draw_ns = wait_now[0] - s_run.ft.wait_ns[0],
+                                   .wait_token_ns = wait_now[1] - s_run.ft.wait_ns[1],
+                                   .wait_read_ns = wait_now[2] - s_run.ft.wait_ns[2],
+                                   .wait_full_ns = wait_now[3] - s_run.ft.wait_ns[3],
+                                   .gx_lag_max = lag_max,
+                                   .queue_max = queue_max,
+                                   .shown = s_run.ft.shown,
+                                   .present_gap_ns = s_run.ft.shown ? s_run.ft.gap_ns : 0U,
+                                   .gx_draws = (u32)(gpu_now.draws - s_run.ft.gx_draws),
+                                   .gx_triangles = (u32)(gpu_now.triangles - s_run.ft.gx_triangles),
+                                   .gx_tex_uploads = (u32)(gpu_now.texture_uploads - s_run.ft.gx_uploads),
+                                   .gx_arena_resets = (u32)(gpu_now.arena_resets - s_run.ft.gx_resets),
+                                   .gx_texels = gpu_now.uploaded_texels - s_run.ft.gx_texels};
         frame_trace_add(&row);
     }
+    memcpy(s_run.ft.wait_ns, wait_now, sizeof(wait_now));
+    s_run.ft.gx_draws = gpu_now.draws;
+    s_run.ft.gx_triangles = gpu_now.triangles;
+    s_run.ft.gx_uploads = gpu_now.texture_uploads;
+    s_run.ft.gx_resets = gpu_now.arena_resets;
+    s_run.ft.gx_texels = gpu_now.uploaded_texels;
+    s_run.ft.shown = false;
+    s_run.ft.gap_ns = 0;
     s_run.ft.started = true;
     s_run.ft.wall_ns = now;
     s_run.ft.cycles = cycles;

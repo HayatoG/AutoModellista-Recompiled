@@ -63,6 +63,9 @@ void platform_window_set_vsync(bool on);
 void platform_window_set_scale(u32 scale);
 /* "Metal (SDL GPU)", "metal (SDL_Renderer)"...; "" sem janela. */
 const char *platform_window_presenter(void);
+/* 60 FPS (--frame-trace): quantas chamadas de platform_window_present não mostraram nada (swapchain sem textura,
+ * janela minimizada). Só o caminho da GPU descarta; o SDL_Renderer sempre mostra. */
+u64 platform_window_dropped_frames(void);
 
 /* Atalhos da janela (M9 parte 5), tratados nos eventos e entregues uma vez: F3, F9/F10 e -/+ do teclado numérico.
  * F11 e Alt+Enter alternam a tela cheia na própria plataforma e também são entregues. */

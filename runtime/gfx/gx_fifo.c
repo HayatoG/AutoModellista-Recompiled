@@ -386,10 +386,12 @@ static struct {
     u32 xfb_bytes;
     bool xfb_ready;
     u64 syncs;
-    u64 waits;      /* sincronizações em que o GX ainda tinha trabalho */
-    u64 wait_ns[3]; /* tempo de relógio esperando, por motivo (DrawDone, token, leitura de fora) */
-    u64 busy_ns;    /* só o GX: tempo de relógio trabalhando nos blocos */
-    u64 full_ns;    /* com a trava: a CPU esperando lugar na fila cheia (M9 parte 6, --frame-trace) */
+    u64 waits;       /* sincronizações em que o GX ainda tinha trabalho */
+    u64 wait_ns[3];  /* tempo de relógio esperando, por motivo (DrawDone, token, leitura de fora) */
+    u64 busy_ns;     /* só o GX: tempo de relógio trabalhando nos blocos */
+    u64 full_ns;     /* com a trava: a CPU esperando lugar na fila cheia (M9 parte 6, --frame-trace) */
+    u32 peak_lag;    /* 60 FPS: só a CPU escreve; maior atraso do GX em épocas desde a última leitura */
+    u32 peak_blocks; /* o mesmo para os blocos publicados ainda não terminados */
     u32 reason;
     GxScan scan;
     u32 vcd_lo;
@@ -466,6 +468,7 @@ static void queue_publish(void) {
         s_q.full_ns += s_q.api.ticks_ns() - t0;
     }
     s_q.count++;
+    s_q.peak_blocks = s_q.count > s_q.peak_blocks ? s_q.count : s_q.peak_blocks;
     s_q.api.cond_signal(s_q.wake);
     s_q.api.unlock(s_q.lock);
     s_q.tail = (s_q.tail + 1U) % GX_Q_BLOCKS;
@@ -548,6 +551,15 @@ u64 gx_fifo_thread_busy_ns(void) {
     return ns;
 }
 
+void gx_fifo_thread_take_peaks(u32 *lag, u32 *blocks) {
+    s_q.api.lock(s_q.lock);
+    *lag = s_q.peak_lag;
+    *blocks = s_q.peak_blocks;
+    s_q.peak_lag = 0;
+    s_q.peak_blocks = 0;
+    s_q.api.unlock(s_q.lock);
+}
+
 void gx_fifo_thread_counters(u64 *syncs, u64 *waits, u64 wait_ns[3]) {
     *syncs = s_q.syncs;
     *waits = s_q.waits;
@@ -562,6 +574,7 @@ static void epoch_close(u32 reason) {
     queue_publish();
     const u32 k = s_q.epoch;
     s_q.api.lock(s_q.lock);
+    s_q.peak_lag = k - s_q.done_epoch > s_q.peak_lag ? k - s_q.done_epoch : s_q.peak_lag; /* antes de esperar */
     if (k > s_q.depth && s_q.done_epoch < k - s_q.depth) {
         s_q.waits++;
         const u64 t0 = s_q.api.ticks_ns();

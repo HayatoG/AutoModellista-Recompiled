@@ -112,9 +112,50 @@ static void report_field(FILE *out, const char *name, Field f, u64 *scratch) {
     }
     qsort(scratch, s_ft.count, sizeof(*scratch), cmp_u64);
     const double ms = 1e6;
-    (void)fprintf(out, "%-28s P50 %7.2f  P95 %7.2f  P99 %7.2f  máx %7.2f ms\n", name, (double)pct(scratch, s_ft.count, 50U) / ms,
-                  (double)pct(scratch, s_ft.count, 95U) / ms, (double)pct(scratch, s_ft.count, 99U) / ms,
-                  (double)scratch[s_ft.count - 1U] / ms);
+    (void)fprintf(out, "%-28s P50 %7.2f  P95 %7.2f  P99 %7.2f  máx %7.2f ms\n", name,
+                  (double)pct(scratch, s_ft.count, 50U) / ms, (double)pct(scratch, s_ft.count, 95U) / ms,
+                  (double)pct(scratch, s_ft.count, 99U) / ms, (double)scratch[s_ft.count - 1U] / ms);
+}
+
+static u64 f_wait_draw(const FrameTraceRow *r) {
+    return r->wait_draw_ns;
+}
+static u64 f_wait_token(const FrameTraceRow *r) {
+    return r->wait_token_ns;
+}
+static u64 f_wait_read(const FrameTraceRow *r) {
+    return r->wait_read_ns;
+}
+static u64 f_wait_full(const FrameTraceRow *r) {
+    return r->wait_full_ns;
+}
+
+/* Contagens (não tempos): épocas de atraso e blocos em voo. */
+static void report_count(FILE *out, const char *name, bool lag, u64 *scratch) {
+    for (size_t i = 0; i < s_ft.count; i++) {
+        scratch[i] = lag ? s_ft.rows[i].gx_lag_max : s_ft.rows[i].queue_max;
+    }
+    qsort(scratch, s_ft.count, sizeof(*scratch), cmp_u64);
+    (void)fprintf(out, "%-28s P50 %7" PRIu64 "  P95 %7" PRIu64 "  P99 %7" PRIu64 "  máx %7" PRIu64 "\n", name,
+                  pct(scratch, s_ft.count, 50U), pct(scratch, s_ft.count, 95U), pct(scratch, s_ft.count, 99U),
+                  scratch[s_ft.count - 1U]);
+}
+
+/* Intervalo entre apresentações que mostraram imagem (só os quadros com um anterior). */
+static void report_gap(FILE *out, u64 *scratch) {
+    size_t n = 0;
+    for (size_t i = 0; i < s_ft.count; i++) {
+        if (s_ft.rows[i].present_gap_ns != 0U) {
+            scratch[n++] = s_ft.rows[i].present_gap_ns;
+        }
+    }
+    if (n == 0U) {
+        return;
+    }
+    qsort(scratch, n, sizeof(*scratch), cmp_u64);
+    (void)fprintf(out, "%-28s P50 %7.2f  P95 %7.2f  P99 %7.2f  máx %7.2f ms\n", "intervalo entre imagens",
+                  (double)pct(scratch, n, 50U) / 1e6, (double)pct(scratch, n, 95U) / 1e6,
+                  (double)pct(scratch, n, 99U) / 1e6, (double)scratch[n - 1U] / 1e6);
 }
 
 static void write_csv(void) {
@@ -124,14 +165,21 @@ static void write_csv(void) {
         return;
     }
     (void)fprintf(f, "quadro,parede_ns,ciclos,campos_vi,pulado,apresentado,unico,apresentacao_ns,sono_ns,"
-                     "espera_gx_ns,gx_ocupado_ns,espera_gpu_us,leituras_efb,paginas_copiadas\n");
+                     "espera_gx_ns,gx_ocupado_ns,espera_gpu_us,leituras_efb,paginas_copiadas,"
+                     "espera_draw_ns,espera_token_ns,espera_leitura_ns,espera_fila_ns,atraso_gx_epocas,fila_blocos,"
+                     "mostrado,intervalo_apres_ns,gx_desenhos,gx_triangulos,gx_texturas,gx_recomecos_texels,"
+                     "gx_texels\n");
     for (size_t i = 0; i < s_ft.count; i++) {
         const FrameTraceRow *r = &s_ft.rows[i];
-        (void)fprintf(f, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%d,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-                         ",%" PRIu64 ",%u,%u\n",
+        (void)fprintf(f,
+                      "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%d,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+                      ",%" PRIu64 ",%u,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%u,%d,%" PRIu64
+                      ",%u,%u,%u,%u,%" PRIu64 "\n",
                       r->frame, r->wall_ns, r->emu_cycles, r->vi_fields, r->skipped ? 1 : 0, r->presented ? 1 : 0,
                       r->unique ? 1 : 0, r->present_ns, r->pace_sleep_ns, r->gx_wait_ns, r->gx_busy_ns, r->gpu_wait_us,
-                      r->readbacks, r->cow_copies);
+                      r->readbacks, r->cow_copies, r->wait_draw_ns, r->wait_token_ns, r->wait_read_ns, r->wait_full_ns,
+                      r->gx_lag_max, r->queue_max, r->shown ? 1 : 0, r->present_gap_ns, r->gx_draws, r->gx_triangles,
+                      r->gx_tex_uploads, r->gx_arena_resets, r->gx_texels);
     }
     (void)fclose(f);
 }
@@ -154,8 +202,16 @@ static void write_report(void) {
     u64 presented = 0;
     u64 skipped = 0;
     u64 fields = 0;
+    u64 shown = 0;
+    u64 uploads = 0;
+    u64 texels = 0;
+    u64 resets = 0;
     for (size_t i = 0; i < s_ft.count; i++) {
         const FrameTraceRow *r = &s_ft.rows[i];
+        shown += r->shown ? 1U : 0U;
+        uploads += r->gx_tex_uploads;
+        texels += r->gx_texels;
+        resets += r->gx_arena_resets;
         wall += r->wall_ns;
         unique += r->unique ? 1U : 0U;
         presented += r->presented ? 1U : 0U;
@@ -165,10 +221,20 @@ static void write_report(void) {
     const double secs = (double)wall / 1e9;
     (void)fprintf(out, "Rastro por quadro: %zu quadros (%" PRIu64 " a %" PRIu64 "), %.2f s de relógio\n", s_ft.count,
                   s_ft.rows[0].frame, s_ft.rows[s_ft.count - 1U].frame, secs);
-    (void)fprintf(out, "lógica: %.2f quadros/s; campos de VI: %.2f/s\n", (double)s_ft.count / secs, (double)fields / secs);
-    (void)fprintf(out, "janela: %" PRIu64 " atualizações (%.2f/s), %" PRIu64 " com imagem nova (%.2f/s); %" PRIu64
-                       " quadros pulados pelo frameskip\n\n",
+    (void)fprintf(out, "lógica: %.2f quadros/s; campos de VI: %.2f/s\n", (double)s_ft.count / secs,
+                  (double)fields / secs);
+    (void)fprintf(out,
+                  "janela: %" PRIu64 " atualizações (%.2f/s), %" PRIu64 " com imagem nova (%.2f/s); %" PRIu64
+                  " quadros pulados pelo frameskip\n\n",
                   presented, (double)presented / secs, unique, (double)unique / secs, skipped);
+    (void)fprintf(out,
+                  "quadros: %zu de lógica, %zu desenhados (sem pulo), %" PRIu64 " mostrados de fato (%" PRIu64
+                  " descartados pelo swapchain), %" PRIu64 " com imagem nova\n",
+                  s_ft.count, s_ft.count - (size_t)skipped, shown, presented - shown, unique);
+    (void)fprintf(out,
+                  "GX na GPU: %" PRIu64 " texturas enviadas (%" PRIu64 " texels), buffer de texels recomeçado %" PRIu64
+                  " vez(es); contados quando o GX conclui, não quando o jogo pede\n\n",
+                  uploads, texels, resets);
     report_field(out, "quadro (relógio)", f_wall, scratch);
     report_field(out, "CPU emulada (sem esperas)", f_cpu, scratch);
     report_field(out, "GX ocupado", f_gx_busy, scratch);
@@ -176,6 +242,15 @@ static void write_report(void) {
     report_field(out, "apresentação da janela", f_present, scratch);
     report_field(out, "sono do ritmo", f_sleep, scratch);
     report_field(out, "espera pela GPU (EFB)", f_gpu_wait, scratch);
+    /* A SDL3 GPU não tem timestamp portável: não há tempo de GPU de verdade. A linha acima é só quanto o GX ficou
+     * bloqueado na fence da leitura do EFB. */
+    report_field(out, "  espera: DrawDone", f_wait_draw, scratch);
+    report_field(out, "  espera: token", f_wait_token, scratch);
+    report_field(out, "  espera: leitura de fora", f_wait_read, scratch);
+    report_field(out, "  espera: fila cheia", f_wait_full, scratch);
+    report_count(out, "atraso do GX (épocas)", true, scratch);
+    report_count(out, "blocos em voo na fila", false, scratch);
+    report_gap(out, scratch);
     (void)fprintf(out, "\nPiores quadros (relógio):\n");
     for (size_t i = 0; i < s_ft.count; i++) {
         scratch[i] = (s_ft.rows[i].wall_ns << 20) | (u64)(i & 0xFFFFFU);
@@ -183,8 +258,9 @@ static void write_report(void) {
     qsort(scratch, s_ft.count, sizeof(*scratch), cmp_u64);
     for (size_t k = 0; k < WORST_FRAMES && k < s_ft.count; k++) {
         const FrameTraceRow *r = &s_ft.rows[scratch[s_ft.count - 1U - k] & 0xFFFFFU];
-        (void)fprintf(out, "  quadro %" PRIu64 ": %.2f ms (CPU %.2f, GX ocupado %.2f, esperando o GX %.2f, janela %.2f, "
-                           "GPU %.2f)\n",
+        (void)fprintf(out,
+                      "  quadro %" PRIu64 ": %.2f ms (CPU %.2f, GX ocupado %.2f, esperando o GX %.2f, janela %.2f, "
+                      "GPU %.2f)\n",
                       r->frame, (double)r->wall_ns / 1e6, (double)f_cpu(r) / 1e6, (double)r->gx_busy_ns / 1e6,
                       (double)r->gx_wait_ns / 1e6, (double)r->present_ns / 1e6, (double)r->gpu_wait_us / 1e3);
     }

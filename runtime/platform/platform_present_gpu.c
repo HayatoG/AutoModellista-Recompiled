@@ -21,6 +21,13 @@ static struct {
     SDL_GPUTextureFormat format;
 } s_pg;
 
+/* 60 FPS: quadros em que o swapchain não deu textura e nada foi mostrado (--frame-trace; sobrevive ao detach). */
+static u64 s_dropped;
+
+u64 present_gpu_dropped(void) {
+    return s_dropped;
+}
+
 static bool fail(const char *what) {
     char msg[256];
     (void)snprintf(msg, sizeof(msg), "%s: %s", what, SDL_GetError());
@@ -214,6 +221,7 @@ bool present_gpu_frame(const u8 *rgba, u32 width, u32 height, const char *save_p
         return fail("SDL_AcquireGPUSwapchainTexture");
     }
     if (swap == NULL) { /* janela minimizada ou swapchain ocupado: este quadro não aparece */
+        s_dropped++;
         return SDL_SubmitGPUCommandBuffer(cmd) || fail("SDL_SubmitGPUCommandBuffer (janela)");
     }
     const bool image = rgba != NULL && s_pg.xfb != NULL;

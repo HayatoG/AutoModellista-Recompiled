@@ -22,6 +22,19 @@ typedef struct FrameTraceRow {
     u64 gpu_wait_us;   /* esperando a GPU nas leituras do EFB */
     u32 readbacks;     /* leituras do EFB */
     u32 cow_copies;    /* páginas copiadas na escrita */
+    /* 60 FPS: o que o diagnóstico precisava separar. A espera pelo GX (gx_wait_ns) é a soma das quatro. */
+    u64 wait_draw_ns;   /* esperando a época do DrawDone */
+    u64 wait_token_ns;  /* esperando a época de um token */
+    u64 wait_read_ns;   /* esperando o GX por uma leitura de fora (XFB, estatísticas) */
+    u64 wait_full_ns;   /* esperando lugar na fila de blocos cheia */
+    u32 gx_lag_max;     /* maior atraso do GX em épocas num evento do quadro (antes de a CPU esperar) */
+    u32 queue_max;      /* maior número de blocos em voo na fila */
+    bool shown;         /* a janela mostrou de fato (presented menos os quadros que o swapchain descartou) */
+    u64 present_gap_ns; /* tempo desde a última apresentação que mostrou; 0 se não há anterior ou não mostrou */
+    /* Conteúdo que o GX concluiu no intervalo (GX na GPU). Com a thread, o GX anda até um quadro atrás da lógica:
+     * os picos aparecem deslocados do quadro em que o jogo os pediu. */
+    u32 gx_draws, gx_triangles, gx_tex_uploads, gx_arena_resets;
+    u64 gx_texels;
 } FrameTraceRow;
 
 /* spec = "arq.csv" (todos os quadros) ou "q0:q1:arq.csv" (só q0..q1). */
