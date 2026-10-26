@@ -43,3 +43,5 @@ resultados que contam são o melhor de 2–3 execuções intercaladas (`work/run
 | `dcbf` | 47–55 | — | — |
 | Chamadas diretas | 57 (mín. 45) | 51 | 27 atrasos de áudio |
 | Tudo até o FP em linha, profundidade 3 | 59–60 | 40–41 | o overlay mostrava 60 |
+| `b095b32` + profundidade 6, 26/10 02:04 (rastro) | 41,8 | 39,9 imagens novas/s | GX P95 37 ms; 115 atrasos de áudio; outra carga na máquina |
+| `b095b32` + profundidade 6, 26/10 02:30 (rastro, 4 min) | 58,0 | 57,3 imagens novas/s | quadro P50 16,8 / P95 20,2 ms; 0 pulados; 19 atrasos de áudio |
