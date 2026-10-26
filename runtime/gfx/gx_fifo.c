@@ -386,12 +386,14 @@ static struct {
     u32 xfb_bytes;
     bool xfb_ready;
     u64 syncs;
-    u64 waits;       /* sincronizações em que o GX ainda tinha trabalho */
-    u64 wait_ns[3];  /* tempo de relógio esperando, por motivo (DrawDone, token, leitura de fora) */
-    u64 busy_ns;     /* só o GX: tempo de relógio trabalhando nos blocos */
-    u64 full_ns;     /* com a trava: a CPU esperando lugar na fila cheia (M9 parte 6, --frame-trace) */
-    u32 peak_lag;    /* 60 FPS: só a CPU escreve; maior atraso do GX em épocas desde a última leitura */
-    u32 peak_blocks; /* o mesmo para os blocos publicados ainda não terminados */
+    u64 waits;          /* sincronizações em que o GX ainda tinha trabalho */
+    u64 wait_ns[3];     /* tempo de relógio esperando, por motivo (DrawDone, token, leitura de fora) */
+    u64 busy_ns;        /* só o GX: tempo de relógio trabalhando nos blocos */
+    u64 full_ns;        /* com a trava: a CPU esperando lugar na fila cheia (M9 parte 6, --frame-trace) */
+    u64 xfb_conv_ns;    /* com a trava (--frame-trace): o GX convertendo o XFB para a janela (gx_efb_xfb_to_rgba) */
+    u64 xfb_conv_calls; /* idem: conversões medidas */
+    u32 peak_lag;       /* 60 FPS: só a CPU escreve; maior atraso do GX em épocas desde a última leitura */
+    u32 peak_blocks;    /* o mesmo para os blocos publicados ainda não terminados */
     /* 60 FPS (--frame-trace): custo da thread da CPU no caminho do GX, sem as esperas; só ela escreve e lê */
     bool timing;
     u32 feed_phase;      /* gx_fifo_feed chega a ~18 mil vezes por quadro: só 1 em GX_FEED_SAMPLE é medida */
@@ -458,12 +460,18 @@ static int gx_thread_main(void *user) {
         s_gx.render = b->render;
         s_gx.skip = b->skip;
         const u64 t0 = s_q.api.ticks_ns();
+        u64 conv_ns = 0;
+        bool conv_timed = false;
         if (mem_cow_active()) {
             mem_cow_gx_epoch(b->epoch);
         }
         feed_direct(b->data, b->size);
         if (b->present) {
+            /* 60 FPS: o que a janela custa à thread do GX; timing foi ligado antes de qualquer bloco ser publicado */
+            conv_timed = s_q.timing;
+            const u64 c0 = conv_timed ? s_q.api.ticks_ns() : 0U;
             gx_efb_xfb_to_rgba(b->xfb_addr, b->xfb_width, b->xfb_height, b->xfb_stride, s_q.xfb_back);
+            conv_ns = conv_timed ? s_q.api.ticks_ns() - c0 : 0U;
         }
         if (b->closes && mem_cow_active()) {
             mem_cow_gx_done(b->epoch);
@@ -476,6 +484,10 @@ static int gx_thread_main(void *user) {
             s_q.xfb_back = t;
             s_q.xfb_ready = true;
             s_q.xfb_seq++;
+            if (conv_timed) {
+                s_q.xfb_conv_ns += conv_ns;
+                s_q.xfb_conv_calls++;
+            }
         }
         if (b->closes) {
             s_q.done_epoch = b->epoch;
@@ -584,6 +596,13 @@ u64 gx_fifo_thread_busy_ns(void) {
     const u64 ns = s_q.busy_ns;
     s_q.api.unlock(s_q.lock);
     return ns;
+}
+
+void gx_fifo_thread_xfb_conv(u64 *ns, u64 *calls) {
+    s_q.api.lock(s_q.lock);
+    *ns = s_q.xfb_conv_ns;
+    *calls = s_q.xfb_conv_calls;
+    s_q.api.unlock(s_q.lock);
 }
 
 void gx_fifo_thread_take_peaks(u32 *lag, u32 *blocks) {

@@ -40,6 +40,10 @@ typedef struct FrameTraceRow {
      * a leitura das display lists. As três medidas não se sobrepõem. */
     u64 cow_ns, feed_ns, dl_scan_ns;
     u32 cow_calls, feed_calls, dl_calls;
+    /* A thread do GX convertendo o XFB para a janela (0 sem janela ou sem a thread do GX). Como o GX anda até um quadro
+     * atrás da lógica, a conversão cai no quadro em que ele a termina. */
+    u64 xfb_conv_ns;
+    u32 xfb_conv_calls;
 } FrameTraceRow;
 
 /* spec = "arq.csv" (todos os quadros) ou "q0:q1:arq.csv" (só q0..q1). */

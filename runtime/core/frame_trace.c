@@ -138,6 +138,27 @@ static u64 f_feed(const FrameTraceRow *r) {
 static u64 f_dl(const FrameTraceRow *r) {
     return r->dl_scan_ns;
 }
+static u64 f_xfb_conv(const FrameTraceRow *r) {
+    return r->xfb_conv_ns;
+}
+
+/* A conversão do XFB para a janela, na thread do GX: só existe com janela (e a thread do GX ligada). */
+static void report_xfb_conv(FILE *out, u64 *scratch) {
+    u64 ns = 0;
+    u64 calls = 0;
+    for (size_t i = 0; i < s_ft.count; i++) {
+        ns += s_ft.rows[i].xfb_conv_ns;
+        calls += s_ft.rows[i].xfb_conv_calls;
+    }
+    if (calls == 0U) {
+        (void)fprintf(out, "%-28s sem valor: só há conversão com janela (e a thread do GX ligada)\n",
+                      "GX: conversão do XFB (janela)");
+        return;
+    }
+    report_field(out, "GX: conversão do XFB (janela)", f_xfb_conv, scratch);
+    (void)fprintf(out, "  %" PRIu64 " conversões, %.2f ms cada em média, %.2f ms por quadro\n", calls,
+                  (double)ns / (double)calls / 1e6, (double)ns / (double)s_ft.count / 1e6);
+}
 
 /* Médias por quadro do que a CPU gastou no caminho do GX, e o custo por chamada (a soma das três é o que a thread da
  * CPU paga por ter o GX ligado, fora as esperas). Nada a mostrar sem a thread do GX. */
@@ -207,19 +228,20 @@ static void write_csv(void) {
                      "espera_gx_ns,gx_ocupado_ns,espera_gpu_us,leituras_efb,paginas_copiadas,"
                      "espera_draw_ns,espera_token_ns,espera_leitura_ns,espera_fila_ns,atraso_gx_epocas,fila_blocos,"
                      "mostrado,intervalo_apres_ns,gx_desenhos,gx_triangulos,gx_texturas,gx_recomecos_texels,"
-                     "gx_texels,cow_ns,cow_chamadas,feed_ns,feed_chamadas,dl_scan_ns,dl_chamadas\n");
+                     "gx_texels,cow_ns,cow_chamadas,feed_ns,feed_chamadas,dl_scan_ns,dl_chamadas,"
+                     "xfb_conv_ns,xfb_conv_chamadas\n");
     for (size_t i = 0; i < s_ft.count; i++) {
         const FrameTraceRow *r = &s_ft.rows[i];
         (void)fprintf(f,
                       "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%d,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
                       ",%" PRIu64 ",%u,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%u,%d,%" PRIu64
-                      ",%u,%u,%u,%u,%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%u,%" PRIu64 ",%u\n",
+                      ",%u,%u,%u,%u,%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%u,%" PRIu64 ",%u,%" PRIu64 ",%u\n",
                       r->frame, r->wall_ns, r->emu_cycles, r->vi_fields, r->skipped ? 1 : 0, r->presented ? 1 : 0,
                       r->unique ? 1 : 0, r->present_ns, r->pace_sleep_ns, r->gx_wait_ns, r->gx_busy_ns, r->gpu_wait_us,
                       r->readbacks, r->cow_copies, r->wait_draw_ns, r->wait_token_ns, r->wait_read_ns, r->wait_full_ns,
                       r->gx_lag_max, r->queue_max, r->shown ? 1 : 0, r->present_gap_ns, r->gx_draws, r->gx_triangles,
                       r->gx_tex_uploads, r->gx_arena_resets, r->gx_texels, r->cow_ns, r->cow_calls, r->feed_ns,
-                      r->feed_calls, r->dl_scan_ns, r->dl_calls);
+                      r->feed_calls, r->dl_scan_ns, r->dl_calls, r->xfb_conv_ns, r->xfb_conv_calls);
     }
     (void)fclose(f);
 }
@@ -295,6 +317,7 @@ static void write_report(void) {
     report_field(out, "CPU: leitura do fluxo", f_feed, scratch);
     report_field(out, "CPU: scan de display lists", f_dl, scratch);
     report_cpu_cost(out);
+    report_xfb_conv(out, scratch);
     (void)fprintf(out, "\nPiores quadros (relógio):\n");
     for (size_t i = 0; i < s_ft.count; i++) {
         scratch[i] = (s_ft.rows[i].wall_ns << 20) | (u64)(i & 0xFFFFFU);

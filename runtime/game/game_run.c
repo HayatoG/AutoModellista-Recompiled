@@ -111,7 +111,8 @@ static struct {
         u64 wait_ns[4]; /* 60 FPS: espera por motivo até o último quadro (DrawDone, token, leitura, fila cheia) */
         u64 gx_draws, gx_triangles, gx_uploads, gx_resets, gx_texels;
         u64 cow_ns, cow_calls, feed_ns, feed_calls, dl_ns, dl_calls; /* CPU no caminho do GX, até o último quadro */
-        u64 last_shown_ns, gap_ns; /* instante da última apresentação que mostrou, e o intervalo até a de agora */
+        u64 xfb_conv_ns, xfb_conv_calls; /* o GX convertendo o XFB para a janela, até o último quadro */
+        u64 last_shown_ns, gap_ns;       /* instante da última apresentação que mostrou, e o intervalo até a de agora */
         bool presented, unique, shown, started;
     } ft;
     u8 rgba[GAME_XFB_WIDTH * GAME_XFB_HEIGHT * 4U];
@@ -398,6 +399,11 @@ static void trace_frame(const CPUState *cpu) {
     u64 dl_calls = 0;
     mem_cow_cpu_cost(&cow_ns, &cow_calls);
     gx_fifo_cpu_cost(&feed_ns, &feed_calls, &dl_ns, &dl_calls);
+    u64 conv_ns = 0;
+    u64 conv_calls = 0;
+    if (gx_fifo_threaded()) {
+        gx_fifo_thread_xfb_conv(&conv_ns, &conv_calls);
+    }
     if (s_run.ft.started && frame_trace_wants(s_run.frames - 1U)) {
         const FrameTraceRow row = {.frame = s_run.frames - 1U,
                                    .wall_ns = now - s_run.ft.wall_ns,
@@ -431,7 +437,9 @@ static void trace_frame(const CPUState *cpu) {
                                    .dl_scan_ns = dl_ns - s_run.ft.dl_ns,
                                    .cow_calls = (u32)(cow_calls - s_run.ft.cow_calls),
                                    .feed_calls = (u32)(feed_calls - s_run.ft.feed_calls),
-                                   .dl_calls = (u32)(dl_calls - s_run.ft.dl_calls)};
+                                   .dl_calls = (u32)(dl_calls - s_run.ft.dl_calls),
+                                   .xfb_conv_ns = conv_ns - s_run.ft.xfb_conv_ns,
+                                   .xfb_conv_calls = (u32)(conv_calls - s_run.ft.xfb_conv_calls)};
         frame_trace_add(&row);
     }
     s_run.ft.cow_ns = cow_ns;
@@ -440,6 +448,8 @@ static void trace_frame(const CPUState *cpu) {
     s_run.ft.feed_calls = feed_calls;
     s_run.ft.dl_ns = dl_ns;
     s_run.ft.dl_calls = dl_calls;
+    s_run.ft.xfb_conv_ns = conv_ns;
+    s_run.ft.xfb_conv_calls = conv_calls;
     memcpy(s_run.ft.wait_ns, wait_now, sizeof(wait_now));
     s_run.ft.gx_draws = gpu_now.draws;
     s_run.ft.gx_triangles = gpu_now.triangles;

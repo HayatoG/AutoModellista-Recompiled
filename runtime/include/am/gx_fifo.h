@@ -100,6 +100,9 @@ void gx_fifo_thread_counters(u64 *syncs, u64 *waits, u64 wait_ns[3]);
 u64 gx_fifo_thread_busy_ns(void);
 /* M9 parte 6: tempo da CPU esperando lugar na fila de blocos cheia. */
 u64 gx_fifo_thread_full_ns(void);
+/* 60 FPS (--frame-trace): tempo que a thread do GX gastou convertendo o XFB para a janela (só com janela e depois de
+ * gx_fifo_cpu_timing(true, ...)); totais desde que ligou. */
+void gx_fifo_thread_xfb_conv(u64 *ns, u64 *calls);
 /* 60 FPS (--frame-trace): maior atraso do GX em épocas (no instante de cada evento, antes de a CPU esperar) e maior
  * número de blocos em voo desde a última chamada; zera os dois. Só a thread da CPU chama. */
 void gx_fifo_thread_take_peaks(u32 *lag, u32 *blocks);
