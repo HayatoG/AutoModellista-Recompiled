@@ -32,6 +32,7 @@ resultados que contam são o melhor de 2–3 execuções intercaladas (`work/run
 | 15 | Um lógico por núcleo físico (afinidade 0x5555), duas rodadas intercaladas | 59,0 / 38 e 59,7 / 38 | 72,3 / 48 e 73,1 / 48 | — | sim, no runtime (`fa684e5`) |
 | 16 | Cache de estado por desenho (gerações de BP e XF) | 58,8 / 38 | 62,6 / 44 | idêntica (3 quadros) | sim (`fa684e5`) |
 | 17 | Tudo (#15 + #16 + profundidade 6) | — | 74,2 / 49 | — | — |
+| 18 | Leitura da memória da época com uma carga por página + tamanho do vértice guardado (rastro, P50 / P95 do GX ocupado) | 15,2 / 22,9 ms | 14,5 / 20,8 ms | idêntica (3 quadros) | sim (`b095b32`) |
 
 ## Na janela (partidas do usuário)
 
