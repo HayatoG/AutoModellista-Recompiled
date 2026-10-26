@@ -6,6 +6,7 @@
 #include "am/di.h"
 #include "am/dsp.h"
 #include "am/exi.h"
+#include "am/exi_card.h"
 #include "am/gather_pipe.h"
 #include "am/gx_fifo.h"
 #include "am/log.h"
@@ -14,6 +15,7 @@
 #include "am/pi.h"
 #include "am/rel_map.h"
 #include "am/si.h"
+#include "am/timebase.h"
 #include "am/vi.h"
 
 typedef u64 (*BusReadFn)(u32 offset, u8 size);
@@ -80,7 +82,12 @@ void bus_unhandled_write(GuestAddr addr, u64 value, u8 size) {
              size, addr, bus_region_name(addr), (unsigned long long)value);
 }
 
+/* Antes deste ciclo nenhum *_update tem o que fazer (bus_next_event_cycle). Zerado em todo acesso MMIO, que é por
+ * onde o jogo agenda eventos novos (DMA, comandos, mails do DSP, registradores do VI e do AI). */
+static u64 s_next_event;
+
 u64 bus_read(GuestAddr addr, u8 size) {
+    s_next_event = 0;
     const BusRegion *r = find_region(addr);
     if (r == NULL || r->read == NULL) {
         bus_unhandled_read(addr, size);
@@ -93,6 +100,7 @@ void bus_write(GuestAddr addr, u64 value, u8 size) {
         gather_pipe_write(addr & 0xFFFU, value, size);
         return;
     }
+    s_next_event = 0;
     const BusRegion *r = find_region(addr);
     if (r == NULL || r->write == NULL) {
         bus_unhandled_write(addr, value, size);
@@ -101,6 +109,7 @@ void bus_write(GuestAddr addr, u64 value, u8 size) {
 }
 
 void bus_reset(void) {
+    s_next_event = 0;
     vi_reset(true);
     ai_reset();
     pi_reset();
@@ -117,9 +126,22 @@ void bus_reset(void) {
 }
 
 void bus_update(void) {
+    if (timebase_cycles(NULL) < s_next_event) {
+        return;
+    }
     dsp_update();
     di_update();
     exi_update();
     vi_update();
     ai_update();
+    s_next_event = bus_next_event_cycle();
+}
+
+static u64 min_u64(u64 a, u64 b) {
+    return a < b ? a : b;
+}
+
+u64 bus_next_event_cycle(void) {
+    return min_u64(min_u64(dsp_next_event_cycle(), di_next_event_cycle()),
+                   min_u64(min_u64(exi_card_next_event_cycle(), vi_next_event_cycle()), ai_next_event_cycle()));
 }

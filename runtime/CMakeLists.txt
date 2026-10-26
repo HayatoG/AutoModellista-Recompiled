@@ -27,7 +27,7 @@ endif()
 add_library(am_core STATIC
   core/log.c core/mem.c core/dispatch.c core/guest_cpu.c
   core/timebase.c core/ppc_sys.c core/dol.c core/boot.c core/trace.c core/chassis.c core/disc.c core/rel_map.c core/hook.c
-  core/pad_script.c core/pad_input.c core/profile.c core/sha256.c
+  core/pad_script.c core/pad_input.c core/profile.c core/sha256.c core/idle_loop.c
   os/exception.c os/os_link.c os/os_threads.c
   hw/bus.c hw/ai.c hw/pi.c hw/mi.c hw/dsp.c hw/di.c hw/dvd_timing.c hw/si.c hw/exi.c hw/exi_card.c hw/memcard.c hw/vi.c
   hw/cp.c hw/pe.c hw/gather_pipe.c

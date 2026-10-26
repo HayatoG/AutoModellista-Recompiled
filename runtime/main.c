@@ -56,6 +56,8 @@
  *                              formatada se o arquivo não existir). Padrão: em modo interativo (janela sem
  *                              --pad-script) MemoryCardA.raw no diretório de dados do usuário; nos outros, sem
  *                              cartão ("No Memory Card" no boot), para os roteiros e os golden não mudarem
+ *   --idle-skip on|off         pula o tempo em que o jogo gira num laço de espera até o próximo evento de
+ *                              dispositivo (padrão on; desligado com --trace). Mesmo tempo e imagens (am/idle_loop.h)
  *   --verbose                  log de depuração (acessos MMIO, UART)
  *
  * M9 parte 5 (docs/M9_PARTE5_LAUNCHER.md): no modo interativo (sem --sys, ou janela sem --pad-script) a runtime lê as
@@ -87,6 +89,7 @@
 #include "am/game_run.h"
 #include "am/guest_cpu.h"
 #include "am/hook.h"
+#include "am/idle_loop.h"
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/memcard.h"
@@ -139,6 +142,7 @@ typedef struct Options {
     int fullscreen;
     int vsync;
     int volume;
+    int idle_skip; /* -1 = padrão (on) */
     bool gfx_given;
     bool window_given;
     bool max_seconds_given;
@@ -209,7 +213,8 @@ static bool parse_switch(Options *o, const char *name, const char *value) {
                     {"--gx-tex-cache", &o->gx_tex_cache},
                     {"--fps-overlay", &o->fps_overlay},
                     {"--fullscreen", &o->fullscreen},
-                    {"--vsync", &o->vsync}};
+                    {"--vsync", &o->vsync},
+                    {"--idle-skip", &o->idle_skip}};
     for (size_t i = 0; i < sizeof(switches) / sizeof(switches[0]); i++) {
         if (strcmp(name, switches[i].name) == 0) {
             return parse_on_off(value, switches[i].field);
@@ -307,6 +312,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
                    .fps_overlay = -1,
                    .fullscreen = -1,
                    .vsync = -1,
+                   .idle_skip = -1,
                    .volume = -1,
                    .max_seconds = 120U,
                    .same_pc_limit = CHASSIS_DEFAULT_SAME_PC_LIMIT};
@@ -490,6 +496,8 @@ static void report(const CPUState *cpu, ChassisStop stop, const ChassisStats *st
     AM_LOG_INFO("chassi: %" PRIu64 " voltas, %" PRIu64 " interrupção(ões), %" PRIu64 " sc, %" PRIu64
                 " ciclos estimados, trace %" PRIu64 " chamadas",
                 st->steps, st->interrupts, exception_system_call_count(), timebase_cycles(NULL), trace_event_count());
+    AM_LOG_INFO("laços de espera: %" PRIu64 " avanço(s) de tempo ocioso, %" PRIu64 " ciclos", st->idle_skips,
+                st->idle_cycles);
     AM_LOG_INFO("cache: dcbst %" PRIu64 ", dcbf %" PRIu64 ", dcbi %" PRIu64 ", icbi %" PRIu64 " (%" PRIu64
                 " sobre código intacto, %" PRIu64 " fora do código)",
                 ps->cache_ops[PPC_SYS_CACHE_DCBST], ps->cache_ops[PPC_SYS_CACHE_DCBF],
@@ -526,6 +534,7 @@ static bool check_hooks(const SysFiles *f, const DolImage *dol) {
         AM_LOG_ERROR("há ganchos que o chassi não veria; ver o log acima");
         return false;
     }
+    AM_LOG_INFO("laços de espera no texto do DOL: %u", idle_loop_scan(ranges, count));
     return true;
 }
 
@@ -670,7 +679,8 @@ static int run_boot(CPUState *cpu, const Options *o, Settings *front) {
                                        .same_pc_limit = o->same_pc_limit,
                                        .max_wall_ms = o->max_seconds * 1000U,
                                        .now_ms = platform_ticks_ms,
-                                       .on_tick = o->frames != 0U ? game_run_tick : NULL};
+                                       .on_tick = o->frames != 0U ? game_run_tick : NULL,
+                                       .idle_skip = o->idle_skip != 0 && trace == NULL};
             ChassisStats stats = {0};
             const ChassisStop stop = chassis_run(cpu, &cfg, &stats);
             trace_close();

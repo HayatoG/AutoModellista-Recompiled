@@ -9,6 +9,16 @@
 #include "am/rel_map.h"
 
 #define DISPATCH_INITIAL_CAPACITY 256U
+/* Cache de mapeamento direto pc -> função na frente da busca binária: o chassi despacha centenas de milhões de vezes
+ * por corrida, quase sempre os mesmos poucos milhares de pcs (entradas de função e retornos de bl). */
+#define DISPATCH_CACHE_SIZE 8192U
+
+typedef struct DispatchCacheEntry {
+    GuestAddr pc;
+    DispatchFn fn;
+} DispatchCacheEntry;
+
+static DispatchCacheEntry s_cache[DISPATCH_CACHE_SIZE];
 
 static struct {
     DispatchEntry *entries;
@@ -62,6 +72,7 @@ DispatchResult dispatch_register(GuestAddr start, GuestAddr end, DispatchFn fn) 
     memmove(&s_dispatch.entries[at + 1U], &s_dispatch.entries[at], (s_dispatch.count - at) * sizeof(DispatchEntry));
     s_dispatch.entries[at] = (DispatchEntry){.start = start, .end = end, .fn = fn};
     s_dispatch.count++;
+    memset(s_cache, 0, sizeof(s_cache));
     return DISPATCH_OK;
 }
 
@@ -70,6 +81,7 @@ void dispatch_clear(void) {
     s_dispatch.entries = NULL;
     s_dispatch.count = 0;
     s_dispatch.capacity = 0;
+    memset(s_cache, 0, sizeof(s_cache));
 }
 
 size_t dispatch_count(void) {
@@ -81,12 +93,20 @@ const DispatchEntry *dispatch_entries(void) {
 }
 
 DispatchFn dispatch_lookup(GuestAddr pc) {
+    DispatchCacheEntry *c = &s_cache[(pc >> 2) & (DISPATCH_CACHE_SIZE - 1U)];
+    if (c->pc == pc && c->fn != NULL) {
+        return c->fn;
+    }
     const size_t after = upper_bound(pc);
     if (after == 0U) {
         return NULL;
     }
     const DispatchEntry *entry = &s_dispatch.entries[after - 1U];
-    return pc < entry->end ? entry->fn : NULL;
+    if (pc >= entry->end) {
+        return NULL;
+    }
+    *c = (DispatchCacheEntry){pc, entry->fn};
+    return entry->fn;
 }
 
 /* pc dentro de um REL pelo endereço real (alguém saltou por um ponteiro calculado a partir do endereço de carga):

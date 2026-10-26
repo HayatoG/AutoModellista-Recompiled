@@ -5,6 +5,8 @@
  * tocado (só existiria com o comando DI 0xE1, que é am_fatal em di.c). */
 #include "am/ai.h"
 
+#include <stdint.h>
+
 #include "am/bus.h"
 #include "am/log.h"
 #include "am/pi.h"
@@ -67,6 +69,16 @@ void ai_update(void) {
         s_ai.control |= AI_CR_AIINT;
         update_interrupts();
     }
+}
+
+/* Ciclo em que o contador passa por AIIT (o ai_update sobe a AIINT ali); UINT64_MAX parado. */
+u64 ai_next_event_cycle(void) {
+    if (!playing()) {
+        return UINT64_MAX;
+    }
+    const u32 k = s_ai.interrupt_timing - s_ai.sample_counter;
+    const u64 samples = k != 0U ? (u64)k : (1ULL << 32);
+    return s_ai.last_cycle + samples * s_ai.cycles_per_sample;
 }
 
 u64 ai_stream_starts(void) {

@@ -26,5 +26,8 @@ void bus_reset(void);
 
 /* Conclui eventos de dispositivo com prazo vencido (DMA, comandos). O chassi chama a cada volta. */
 void bus_update(void);
+/* Primeiro ciclo em que o bus_update tem algo a fazer (UINT64_MAX se nada agendado). Antes disso nenhum dispositivo
+ * muda memória nem interrupção: é o limite do avanço de tempo ocioso do chassi (am/idle_loop.h). */
+u64 bus_next_event_cycle(void);
 
 #endif /* AM_BUS_H */

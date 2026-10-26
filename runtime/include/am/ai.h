@@ -25,6 +25,8 @@
 void ai_reset(void);
 /* Avança o contador de amostras do streaming até o ciclo atual (o chassi chama a cada volta). */
 void ai_update(void);
+/* Próximo ciclo em que o ai_update pode subir a AIINT (para o avanço de tempo ocioso do chassi). */
+u64 ai_next_event_cycle(void);
 /* Quantas vezes PSTAT foi ligado (o AIInit liga para medir o conversor). */
 u64 ai_stream_starts(void);
 u64 ai_read(u32 offset, u8 size);

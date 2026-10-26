@@ -28,6 +28,9 @@ typedef struct ChassisConfig {
     u64 (*now_ms)(void); /* relógio do host (platform_ticks_ms); obrigatório se max_wall_ms != 0 */
     /* Opcional: chamado a cada CHASSIS_TICK_STEPS voltas (diagnóstico de laço parado, ver game_run.c). */
     void (*on_tick)(const CPUState *cpu);
+    /* Avança o tempo direto até o próximo evento de dispositivo quando o jogo gira num laço de espera
+     * (am/idle_loop.h). Mesma linha do tempo; só fica fora com trace, que grava cada despacho. */
+    bool idle_skip;
 } ChassisConfig;
 
 #define CHASSIS_TICK_STEPS 0x10000U
@@ -35,6 +38,8 @@ typedef struct ChassisConfig {
 typedef struct ChassisStats {
     u64 steps;
     u64 interrupts;
+    u64 idle_skips;  /* avanços de tempo ocioso */
+    u64 idle_cycles; /* ciclos avançados por eles */
 } ChassisStats;
 
 ChassisStop chassis_run(CPUState *cpu, const ChassisConfig *config, ChassisStats *stats);

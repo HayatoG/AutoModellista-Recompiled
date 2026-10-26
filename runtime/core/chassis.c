@@ -1,11 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "am/chassis.h"
 
+#include <stdint.h>
+
 #include "am/bus.h"
 #include "am/dispatch.h"
 #include "am/exception.h"
 #include "am/guest_cpu.h"
 #include "am/hook.h"
+#include "am/idle_loop.h"
 #include "am/log.h"
 #include "am/mem.h"
 #include "am/pi.h"
@@ -87,11 +90,40 @@ static void watchdog_check(Watchdog *w, const CPUState *cpu, const ChassisConfig
     }
 }
 
+/* Fatia pura de laço de espera já medida: começou e terminou no início do laço com idle_loop_spins verdadeiro. */
+typedef struct IdleSpin {
+    GuestAddr pc;
+    u64 cycles;
+} IdleSpin;
+
+/* As fatias que começariam antes do próximo evento são todas iguais à medida (am/idle_loop.h): pula todas de uma vez,
+ * caindo no mesmo ciclo em que a última delas terminaria. Devolve false se não há o que pular. */
+static bool idle_skip(CPUState *cpu, const IdleSpin *spin, ChassisStats *stats) {
+    const u64 now = timebase_cycles(cpu);
+    u64 next = bus_next_event_cycle();
+    const u64 dec = timebase_dec_expiry_cycle();
+    next = dec < next ? dec : next;
+    if (next == UINT64_MAX || next <= now) {
+        return false;
+    }
+    const u64 slices = (next - now + spin->cycles - 1U) / spin->cycles;
+    timebase_advance(slices * spin->cycles);
+    if (profile_active()) {
+        profile_add(cpu->pc, mem_read32(NULL, CHASSIS_OS_CURRENT_THREAD), slices * spin->cycles);
+    }
+    stats->steps += slices;
+    stats->idle_skips++;
+    stats->idle_cycles += slices * spin->cycles;
+    return true;
+}
+
 ChassisStop chassis_run(CPUState *cpu, const ChassisConfig *config, ChassisStats *stats) {
     AM_ASSERT(config->max_wall_ms == 0U || config->now_ms != NULL, "max_wall_ms sem relógio");
     Watchdog wd = {.last_pc = 0xFFFFFFFFU,
                    .limit = config->same_pc_limit != 0U ? config->same_pc_limit : CHASSIS_DEFAULT_SAME_PC_LIMIT,
                    .started_ms = config->now_ms != NULL ? config->now_ms() : 0U};
+    IdleSpin spin = {0};
+    GuestAddr self_pc = 0xFFFFFFFFU; /* a última fatia começou e terminou neste pc: só aí vale procurar o laço */
     for (;;) {
         real_mode_pc(cpu);
         bus_update();
@@ -111,10 +143,18 @@ ChassisStop chassis_run(CPUState *cpu, const ChassisConfig *config, ChassisStats
             config->on_tick(cpu);
         }
         const GuestAddr entry = cpu->pc;
+        const bool spins = config->idle_skip && entry == self_pc && idle_loop_spins(cpu);
+        if (spins && spin.pc == entry && idle_skip(cpu, &spin, stats)) {
+            continue;
+        }
         const u64 before = timebase_cycles(cpu);
         timebase_begin_slice(cpu);
         dispatch_step(cpu);
         timebase_end_slice(cpu);
+        self_pc = cpu->pc == entry ? entry : 0xFFFFFFFFU;
+        if (spins && cpu->pc == entry && cpu->exception == 0U) {
+            spin = (IdleSpin){entry, timebase_cycles(cpu) - before};
+        }
         if (profile_active()) {
             profile_add(entry, mem_read32(NULL, CHASSIS_OS_CURRENT_THREAD), timebase_cycles(cpu) - before);
         }
