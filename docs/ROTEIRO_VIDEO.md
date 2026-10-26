@@ -374,7 +374,25 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 
 **Motion:** o “60” do M8 aparece num carimbo e racha quando o carro sai da largada. As quatro medições caem juntas na mesma altura, como pinos de boliche que não se mexem. No perfil, a fatia da memória pulsa e encolhe a cada mudança. Quando a janela “piora” para 51, uma seta desliza da thread da CPU para a thread do vídeo, mostrando o gargalo mudando de lugar. No fim, o ponteiro do velocímetro sobe até 60 e fica.
 
-### 4.19 Quanto custou até aqui (tokens e tempo)
+### 4.19 M9, parte 6: o Windows de verdade (em andamento)
+
+**Fala:** “Até aqui era tudo no Mac. Aí eu clonei o repositório num PC com Windows, um Ryzen 7 5700X3D com uma RTX 2060, e pedi pra IA testar. Ela dividiu o serviço por tamanho: um Haiku instalou o compilador e procurou o jogo no disco, um Sonnet compilou o tradutor e gerou o C a partir do meu dump, e o Opus ficou com as partes difíceis. O primeiro tropeço foi bobo: o remendo do tradutor não aplicava porque o Git do Windows tinha trocado o fim de linha dos arquivos. O segundo foi sério: o launcher só oferecia desenho em software, a 20 e poucos quadros. No Direct3D 12, o shader que grava na textura recebia um número de registro diferente do que o driver esperava, e o Windows recusava o desenho. Com isso corrigido no remendo da SDL, a GPU entrou: corrida a 40, 50 quadros. Só que eu joguei e vi 30, 35 com carros na frente, e a música engasgando. A placa não era o problema: ela desenhava tudo e quase não esperava. O gargalo era a CPU do GameCube emulada. Então a IA foi caçar. Primeiro, o jogo passa boa parte do tempo girando num laço de espera; ela passou a pular esse tempo de uma vez, com o mesmo resultado tique a tique e o mesmo áudio byte a byte. Depois achou duas coisas no tradutor. Cada instrução que limpa o cache, e o jogo faz 308 milhões delas numa corrida, devolvia o controle pro laço principal. E toda chamada de função entre os pedaços de 16 KB do código traduzido também, ida e volta: o tradutor até tinha o atalho pronto, mas ninguém ligava. Ligado, deixando de fora as funções que a runtime intercepta, as voltas do laço principal caíram de 883 para 339 milhões. Também teve o que não deu certo: forçar a memória toda em linha inchou o executável e ficou mais lento, e eu tive que lembrar a IA de não abrir o jogo sem eu pedir. Sem desenhar, a corrida foi de 48 para 90 quadros por segundo. Na janela, eu vi 47 a 55. Ainda não era 60, e eu perguntei: o que te falta, com um PC cem vezes mais forte? A resposta foi que o código já é nativo, mas finge ser um GameCube em cada detalhe: cada conta de ponto flutuante refaz os flags do processador original, cada escrita na memória passa por uma função. Então ela começou a cortar esse fingimento só onde ele não muda nada: a conta comum em linha, a escrita pra placa de vídeo direto, e a escrita na memória sem salvar oito registradores toda vez. A prova de que nada mudou: o relógio de cada quadro e o áudio saem idênticos, byte a byte. Sem desenhar, 102 quadros por segundo. Aí eu joguei de novo e vi 45. O contador dizia 60, mas o log contou a verdade: de cada 60 quadros, só 40 chegavam à tela. A CPU do jogo já dava conta; quem não dava era a thread que monta o vídeo, porque a corrida faz uns 2.400 desenhos por quadro, de quatro vértices cada. Duas coisas ajudaram aí. A primeira foi quase boba: o Windows punha a thread do jogo e a do vídeo nas duas metades do mesmo núcleo do processador, e as duas andavam a meia velocidade; travando uma por núcleo, a corrida foi de 59 para 72. A segunda veio da pesquisa sobre o Dolphin: só recalcular o estado de um desenho quando algum registrador muda. Em 19 de cada 20 desenhos, nada mudava.”
+
+**Na tela:**
+
+- O PC com Windows e o terminal com os três modelos lado a lado: Haiku (compilador, busca do jogo), Sonnet (tradutor e C gerado), Opus (Direct3D 12, desempenho).
+- O erro do `git apply` por causa do fim de linha, e o launcher com só “software” na lista.
+- A linha do log `GX: desenho na GPU (driver direct3d12, HLSL (DXIL), ROV, ubershader TEV)` e o contador da corrida em 39–51.
+- O log do jogo com 234 atrasos de áudio e a thread do GX esperando só 42 ms na sessão inteira.
+- A linha do log `chassi: 883088123 voltas` virando `339012871 voltas`.
+- A escada sem desenho (média / pior trecho): 48 / 34 → 72 / 51 → 74 → 86 / 62 → 90 / 65 → 99 / 73 → 102 / 73; na janela, 47–55 e depois 57 com 51 de 60 desenhados (a gravar: o número final).
+- O `cmp` do timebase e do áudio entre duas versões sem saída nenhuma, e as linhas `TIMEBASE_IDENTICO` e `AUDIO_IDENTICO`.
+- O `mem_write32` desmontado antes (8 `push` na entrada) e depois (1 `push`).
+- O log da partida: `59.9 quadros/s, 40 desenhado(s)`, linha após linha.
+
+**Motion:** o mapa do código traduzido em blocos de 16 KB; uma bolinha (a CPU) sai de um bloco, volta ao centro (o laço principal) e entra em outro, piscando a cada ida. Com o atalho ligado, ela pula direto de bloco em bloco, e o contador de voltas do centro desacelera. Os 308 milhões de limpezas de cache aparecem como uma chuva de gotas caindo no centro, que para de uma vez. No fim, o velocímetro sobe de 48 para 90 no modo sem desenho, e na janela para perto de 55, com um traço tracejado em 60 marcando o que falta.
+
+### 4.20 Quanto custou até aqui (tokens e tempo)
 
 **Fala:** “E quanto de IA foi isso? Até agora, uns 967 milhões de tokens passaram pelos modelos. Parece absurdo, mas quase tudo é a IA relendo o próprio contexto a cada passo, o que é barato. O que ela escreveu de fato foram 4,4 milhões de tokens, algo como uns 36 livros. Em tempo: o boot levou uma hora e meia de IA, o esqueleto 23 minutos, o M5, o sistema operacional e o disco, teve três partes, duas delas cortadas pela queda do SSD, e a última, a que chegou à largada, levou só 28 minutos. O primeiro quadro na tela, o M6, levou 54 minutos de IA, e o maior consumo até aqui foi o M7, controle e som: 1 hora e 52 e 116 milhões de tokens. A primeira parte do M8, o relógio e a GPU, levou 2 horas e 3 minutos, e a peça mais longa da última parte, o relógio exato, 3 horas e meia. Contando do zero: do primeiro comando até o jogo bootar foram umas 7 horas de trabalho de IA; até ele atravessar os menus e largar, 10 horas e 43; até o logo da Capcom aparecer na tela, 11 horas e 48; até dar pra jogar pelos menus com som, 13 horas e 59; até o desenho ir pra GPU, 16 horas e 31; até a corrida sair a 60 com o save funcionando, 22 horas e 32. No relógio da parede foram quase três dias, com noites de sono no meio.”
 
@@ -407,7 +425,10 @@ Uma cena por ferramenta. Ghidra e REA entraram em uso de verdade no M5, para ach
 | M9 parte 3a, pacote do Linux | Opus | 16 min | 46 mil | 8,5 M |
 | M9 parte 5, launcher | Opus | 52 min | 190 mil | 36,0 M |
 | M9 parte 4, corrida a 60 | Opus | 1h44 | 49 mil | 11,6 M |
-| Sessão principal | Opus | 37h+ | 601 mil | 124,0 M |
+| M9 parte 6, Windows: compilador, busca do jogo, C gerado | Haiku + Sonnet | 13 min | 16 mil | 1,4 M |
+| M9 parte 6, Direct3D 12 no Windows | Opus | 27 min | 42 mil | 8,4 M |
+| M9 parte 6, desempenho no Windows (em andamento) | Opus | 4h18 | 304 mil | 98,7 M |
+| Sessão principal | Opus | 38h+ | 629 mil | 129,5 M |
 
 Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; entre parênteses, o relógio corrido desde o início em 22/10):
 
@@ -426,6 +447,7 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | M9 parte 1, shader único | 24h52 | 72h49 |
 | M9 parte 5, launcher | 26h54 | 84h00 |
 | M9 parte 4, corrida a 60 | 27h58 | 87h46 |
+| M9 parte 6, Windows (em andamento, 26/10 01:01) | ≈33h11 | 95h02 |
 
 **Motion:** barras horizontais crescendo uma por etapa, na ordem cronológica, com o contador de tokens processados ao lado; depois cada barra “encolhe” até só a fatia de tokens gerados, mostrando visualmente que a maior parte é releitura. Um relógio no canto avança junto com as durações. Fechar com o total “967 M processados · 4,4 M escritos”. Na parte do tempo acumulado, uma régua de horas corre e cada marco crava um pino com o rótulo (“boot: 7h07”, “primeiro quadro: 11h48”, “dá pra jogar: 13h59”, “GPU: 16h31”, “M8: 22h32”); embaixo, uma régua mais longa e cinza mostra o calendário (65h04), com faixas de noite escurecidas. Atualizar os números na edição final.
 
@@ -468,3 +490,4 @@ Tempo acumulado até cada marco (trabalho de IA, pausas de mais de 15 min fora; 
 | 25/10/2026 (M9 parte 3a) | 4.16 nova: “M9, parte 3a: um Linux dentro do Mac” (OrbStack com Ubuntu x86\_64, build em 2 min 36 s, pacote de 8,2 MB sem bytes do jogo, glibc 2.38, Vulkan do lavapipe com interlock, 400 quadros na GPU); a cena de tokens vira 4.17 com a peça |
 | 25/10/2026 (M9 parte 5) | 4.17 nova: “M9, parte 5: a cara do jogo” (quatro esboços, a escolha da tela inicial, a arte tirada do banner do disco do usuário, FPS/volume/tela cheia/controles, verificações intactas); a cena de tokens vira 4.18 com a peça |
 | 25/10/2026 (M9 parte 4) | 4.18 nova: “M9, parte 4: o “60” que não era 60” (a medição do M8 era a contagem antes da largada; 43–44 em qualquer configuração; CPU sozinha a 49; perfil com um terço na memória; LTO e ajustes até 78; o gargalo passando para o GX; corrida a 60 na janela; a pergunta dos núcleos); a cena de tokens vira 4.19 com a peça e os marcos de 26h54 e 27h58 |
+| 25/10/2026 (M9 parte 6, em andamento) | 4.19 nova: “M9, parte 6: o Windows de verdade” (Haiku/Sonnet/Opus por tarefa, fim de linha do Git no remendo, Direct3D 12 recusando o pipeline e o conserto no remendo da SDL, corrida 39–51 na GPU, CPU emulada como gargalo, laço de espera pulado com resultado idêntico, `dcbf` e chamadas entre blocos voltando ao chassi, 883 → 339 milhões de voltas, sem desenho 48 → 90, na janela 47–55; o número final fica “a gravar”); a cena de tokens vira 4.20 com as três peças do Windows e o tempo acumulado |
