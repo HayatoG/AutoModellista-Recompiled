@@ -284,7 +284,12 @@ TEST(contador_na_ordem_da_api) {
     EXPECT_TRUE(SDL_GetBooleanProperty(dev, SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN, false));
     EXPECT_TRUE(SDL_GPUTextureSupportsFormat(s_rov.device, SDL_GPU_TEXTUREFORMAT_R32_UINT, SDL_GPU_TEXTURETYPE_2D,
                                              SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ_WRITE));
-    EXPECT_TRUE(make_pipeline(true));
+    const bool pipeline = make_pipeline(true);
+    EXPECT_TRUE(pipeline);
+    if (!pipeline) { /* desenhar sem pipeline dispara o assert da SDL (modo debug) e o teste trava */
+        (void)printf("  pipeline: %s\n", SDL_GetError());
+        return;
+    }
     EXPECT_TRUE(run());
     const u32 wrong = count_wrong();
     (void)printf("  %u triângulos por pixel em 3 desenhos e 2 passes: %u de %u pixels diferentes da CPU\n",

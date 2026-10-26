@@ -17,8 +17,9 @@ ele nada muda para quem usa a SDL.
   SDL_BindGPUFragmentReadWriteStorageTextures() e as propriedades de device
   SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN e
   SDL_PROP_GPU_DEVICE_RASTER_ORDERED_STORAGE_BOOLEAN.
-- Registros: SPIR-V set 2 depois dos storage buffers; DXIL (u[n], space2);
-  MSL [[texture]] depois das texturas de storage só de leitura.
+- Registros: SPIR-V set 2 depois dos storage buffers; DXIL (u[n], space2)
+  com o mesmo n do binding do SPIR-V (é o que o shadercross gera); MSL
+  [[texture]] depois das texturas de storage só de leitura.
 - D3D12: faixa UAV visível ao pixel shader, descritores UAV, estado padrão
   UNORDERED_ACCESS com barreira UAV no fim do passe, ROVsSupported.
 - Vulkan: modo GRAPHICS_STORAGE_READ_WRITE (GENERAL, SHADER_READ|WRITE),
@@ -123,10 +124,10 @@ index b3e9a895..4de802d0 100644
 + *   0. Requires SDL_PROP_GPU_DEVICE_GRAPHICS_STORAGE_READ_WRITE_BOOLEAN. They
 + *   are bound with SDL_BindGPUFragmentReadWriteStorageTextures() and come
 + *   after every read-only resource of the stage: in SPIR-V, set 2 with
-+ *   bindings starting at (num_samplers + num_storage_textures +
-+ *   num_storage_buffers); in DXIL/DXBC, (u[n], space2) starting at u0; in
-+ *   MSL, [[texture]] indices starting at (num_samplers +
-+ *   num_storage_textures).
++ *   bindings starting at n = (num_samplers + num_storage_textures +
++ *   num_storage_buffers); in DXIL/DXBC, (u[n], space2), the same n as the
++ *   SPIR-V binding (what SDL_shadercross emits); in MSL, [[texture]]
++ *   indices starting at (num_samplers + num_storage_textures).
   * - `SDL_PROP_GPU_SHADER_CREATE_NAME_STRING`: a name that can be displayed in
   *   debugging tools.
   *
@@ -520,10 +521,10 @@ index 221a6f3d..08d9fe2c 100644
      }
  
 +    if (fragmentShader->numReadWriteStorageTextures) {
-+        // Fragment Read-Write Storage Textures (UAV or ROV in HLSL)
++        // Fragment Read-Write Storage Textures (UAV or ROV in HLSL): u[n] with the n of the SPIR-V binding
 +        descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
 +        descriptorRange.NumDescriptors = fragmentShader->numReadWriteStorageTextures;
-+        descriptorRange.BaseShaderRegister = 0;
++        descriptorRange.BaseShaderRegister = fragmentShader->num_samplers + fragmentShader->numStorageTextures + fragmentShader->numStorageBuffers;
 +        descriptorRange.RegisterSpace = 2;
 +        descriptorRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 +        descriptorRanges[rangeCount] = descriptorRange;
