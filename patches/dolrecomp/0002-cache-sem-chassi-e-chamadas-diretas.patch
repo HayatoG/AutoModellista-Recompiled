@@ -1,0 +1,163 @@
+diff --git a/src/app/pipeline.c b/src/app/pipeline.c
+index d5cb313..e3c68e2 100644
+--- a/src/app/pipeline.c
++++ b/src/app/pipeline.c
+@@ -2609,6 +2609,51 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
+     FunctionList funcs = {0};
+     SMCAnalysis smc = {0};
+ 
++    // Opt-in (DOLRECOMP_C_DIRECT_CALLS=1): every chunk of every section is known
++    // up front, so a cross-chunk bl can call func_<chunk>() directly.
++    u32* direct_starts = NULL;
++    u32* direct_ends = NULL;
++    {
++        const char* direct = getenv("DOLRECOMP_C_DIRECT_CALLS");
++        u32 total = 0;
++        for (u32 s = 0; s < section_count; s++)
++            if (sections[s].size && sections[s].data)
++                total += (sections[s].size / 4 + chunk_instructions - 1u) / chunk_instructions;
++        if (direct && direct[0] == '1' && total) {
++            direct_starts = (u32*)calloc(total, sizeof(u32));
++            direct_ends = (u32*)calloc(total, sizeof(u32));
++        }
++        if (direct_starts && direct_ends) {
++            u32 n = 0;
++            for (u32 s = 0; s < section_count; s++) {
++                if (!sections[s].size || !sections[s].data)
++                    continue;
++                u32 insts_in_section = sections[s].size / 4;
++                for (u32 start = 0; start < insts_in_section; start += chunk_instructions) {
++                    u32 len = insts_in_section - start;
++                    if (len > chunk_instructions)
++                        len = chunk_instructions;
++                    direct_starts[n] = sections[s].address + start * 4u;
++                    direct_ends[n] = direct_starts[n] + len * 4u;
++                    n++;
++                }
++            }
++            // Sections may not be in address order; insertion sort keeps the pairs together.
++            for (u32 i = 1; i < n; i++) {
++                u32 ks = direct_starts[i], ke = direct_ends[i], j = i;
++                while (j > 0 && direct_starts[j - 1] > ks) {
++                    direct_starts[j] = direct_starts[j - 1];
++                    direct_ends[j] = direct_ends[j - 1];
++                    j--;
++                }
++                direct_starts[j] = ks;
++                direct_ends[j] = ke;
++            }
++            emit_set_chunk_table_bounds(direct_starts, direct_ends, n);
++            printf("direct cross-chunk calls: %u chunks\n", n);
++        }
++    }
++
+     for (u32 s = 0; s < section_count; s++) {
+         const LoadedCodeSection* section = &sections[s];
+         if (section->size == 0 || !section->data)
+diff --git a/src/backend/emitter.c b/src/backend/emitter.c
+index 28db89e..d5cea24 100644
+--- a/src/backend/emitter.c
++++ b/src/backend/emitter.c
+@@ -2,6 +2,7 @@
+ // Copyright (C) 2026 ExpansionPak
+ 
+ #include "emitter.h"
++#include <stdlib.h>
+ #include "backend/c_cfg.h"
+ 
+ static u32 cr_field_shift(u8 crf) {
+@@ -316,11 +317,44 @@ static bool branch_target_is_local(u32 func_start, u32 func_end, u32 target) {
+ // read-only thereafter, so no locking. NULL means "no table": every cross-chunk
+ // branch takes the safe return-to-chassis path.
+ static const u32* g_chunk_starts = NULL;
++static const u32* g_chunk_ends = NULL;
+ static u32 g_chunk_count = 0;
+ 
++// Targets that must keep going through the chassis (the runtime hooks them by
++// pc), from DOLRECOMP_C_NO_DIRECT_CALL: comma-separated hex addresses.
++#define NO_DIRECT_CALL_MAX 64u
++static u32 g_no_direct[NO_DIRECT_CALL_MAX];
++static u32 g_no_direct_count = 0;
++
++static void load_no_direct_calls(void) {
++    g_no_direct_count = 0;
++    const char* list = getenv("DOLRECOMP_C_NO_DIRECT_CALL");
++    while (list && *list && g_no_direct_count < NO_DIRECT_CALL_MAX) {
++        char* end = NULL;
++        unsigned long value = strtoul(list, &end, 16);
++        if (end == list)
++            break;
++        g_no_direct[g_no_direct_count++] = (u32)value;
++        list = *end == ',' ? end + 1 : end;
++    }
++}
++
++static bool direct_call_allowed(u32 target) {
++    for (u32 i = 0; i < g_no_direct_count; i++)
++        if (g_no_direct[i] == target)
++            return false;
++    return true;
++}
++
+ void emit_set_chunk_table(const u32* starts, u32 count) {
++    emit_set_chunk_table_bounds(starts, NULL, count);
++}
++
++void emit_set_chunk_table_bounds(const u32* starts, const u32* ends, u32 count) {
+     g_chunk_starts = count ? starts : NULL;
++    g_chunk_ends = count ? ends : NULL;
+     g_chunk_count = count ? count : 0;
++    load_no_direct_calls();
+ }
+ 
+ // The chunk whose func_<start>() covers `addr`, or 0 if none does. Chunks tile
+@@ -337,7 +371,11 @@ static u32 chunk_start_for(u32 addr) {
+         else
+             hi = mid;
+     }
+-    return lo ? g_chunk_starts[lo - 1u] : 0;
++    if (!lo)
++        return 0;
++    if (g_chunk_ends && addr >= g_chunk_ends[lo - 1u])
++        return 0;
++    return g_chunk_starts[lo - 1u];
+ }
+ 
+ 
+@@ -356,7 +394,7 @@ static bool emit_cross_chunk_call(FILE* out, const PPCInst* inst,
+                                   u32 func_start, u32 func_end) {
+     u32 continuation = inst->address + 4u;
+     u32 target_chunk = chunk_start_for(inst->branch_target);
+-    if (!target_chunk)
++    if (!target_chunk || !direct_call_allowed(inst->branch_target))
+         return false;
+     // Without a local continuation label there is nothing to resume into, so
+     // the call would buy nothing over the plain return.
+@@ -1610,6 +1648,14 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
+     case PPC_OP_DCBST:
+     case PPC_OP_DCBF:
+     case PPC_OP_DCBI:
++        /* Data cache ops change no guest-visible state: stay in the block instead of returning to the chassis on
++           every 32-byte line (DCFlushRange is a dcbf/addi/bdnz loop). The handler still sets ctx->pc to the next
++           instruction and charges the cycles; the counted-loop budget bounds interrupt latency as usual. */
++        fprintf(out, "    ppc_fallback_instruction(ctx, 0x%08Xu, 0x%08Xu);\n",
++                inst->raw, inst->address);
++        fprintf(out, "    if (ctx->exception) return;\n");
++        break;
++
+     case PPC_OP_ICBI:
+         fprintf(out, "    ppc_fallback_instruction(ctx, 0x%08Xu, 0x%08Xu);\n",
+                 inst->raw, inst->address);
+diff --git a/src/backend/emitter.h b/src/backend/emitter.h
+index 39d8f3c..174e395 100644
+--- a/src/backend/emitter.h
++++ b/src/backend/emitter.h
+@@ -22,6 +22,8 @@ void emit_header_for_cpu(FILE* out, DolRecompCPU cpu);
+ // runtime that validates mutable guest code there. Call before worker emission;
+ // passing count == 0 restores the safe return-to-chassis form.
+ void emit_set_chunk_table(const u32* starts, u32 count);
++// Same, with each chunk's end (exclusive) so targets in gaps between sections stay on the chassis path.
++void emit_set_chunk_table_bounds(const u32* starts, const u32* ends, u32 count);
+ 
+ // emit a single recompiled function as C code
+ bool emit_function(FILE* out, const PPCInst* insts, u32 count, u32 func_addr);

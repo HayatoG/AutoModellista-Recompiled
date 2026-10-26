@@ -12,6 +12,9 @@ DOLRECOMP=${DOLRECOMP:-$ROOT/tools/DolRecomp/build/dolrecomp}
 mkdir -p $OUT
 cd $OUT
 rm -rf dol rels
-$DOLRECOMP --gamecube -j8 $DOL dol > dol.log
+# M9 parte 6 (patches/dolrecomp/0002): bl entre trechos chama a função do trecho direto, sem voltar ao chassi. Ficam de
+# fora os alvos que a runtime intercepta por pc (hook_register): OSLink, OSLinkFixed, OSUnlink (am/game.h), o quadro
+# (fn_80051034), main e __DVDInterruptHandler. Só no DOL: os RELs continuam como antes.
+DOLRECOMP_C_DIRECT_CALLS=1 DOLRECOMP_C_NO_DIRECT_CALL=800C5C70,800C5C94,800C5F08,80051034,800719AC,800CD89C   $DOLRECOMP --gamecube -j8 $DOL dol > dol.log
 $DOLRECOMP --gamecube -j8 --rel-base 0x81800000 $RELS_IN rels > rels.log
 echo "dol: $(ls dol/generated/chunks | wc -l) trechos; rels: $(grep -cE 'module [0-9]+:' rels.log) módulos"
