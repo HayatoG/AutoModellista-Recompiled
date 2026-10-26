@@ -172,7 +172,28 @@ u32 gx_vtx_size(u32 vat) {
     return gx_vtx_size_of(s_vtx.vcd_lo, s_vtx.vcd_hi, s_vtx.vat_a[vat], s_vtx.vat_b[vat], s_vtx.vat_c[vat]);
 }
 
+static u32 size_of(u32 lo, u32 hi, u32 a, u32 b, u32 c);
+
+/* M9 parte 6: o mesmo formato volta desenho após desenho; guarda o último (um por thread: a CPU emulada também mede
+ * os desenhos ao ler o fluxo por cima). */
 u32 gx_vtx_size_of(u32 lo, u32 hi, u32 a, u32 b, u32 c) {
+    static _Thread_local u32 s_key[5];
+    static _Thread_local u32 s_size;
+    static _Thread_local bool s_valid;
+    if (s_valid && s_key[0] == lo && s_key[1] == hi && s_key[2] == a && s_key[3] == b && s_key[4] == c) {
+        return s_size;
+    }
+    s_size = size_of(lo, hi, a, b, c);
+    s_key[0] = lo;
+    s_key[1] = hi;
+    s_key[2] = a;
+    s_key[3] = b;
+    s_key[4] = c;
+    s_valid = true;
+    return s_size;
+}
+
+static u32 size_of(u32 lo, u32 hi, u32 a, u32 b, u32 c) {
     u32 size = 0;
     for (u32 bit = 0; bit < 9U; bit++) { /* PosNrmMtxIdx e Tex0..7MtxIdx: 1 byte cada, sempre diretos */
         size += (lo >> bit) & 1U;

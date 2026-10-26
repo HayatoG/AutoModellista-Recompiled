@@ -22,6 +22,7 @@ typedef struct MemCow {
     u32 epoch;                                     /* só a CPU: época atual */
     u32 last[MEM_PAGES];                           /* só a CPU: época da última cópia (ou marca) de cada página */
     _Atomic u32 tag[MEM_COW_MAX_DEPTH][MEM_PAGES]; /* época em que a cópia da vaga foi tirada (0 = nenhuma) */
+    _Atomic u32 newest[MEM_PAGES]; /* M9 parte 6: a maior marca da página entre as vagas (a última tirada) */
     u8 *snap[MEM_COW_MAX_DEPTH];                   /* cópias das páginas: conteúdo do fim da época anterior */
     _Atomic u32 gx_done;                           /* o GX terminou tudo até esta época */
     u32 gx_epoch;                                  /* só o GX: época do que está lendo */
@@ -61,6 +62,7 @@ static __attribute__((noinline, cold)) void cow_touch_slow(u32 page) {
         atomic_fetch_add_explicit(&c->copies, 1U, memory_order_relaxed);
     }
     atomic_store_explicit(&c->tag[slot][page], e, memory_order_release);
+    atomic_store_explicit(&c->newest[page], e, memory_order_release); /* depois da vaga: quem a vê, vê a vaga */
     cow_unlock();
     atomic_thread_fence(memory_order_seq_cst); /* a marca fica visível antes da escrita que vem depois */
 }
@@ -349,6 +351,7 @@ bool mem_cow_start(u32 depth) {
     for (u32 i = 0; i < MEM_COW_MAX_DEPTH; i++) {
         for (u32 p = 0; p < MEM_PAGES; p++) {
             atomic_init(&c->tag[i][p], 0U);
+            atomic_init(&c->newest[p], 0U);
         }
     }
     atomic_init(&c->gx_done, 0U);
@@ -401,6 +404,11 @@ u64 mem_cow_copies(void) {
 /* Vaga com a cópia mais antiga tirada depois da época do GX (o conteúdo da página no fim dessa época), ou -1. */
 static int cow_find(u32 page) {
     const MemCow *c = &s_mem.cow;
+    /* M9 parte 6: o caso comum (nenhuma cópia depois da época do GX) com uma carga só, em vez de duas por vaga. As
+     * épocas só crescem, então a última marca tirada é a maior de todas as vagas. */
+    if (atomic_load_explicit(&c->newest[page], memory_order_acquire) <= c->gx_epoch) {
+        return -1;
+    }
     int best = -1;
     u32 best_tag = 0;
     for (u32 i = 0; i < c->depth; i++) {
@@ -486,7 +494,8 @@ bool mem_gx_unchanged(u32 phys, u32 size) {
 static void cow_gx_mirror(u32 off, u32 n) {
     const MemCow *c = &s_mem.cow;
     const u32 page = off >> MEM_PAGE_SHIFT;
-    for (u32 i = 0; i < c->depth; i++) {
+    const bool any = atomic_load_explicit(&c->newest[page], memory_order_acquire) > c->gx_epoch;
+    for (u32 i = 0; any && i < c->depth; i++) {
         if (atomic_load_explicit(&c->tag[i][page], memory_order_acquire) > c->gx_epoch) {
             memcpy(c->snap[i] + off, s_mem.mem1 + off, n);
         }
