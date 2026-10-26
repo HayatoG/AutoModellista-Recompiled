@@ -98,9 +98,13 @@ void gx_fifo_sync(void);
 void gx_fifo_thread_counters(u64 *syncs, u64 *waits, u64 wait_ns[3]);
 /* Tempo de relógio que a thread do GX passou trabalhando (o resto ela esperou a CPU). */
 u64 gx_fifo_thread_busy_ns(void);
+/* M9 parte 6: tempo da CPU esperando lugar na fila de blocos cheia. */
+u64 gx_fifo_thread_full_ns(void);
 /* Janela com a thread do GX: pede que o GX converta o XFB em RGBA quando chegar a este ponto do fluxo, sem a CPU
  * esperar (false sem a thread: o chamador converte). gx_fifo_xfb_latest copia a última conversão pronta. */
 bool gx_fifo_present_xfb(GuestAddr addr, u32 width, u32 height, u32 stride);
 bool gx_fifo_xfb_latest(u8 *rgba, u32 width, u32 height);
+/* M9 parte 6: quantas conversões do XFB o GX já entregou (muda = a janela tem imagem nova; --frame-trace). */
+u64 gx_fifo_xfb_seq(void);
 
 #endif /* AM_GX_FIFO_H */

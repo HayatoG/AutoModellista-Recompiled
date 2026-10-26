@@ -17,6 +17,7 @@
 #include "am/dsp_hle.h"
 #include "am/exception.h"
 #include "am/exi_card.h"
+#include "am/frame_trace.h"
 #include "am/front.h"
 #include "am/game.h"
 #include "am/game_diag.h"
@@ -103,6 +104,12 @@ static struct {
     u64 audio_frames;
     u64 log_ms;      /* relógio na última linha de progresso (quadros/s de verdade) */
     u64 log_skipped; /* quadros pulados até a última linha de progresso */
+    /* --frame-trace: o que já foi contado até o último quadro e o que se acumula até o próximo */
+    struct {
+        u64 wall_ns, cycles, fields, gx_wait_ns, gx_busy_ns, gpu_wait_us, readbacks, cow, xfb_seq;
+        u64 present_ns, sleep_ns;
+        bool presented, unique, started;
+    } ft;
     u8 rgba[GAME_XFB_WIDTH * GAME_XFB_HEIGHT * 4U];
 } s_run;
 
@@ -224,16 +231,29 @@ static bool capture_frame(CPUState *cpu, bool refresh) {
                            shot->path);
         }
         const u32 shown = vi_xfb_top();
+        bool unique = false;
         if (shown != 0U && refresh) { /* depois de um quadro pulado, o XFB é velho: fica a última imagem */
             if (gx_fifo_present_xfb(shown, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, GAME_XFB_WIDTH * 2U)) {
                 /* thread do GX: ele converte quando chegar aqui; a janela mostra a última pronta, sem esperar */
                 (void)gx_fifo_xfb_latest(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT);
+                if (frame_trace_on()) {
+                    const u64 seq = gx_fifo_xfb_seq();
+                    unique = seq != s_run.ft.xfb_seq;
+                    s_run.ft.xfb_seq = seq;
+                }
             } else {
                 xfb_to_rgba(shown);
+                unique = true;
             }
         }
+        const u64 t0 = frame_trace_on() ? platform_ticks_ns() : 0U;
         const PlatformWindowResult r =
             platform_window_present(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, shot != NULL ? window_png : NULL);
+        if (frame_trace_on()) {
+            s_run.ft.present_ns += platform_ticks_ns() - t0;
+            s_run.ft.presented = true;
+            s_run.ft.unique = s_run.ft.unique || unique;
+        }
         if (r == PLATFORM_WINDOW_ERROR) {
             am_fatal("janela: %s", platform_last_error());
         }
@@ -281,6 +301,7 @@ static s64 pace(void) {
     const u64 wall_ns = now - s_run.pace_wall0;
     if (emu_ns > wall_ns + GAME_RUN_PACE_AHEAD_NS) {
         platform_sleep_ns(emu_ns - wall_ns - GAME_RUN_PACE_AHEAD_NS);
+        s_run.ft.sleep_ns += emu_ns - wall_ns - GAME_RUN_PACE_AHEAD_NS;
         return 0;
     }
     if (wall_ns > emu_ns + GAME_RUN_PACE_BEHIND_NS) {
@@ -331,6 +352,55 @@ static void update_pad(void) {
     si_set_pad(&pad);
 }
 
+/* --frame-trace: uma linha para o intervalo desde a entrada do quadro anterior (o que ele fez na entrada, ritmo e
+ * janela, entra junto). */
+static void trace_frame(const CPUState *cpu) {
+    u64 syncs = 0;
+    u64 waits = 0;
+    u64 wait_ns[3] = {0};
+    if (gx_fifo_threaded()) {
+        gx_fifo_thread_counters(&syncs, &waits, wait_ns);
+    }
+    u64 readbacks = 0;
+    const u64 gpu_us = s_run.config.gpu ? platform_gpu_wait_us(&readbacks) : 0U;
+    const u64 now = platform_ticks_ns();
+    const u64 cycles = timebase_cycles(cpu);
+    const u64 fields = vi_field_count();
+    const u64 gx_wait = wait_ns[0] + wait_ns[1] + wait_ns[2] + (gx_fifo_threaded() ? gx_fifo_thread_full_ns() : 0U);
+    const u64 gx_busy = gx_fifo_threaded() ? gx_fifo_thread_busy_ns() : 0U;
+    const u64 cow = mem_cow_copies();
+    if (s_run.ft.started && frame_trace_wants(s_run.frames - 1U)) {
+        const FrameTraceRow row = {.frame = s_run.frames - 1U,
+                                   .wall_ns = now - s_run.ft.wall_ns,
+                                   .emu_cycles = cycles - s_run.ft.cycles,
+                                   .vi_fields = (u32)(fields - s_run.ft.fields),
+                                   .skipped = s_run.skipping,
+                                   .presented = s_run.ft.presented,
+                                   .unique = s_run.ft.unique,
+                                   .present_ns = s_run.ft.present_ns,
+                                   .pace_sleep_ns = s_run.ft.sleep_ns,
+                                   .gx_wait_ns = gx_wait - s_run.ft.gx_wait_ns,
+                                   .gx_busy_ns = gx_busy - s_run.ft.gx_busy_ns,
+                                   .gpu_wait_us = gpu_us - s_run.ft.gpu_wait_us,
+                                   .readbacks = (u32)(readbacks - s_run.ft.readbacks),
+                                   .cow_copies = (u32)(cow - s_run.ft.cow)};
+        frame_trace_add(&row);
+    }
+    s_run.ft.started = true;
+    s_run.ft.wall_ns = now;
+    s_run.ft.cycles = cycles;
+    s_run.ft.fields = fields;
+    s_run.ft.gx_wait_ns = gx_wait;
+    s_run.ft.gx_busy_ns = gx_busy;
+    s_run.ft.gpu_wait_us = gpu_us;
+    s_run.ft.readbacks = readbacks;
+    s_run.ft.cow = cow;
+    s_run.ft.present_ns = 0;
+    s_run.ft.sleep_ns = 0;
+    s_run.ft.presented = false;
+    s_run.ft.unique = false;
+}
+
 /* fn_80051034 chamada pelo laço de fn_8004838C = um quadro. Para depois de `frames` quadros completos. */
 static HookAction on_frame(CPUState *cpu, void *user) {
     (void)user;
@@ -342,6 +412,9 @@ static HookAction on_frame(CPUState *cpu, void *user) {
         return HOOK_STOP;
     }
     s_run.frames++;
+    if (frame_trace_on()) {
+        trace_frame(cpu);
+    }
     s_run.fields_at_frame = vi_field_count();
     if (s_run.timebase != NULL) {
         (void)fprintf(s_run.timebase, "%" PRIu64 " %" PRIu64 "\n", s_run.frames, timebase_guest_last());
@@ -526,6 +599,10 @@ bool game_run_init(const GameRunConfig *config) {
     if (!init_scripts(config) || !init_video(&s_run.config) || !init_audio(config)) {
         return false;
     }
+    if (config->frame_trace != NULL && !frame_trace_open(config->frame_trace)) {
+        AM_LOG_ERROR("--frame-trace: esperado [q0:q1:]arquivo.csv, veio %s", config->frame_trace);
+        return false;
+    }
     const DiscResult d = disc_open(config->disc_root);
     if (d != DISC_OK) {
         AM_LOG_ERROR("disco em %s: %s", config->disc_root, disc_result_name(d));
@@ -562,6 +639,7 @@ void game_run_shutdown(void) {
     }
     di_set_read_observer(NULL);
     game_diag_shutdown();
+    frame_trace_close();
     if (s_run.timebase != NULL) {
         (void)fclose(s_run.timebase);
         s_run.timebase = NULL;

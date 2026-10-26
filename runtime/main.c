@@ -42,6 +42,8 @@
  *   --timebase-out <arq>       M7: "quadro timebase" na entrada de cada quadro (o mesmo de dolphin_trace.py)
  *   --profile <q0>:<q1>:<arq>  M8: perfil de ciclos emulados por trecho e por thread do quadro q0 ao q1
  *   --probes <q0>:<hex>,...    M8: a partir do quadro q0, entrada nesses endereços no --timebase-out
+ *   --frame-trace [q0:q1:]<arq.csv>  M9 parte 6: uma linha por quadro (relógio, CPU, GX, GPU, janela, imagens novas)
+ *                              gravada no fim, e relatório com P50/P95/P99 em <arq.csv>.txt (am/frame_trace.h)
  *   --frameskip on|off         M7: com --realtime, não desenha até 4 quadros seguidos quando a emulação atrasa
  *                              (padrão on; o jogo segue no ritmo certo e a janela mostra a última imagem)
  *   --gx-thread on|off         M8: o GX numa thread própria, como o "dual core" do Dolphin (padrão on com
@@ -131,6 +133,7 @@ typedef struct Options {
     const char *timebase_out;
     const char *profile;
     const char *probes;
+    const char *frame_trace;
     const char *memcard;
     bool gfx_off;
     bool gfx_gpu;
@@ -271,6 +274,8 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->profile = value;
     } else if (strcmp(name, "--probes") == 0) {
         o->probes = value;
+    } else if (strcmp(name, "--frame-trace") == 0) {
+        o->frame_trace = value;
     } else if (strcmp(name, "--gx-depth") == 0 && parse_u64(value, &n) && n <= 6U) {
         o->gx_depth = n;
     } else if (strcmp(name, "--memcard") == 0) {
@@ -580,6 +585,7 @@ static GameRunConfig run_config(const Options *o, RunPaths *p, Settings *front) 
                            .timebase_out = log_path(o->timebase_out, p->timebase, sizeof(p->timebase)),
                            .profile = o->profile,
                            .probes = o->probes,
+                           .frame_trace = o->frame_trace,
                            .front = front};
 }
 

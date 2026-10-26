@@ -382,12 +382,14 @@ static struct {
     u32 done_epoch; /* com a trava: o GX terminou tudo até esta época */
     u8 *xfb_front;  /* com a trava: último XFB pronto para a janela, em RGBA */
     u8 *xfb_back;   /* só o GX */
+    u64 xfb_seq;    /* com a trava: XFBs entregues à janela */
     u32 xfb_bytes;
     bool xfb_ready;
     u64 syncs;
     u64 waits;      /* sincronizações em que o GX ainda tinha trabalho */
     u64 wait_ns[3]; /* tempo de relógio esperando, por motivo (DrawDone, token, leitura de fora) */
     u64 busy_ns;    /* só o GX: tempo de relógio trabalhando nos blocos */
+    u64 full_ns;    /* com a trava: a CPU esperando lugar na fila cheia (M9 parte 6, --frame-trace) */
     u32 reason;
     GxScan scan;
     u32 vcd_lo;
@@ -436,6 +438,7 @@ static int gx_thread_main(void *user) {
             s_q.xfb_front = s_q.xfb_back;
             s_q.xfb_back = t;
             s_q.xfb_ready = true;
+            s_q.xfb_seq++;
         }
         if (b->closes) {
             s_q.done_epoch = b->epoch;
@@ -455,8 +458,12 @@ static void queue_publish(void) {
     const bool skip = cur->skip;
     cur->epoch = s_q.epoch;
     s_q.api.lock(s_q.lock);
-    while (s_q.count >= GX_Q_BLOCKS - 1U) {
-        s_q.api.cond_wait(s_q.done_cond, s_q.lock);
+    if (s_q.count >= GX_Q_BLOCKS - 1U) {
+        const u64 t0 = s_q.api.ticks_ns();
+        while (s_q.count >= GX_Q_BLOCKS - 1U) {
+            s_q.api.cond_wait(s_q.done_cond, s_q.lock);
+        }
+        s_q.full_ns += s_q.api.ticks_ns() - t0;
     }
     s_q.count++;
     s_q.api.cond_signal(s_q.wake);
@@ -525,6 +532,13 @@ void gx_fifo_sync(void) {
     }
     s_q.reason = 2U;
     s_q.api.unlock(s_q.lock);
+}
+
+u64 gx_fifo_thread_full_ns(void) {
+    s_q.api.lock(s_q.lock);
+    const u64 ns = s_q.full_ns;
+    s_q.api.unlock(s_q.lock);
+    return ns;
 }
 
 u64 gx_fifo_thread_busy_ns(void) {
@@ -807,6 +821,16 @@ bool gx_fifo_present_xfb(GuestAddr addr, u32 width, u32 height, u32 stride) {
     cur->xfb_stride = stride;
     queue_publish();
     return true;
+}
+
+u64 gx_fifo_xfb_seq(void) {
+    if (!s_q.on) {
+        return 0;
+    }
+    s_q.api.lock(s_q.lock);
+    const u64 seq = s_q.xfb_seq;
+    s_q.api.unlock(s_q.lock);
+    return seq;
 }
 
 bool gx_fifo_xfb_latest(u8 *rgba, u32 width, u32 height) {
