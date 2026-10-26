@@ -56,17 +56,34 @@ static void flush(void) {
 
 /* Qualquer endereço do bloco de 0xCC008000 é o pipe; o dado entra em big-endian. */
 void gather_pipe_write(u32 offset, u64 value, u8 size) {
-    (void)offset;
-    if (size != 1U && size != 2U && size != 4U && size != 8U) {
-        bus_unhandled_write(BUS_CPU_ADDR(GATHER_PIPE_BASE + offset), value, size);
+    u8 *dst = &s_gp.buf[s_gp.count];
+    switch (size) { /* M9 parte 6: troca de bytes em vez do laço byte a byte */
+    case 1U:
+        dst[0] = (u8)value;
+        break;
+    case 2U: {
+        const u16 v = __builtin_bswap16((u16)value);
+        memcpy(dst, &v, sizeof(v));
+        break;
     }
-    for (u32 i = size; i > 0U; i--) {
-        s_gp.buf[s_gp.count + i - 1U] = (u8)value;
-        value >>= 8;
+    case 4U: {
+        const u32 v = __builtin_bswap32((u32)value);
+        memcpy(dst, &v, sizeof(v));
+        break;
+    }
+    case 8U: {
+        const u64 v = __builtin_bswap64(value);
+        memcpy(dst, &v, sizeof(v));
+        break;
+    }
+    default:
+        bus_unhandled_write(BUS_CPU_ADDR(GATHER_PIPE_BASE + offset), value, size);
     }
     s_gp.count += size;
     s_gp.total += size;
-    flush();
+    if (s_gp.count >= GATHER_PIPE_SIZE) {
+        flush();
+    }
 }
 
 u64 gather_pipe_read(u32 offset, u8 size) {

@@ -52,6 +52,7 @@ endif()
 # M9: LTO no Release. O C gerado chama mem_read*/mem_write* (core/mem.c) a cada load e store; sem LTO cada um é uma
 # chamada entre arquivos. Com ele a corrida sem GX vai de ~49 para ~69 quadros/s no M4 (docs/M9_PARTE4_DESEMPENHO.md).
 option(AM_LTO "LTO (otimização entre arquivos) nos builds Release" ON)
+option(AM_FP_FAST "Ponto flutuante do C gerado em linha no caso comum (runtime/include/am/fp_fast.h)" ON)
 if(AM_LTO AND NOT CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE)
   include(CheckIPOSupported)
   check_ipo_supported(RESULT am_ipo_ok OUTPUT am_ipo_msg LANGUAGES C CXX)

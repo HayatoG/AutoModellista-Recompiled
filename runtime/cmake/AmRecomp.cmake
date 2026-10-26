@@ -83,6 +83,10 @@ function(am_add_recomp_target target generated_dir)
   target_link_libraries(${target} PUBLIC am_ppc)
   # Warnings desligados e -O1: o gerado é ~146 MB de C que não vamos ler (PADROES_DE_CODIGO.md §1).
   target_compile_options(${target} PRIVATE ${AM_GENERATED_FLAGS})
+  # M9 parte 6: ponto flutuante em linha no caso comum, com o mesmo resultado do cpu.c (am/fp_fast.h).
+  if(AM_FP_FAST)
+    target_compile_definitions(${target} PRIVATE DOLRECOMP_CPU_HEADER="am/fp_fast.h")
+  endif()
   list(LENGTH AM_RECOMP_MODULE_IDS module_count)
   message(STATUS "C gerado: ${module_count} módulos em ${generated_dir}")
 endfunction()

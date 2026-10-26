@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "am/bus.h"
+#include "am/gather_pipe.h"
 #include "am/guest_cpu.h"
 #include "am/log.h"
 #include "am/rel_map.h"
@@ -46,8 +47,9 @@ static void cow_unlock(void) {
 }
 
 /* Primeira escrita da CPU numa página nesta época: guarda o conteúdo de antes para o GX, que ainda pode estar lendo
- * épocas anteriores, e só então deixa a escrita acontecer. */
-static void cow_touch_slow(u32 page) {
+ * épocas anteriores, e só então deixa a escrita acontecer. Fora de linha (M9 parte 6): em linha, cada mem_write
+ * salvava 8 registradores na entrada por causa deste caminho raro. */
+static __attribute__((noinline, cold)) void cow_touch_slow(u32 page) {
     MemCow *c = &s_mem.cow;
     const u32 e = c->epoch;
     const u32 slot = e % c->depth;
@@ -128,6 +130,16 @@ u8 *mem_mem1_data(void) {
     return s_mem.mem1;
 }
 
+/* Janela virtual dos RELs, fora da linha: com o laço do rel_map_resolve dentro, cada mem_read/mem_write ficava
+ * grande demais para o ThinLTO importar no C gerado, e todo load e store virava uma chamada (no Windows, com o
+ * llvm-mingw). */
+static __attribute__((noinline, cold)) u8 *mem1_resolve_rel(u32 phys, u32 size) {
+    if (phys < REL_MAP_PHYS_START || phys >= REL_MAP_PHYS_END || !rel_map_resolve(phys, size, &phys)) {
+        return NULL;
+    }
+    return s_mem.mem1 + phys;
+}
+
 /* Traduz endereço de CPU para MEM1. 0x80xxxxxx e 0xC0xxxxxx são o mesmo bloco físico (BAT padrão do SDK). Físico
  * entre 24 e 64 MiB é a janela virtual dos RELs (core/rel_map.c). O resto (MMIO em 0xCC..., cache bloqueado em
  * 0xE0...) devolve NULL e vai ao barramento. */
@@ -135,11 +147,9 @@ static inline __attribute__((always_inline)) u8 *mem1_resolve(GuestAddr addr, u3
     if ((addr >> 30) < 2U) {
         return NULL;
     }
-    u32 phys = addr & 0x3FFFFFFFU;
+    const u32 phys = addr & 0x3FFFFFFFU;
     if (phys > MEM_MEM1_SIZE - size) {
-        if (phys < REL_MAP_PHYS_START || phys >= REL_MAP_PHYS_END || !rel_map_resolve(phys, size, &phys)) {
-            return NULL;
-        }
+        return mem1_resolve_rel(phys, size);
     }
     return s_mem.mem1 + phys;
 }
@@ -214,7 +224,8 @@ static inline __attribute__((always_inline)) u64 read_be(GuestAddr addr, u8 size
     return load_be(p, size);
 }
 
-static inline __attribute__((always_inline)) void write_be(CPUState *cpu, GuestAddr addr, u64 value, u8 size) {
+/* Escrita completa: MMIO, janela dos RELs, cópia na escrita e escrita que cruza página. */
+static __attribute__((noinline)) void write_be_full(CPUState *cpu, GuestAddr addr, u64 value, u8 size) {
     u8 *p = mem1_resolve(addr, size);
     if (p == NULL) {
         bus_write(addr, value, size);
@@ -230,6 +241,28 @@ static inline __attribute__((always_inline)) void write_be(CPUState *cpu, GuestA
     }
     store_be(p, size, value);
     s_mem.page_gen[off >> MEM_PAGE_SHIFT]++;
+}
+
+static inline __attribute__((always_inline)) void write_be(CPUState *cpu, GuestAddr addr, u64 value, u8 size) {
+    /* M9 parte 6: o gather pipe antes da MEM1 e da janela dos RELs (o mesmo atalho do bus_write, mais cedo). */
+    if ((addr & 0xFFFFF000U) == (0xC0000000U | GATHER_PIPE_BASE)) {
+        gather_pipe_write(addr & 0xFFFU, value, size);
+        return;
+    }
+    /* O caso comum sem nenhuma chamada no meio (e sem registradores para salvar na entrada): MEM1 direta, numa
+     * página só, já marcada nesta época ou sem cópia na escrita. É o write_be_full com o cow_touch sem efeito. */
+    if ((addr >> 30) >= 2U) {
+        const u32 phys = addr & 0x3FFFFFFFU;
+        const u32 page = phys >> MEM_PAGE_SHIFT;
+        if (phys <= MEM_MEM1_SIZE - size && ((phys + size - 1U) >> MEM_PAGE_SHIFT) == page &&
+            (!s_mem.cow.on || s_mem.cow.last[page] == s_mem.cow.epoch)) {
+            clear_reservation(cpu, addr);
+            store_be(s_mem.mem1 + phys, size, value);
+            s_mem.page_gen[page]++;
+            return;
+        }
+    }
+    write_be_full(cpu, addr, value, size);
 }
 
 u8 mem_read8(CPUState *cpu, GuestAddr addr) {
