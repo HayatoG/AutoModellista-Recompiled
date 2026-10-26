@@ -392,6 +392,13 @@ static struct {
     u64 full_ns;     /* com a trava: a CPU esperando lugar na fila cheia (M9 parte 6, --frame-trace) */
     u32 peak_lag;    /* 60 FPS: só a CPU escreve; maior atraso do GX em épocas desde a última leitura */
     u32 peak_blocks; /* o mesmo para os blocos publicados ainda não terminados */
+    /* 60 FPS (--frame-trace): custo da thread da CPU no caminho do GX, sem as esperas; só ela escreve e lê */
+    bool timing;
+    u32 feed_phase;      /* gx_fifo_feed chega a ~18 mil vezes por quadro: só 1 em GX_FEED_SAMPLE é medida */
+    u64 clock_floor;     /* custo de uma leitura do relógio, descontado de cada medida */
+    u64 feed_ns;         /* estimativa: soma das medidas x GX_FEED_SAMPLE */
+    u64 feed_calls;      /* exata */
+    u64 dl_ns, dl_calls; /* exatos (poucas chamadas) */
     u32 reason;
     GxScan scan;
     u32 vcd_lo;
@@ -406,6 +413,34 @@ static struct {
 
 bool gx_fifo_threaded(void) {
     return s_q.on;
+}
+
+/* Tempo que a thread da CPU já passou esperando o GX (todos os motivos e a fila cheia): sai do custo medido. */
+static u64 cpu_waited(void) {
+    return s_q.wait_ns[0] + s_q.wait_ns[1] + s_q.wait_ns[2] + s_q.full_ns;
+}
+
+/* Medida sem as esperas e sem o custo de ler o relógio. */
+static u64 net_of(u64 gross, u64 waited) {
+    const u64 spent = gross > waited ? gross - waited : 0U;
+    return spent > s_q.clock_floor ? spent - s_q.clock_floor : 0U;
+}
+
+#define GX_FEED_SAMPLE 31U /* primo: não combina com o ritmo regular das rajadas */
+#define GX_FEED_OUTLIER_NS                                                                                             \
+    50000U /* amostra maior que isto é a thread sem CPU (o SO a tirou): descartada, não trabalho */
+
+void gx_fifo_cpu_timing(bool on, u64 clock_floor_ns) {
+    s_q.timing = on && s_q.on;
+    s_q.clock_floor = clock_floor_ns;
+    s_q.feed_phase = 0;
+}
+
+void gx_fifo_cpu_cost(u64 *feed_ns, u64 *feed_calls, u64 *dl_ns, u64 *dl_calls) {
+    *feed_ns = s_q.feed_ns;
+    *feed_calls = s_q.feed_calls;
+    *dl_ns = s_q.dl_ns;
+    *dl_calls = s_q.dl_calls;
 }
 
 static int gx_thread_main(void *user) {
@@ -690,6 +725,9 @@ static void scan_display_list(u32 addr, u32 size) {
     memset(&dl, 0, sizeof(dl));
     dl.phase = GX_PHASE_OPCODE;
     dl.in_display_list = true;
+    const bool timed = s_q.timing;
+    const u64 t0 = timed ? s_q.api.ticks_ns() : 0U;
+    const u64 w0 = timed ? cpu_waited() : 0U;
     const GuestAddr base = MEM_CACHED_BASE | (addr & 0x03FFFFFFU);
     u8 chunk[4096];
     u32 have = 0; /* bytes de chunk válidos, a partir de chunk_at */
@@ -712,6 +750,10 @@ static void scan_display_list(u32 addr, u32 size) {
         }
         scan_byte(&dl, chunk[off - chunk_at]);
         off++;
+    }
+    if (timed) {
+        s_q.dl_ns += net_of(s_q.api.ticks_ns() - t0, cpu_waited() - w0);
+        s_q.dl_calls++;
     }
 }
 
@@ -737,8 +779,26 @@ void gx_fifo_feed(const u8 *data, u32 size) {
         feed_direct(data, size);
         return;
     }
-    queue_push(data, size); /* antes do scan: um evento no meio do bloco espera o GX ler até ele */
+    const bool sample = s_q.timing && ++s_q.feed_phase >= GX_FEED_SAMPLE;
+    if (s_q.timing) {
+        s_q.feed_calls++;
+    }
+    if (!sample) {
+        queue_push(data, size); /* antes do scan: um evento no meio do bloco espera o GX ler até ele */
+        scan_feed(data, size);
+        return;
+    }
+    s_q.feed_phase = 0;
+    const u64 t0 = s_q.api.ticks_ns();
+    const u64 w0 = cpu_waited();
+    const u64 d0 = s_q.dl_ns;
+    queue_push(data, size);
     scan_feed(data, size);
+    /* as display lists chamadas no meio já foram contadas à parte (dl_ns): saem daqui */
+    const u64 gross = s_q.api.ticks_ns() - t0;
+    const u64 waited = (cpu_waited() - w0) + (s_q.dl_ns - d0);
+    const u64 net = net_of(gross, waited);
+    s_q.feed_ns += net <= GX_FEED_OUTLIER_NS ? net * GX_FEED_SAMPLE : 0U;
 }
 
 bool gx_fifo_thread_start(const GxFifoThreadApi *api, u32 depth) {

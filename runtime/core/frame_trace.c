@@ -129,6 +129,45 @@ static u64 f_wait_read(const FrameTraceRow *r) {
 static u64 f_wait_full(const FrameTraceRow *r) {
     return r->wait_full_ns;
 }
+static u64 f_cow(const FrameTraceRow *r) {
+    return r->cow_ns;
+}
+static u64 f_feed(const FrameTraceRow *r) {
+    return r->feed_ns;
+}
+static u64 f_dl(const FrameTraceRow *r) {
+    return r->dl_scan_ns;
+}
+
+/* Médias por quadro do que a CPU gastou no caminho do GX, e o custo por chamada (a soma das três é o que a thread da
+ * CPU paga por ter o GX ligado, fora as esperas). Nada a mostrar sem a thread do GX. */
+static void report_cpu_cost(FILE *out) {
+    u64 ns[3] = {0};
+    u64 calls[3] = {0};
+    for (size_t i = 0; i < s_ft.count; i++) {
+        const FrameTraceRow *r = &s_ft.rows[i];
+        ns[0] += r->cow_ns;
+        ns[1] += r->feed_ns;
+        ns[2] += r->dl_scan_ns;
+        calls[0] += r->cow_calls;
+        calls[1] += r->feed_calls;
+        calls[2] += r->dl_calls;
+    }
+    if (ns[0] + ns[1] + ns[2] == 0U) {
+        return;
+    }
+    static const char *const names[3] = {"cópia na escrita", "leitura do fluxo", "scan de display lists"};
+    const double frames = (double)s_ft.count;
+    (void)fprintf(out, "CPU no caminho do GX, média por quadro (sem esperas):\n");
+    for (size_t k = 0; k < 3U; k++) {
+        (void)fprintf(out, "  %-22s %6.2f ms, %8.0f chamadas, %6.0f ns cada\n", names[k], (double)ns[k] / frames / 1e6,
+                      (double)calls[k] / frames, calls[k] != 0U ? (double)ns[k] / (double)calls[k] : 0.0);
+    }
+    (void)fprintf(out, "  %-22s %6.2f ms\n", "total", (double)(ns[0] + ns[1] + ns[2]) / frames / 1e6);
+    (void)fprintf(out,
+                  "  (chamadas: contagem exata; a leitura do fluxo é estimada medindo 1 chamada em cada poucas, e\n"
+                  "   o custo de ler o relógio, de resolução ~100 ns no Windows, já está descontado)\n");
+}
 
 /* Contagens (não tempos): épocas de atraso e blocos em voo. */
 static void report_count(FILE *out, const char *name, bool lag, u64 *scratch) {
@@ -168,18 +207,19 @@ static void write_csv(void) {
                      "espera_gx_ns,gx_ocupado_ns,espera_gpu_us,leituras_efb,paginas_copiadas,"
                      "espera_draw_ns,espera_token_ns,espera_leitura_ns,espera_fila_ns,atraso_gx_epocas,fila_blocos,"
                      "mostrado,intervalo_apres_ns,gx_desenhos,gx_triangulos,gx_texturas,gx_recomecos_texels,"
-                     "gx_texels\n");
+                     "gx_texels,cow_ns,cow_chamadas,feed_ns,feed_chamadas,dl_scan_ns,dl_chamadas\n");
     for (size_t i = 0; i < s_ft.count; i++) {
         const FrameTraceRow *r = &s_ft.rows[i];
         (void)fprintf(f,
                       "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%d,%d,%d,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
                       ",%" PRIu64 ",%u,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%u,%d,%" PRIu64
-                      ",%u,%u,%u,%u,%" PRIu64 "\n",
+                      ",%u,%u,%u,%u,%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%u,%" PRIu64 ",%u\n",
                       r->frame, r->wall_ns, r->emu_cycles, r->vi_fields, r->skipped ? 1 : 0, r->presented ? 1 : 0,
                       r->unique ? 1 : 0, r->present_ns, r->pace_sleep_ns, r->gx_wait_ns, r->gx_busy_ns, r->gpu_wait_us,
                       r->readbacks, r->cow_copies, r->wait_draw_ns, r->wait_token_ns, r->wait_read_ns, r->wait_full_ns,
                       r->gx_lag_max, r->queue_max, r->shown ? 1 : 0, r->present_gap_ns, r->gx_draws, r->gx_triangles,
-                      r->gx_tex_uploads, r->gx_arena_resets, r->gx_texels);
+                      r->gx_tex_uploads, r->gx_arena_resets, r->gx_texels, r->cow_ns, r->cow_calls, r->feed_ns,
+                      r->feed_calls, r->dl_scan_ns, r->dl_calls);
     }
     (void)fclose(f);
 }
@@ -251,6 +291,10 @@ static void write_report(void) {
     report_count(out, "atraso do GX (épocas)", true, scratch);
     report_count(out, "blocos em voo na fila", false, scratch);
     report_gap(out, scratch);
+    report_field(out, "CPU: cópia na escrita", f_cow, scratch);
+    report_field(out, "CPU: leitura do fluxo", f_feed, scratch);
+    report_field(out, "CPU: scan de display lists", f_dl, scratch);
+    report_cpu_cost(out);
     (void)fprintf(out, "\nPiores quadros (relógio):\n");
     for (size_t i = 0; i < s_ft.count; i++) {
         scratch[i] = (s_ft.rows[i].wall_ns << 20) | (u64)(i & 0xFFFFFU);

@@ -57,6 +57,10 @@ void mem_cow_gx_done(u32 epoch);  /* gx: terminou tudo até `epoch` (inclusive) 
 void mem_cow_gx_epoch(u32 epoch); /* gx: época dos comandos que vai executar */
 u32 mem_cow_gx_current(void);     /* gx: a época de mem_cow_gx_epoch (0 desligada) */
 u64 mem_cow_copies(void);         /* páginas copiadas até agora */
+/* 60 FPS (--frame-trace): com um relógio, mede o tempo da thread da CPU na primeira escrita de cada página por época
+ * (cópia, spinlock e barreira). NULL desliga. Só a thread da CPU chama. */
+void mem_cow_set_clock(u64 (*ticks_ns)(void), u64 floor_ns); /* floor_ns: custo de uma leitura do relógio, descontado */
+void mem_cow_cpu_cost(u64 *ns, u64 *calls);
 /* gx: leitura na visão da época (endereço de CPU; fora da MEM1 vai ao barramento) */
 void mem_gx_read(GuestAddr addr, u8 *dst, u32 size);
 u8 mem_gx_read8(GuestAddr addr);

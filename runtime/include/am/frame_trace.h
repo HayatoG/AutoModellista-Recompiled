@@ -35,6 +35,11 @@ typedef struct FrameTraceRow {
      * os picos aparecem deslocados do quadro em que o jogo os pediu. */
     u32 gx_draws, gx_triangles, gx_tex_uploads, gx_arena_resets;
     u64 gx_texels;
+    /* O que a thread da CPU emulada gastou no caminho do GX, sem as esperas (0 sem a thread do GX): a primeira escrita
+     * de cada página por época (cópia na escrita), a leitura por cima dos bytes diretos do fluxo (queue_push e scan) e
+     * a leitura das display lists. As três medidas não se sobrepõem. */
+    u64 cow_ns, feed_ns, dl_scan_ns;
+    u32 cow_calls, feed_calls, dl_calls;
 } FrameTraceRow;
 
 /* spec = "arq.csv" (todos os quadros) ou "q0:q1:arq.csv" (só q0..q1). */

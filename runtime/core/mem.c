@@ -23,11 +23,15 @@ typedef struct MemCow {
     u32 last[MEM_PAGES];                           /* só a CPU: época da última cópia (ou marca) de cada página */
     _Atomic u32 tag[MEM_COW_MAX_DEPTH][MEM_PAGES]; /* época em que a cópia da vaga foi tirada (0 = nenhuma) */
     _Atomic u32 newest[MEM_PAGES]; /* M9 parte 6: a maior marca da página entre as vagas (a última tirada) */
-    u8 *snap[MEM_COW_MAX_DEPTH];                   /* cópias das páginas: conteúdo do fim da época anterior */
-    _Atomic u32 gx_done;                           /* o GX terminou tudo até esta época */
-    u32 gx_epoch;                                  /* só o GX: época do que está lendo */
-    atomic_flag lock;                              /* cópia da CPU x escrita do GX na mesma página */
+    u8 *snap[MEM_COW_MAX_DEPTH];   /* cópias das páginas: conteúdo do fim da época anterior */
+    _Atomic u32 gx_done;           /* o GX terminou tudo até esta época */
+    u32 gx_epoch;                  /* só o GX: época do que está lendo */
+    atomic_flag lock;              /* cópia da CPU x escrita do GX na mesma página */
     _Atomic u64 copies;
+    u64 (*clock)(void); /* só a CPU: relógio da medição de cow_touch_slow (--frame-trace); NULL = sem medir */
+    u64 clock_floor;    /* só a CPU: custo de uma leitura do relógio, descontado de cada medida */
+    u64 slow_ns;        /* só a CPU: tempo acumulado em cow_touch_slow */
+    u64 slow_calls;
 } MemCow;
 
 static struct {
@@ -52,6 +56,7 @@ static void cow_unlock(void) {
  * salvava 8 registradores na entrada por causa deste caminho raro. */
 static __attribute__((noinline, cold)) void cow_touch_slow(u32 page) {
     MemCow *c = &s_mem.cow;
+    const u64 t0 = c->clock != NULL ? c->clock() : 0U;
     const u32 e = c->epoch;
     const u32 slot = e % c->depth;
     c->last[page] = e;
@@ -65,6 +70,11 @@ static __attribute__((noinline, cold)) void cow_touch_slow(u32 page) {
     atomic_store_explicit(&c->newest[page], e, memory_order_release); /* depois da vaga: quem a vê, vê a vaga */
     cow_unlock();
     atomic_thread_fence(memory_order_seq_cst); /* a marca fica visível antes da escrita que vem depois */
+    if (c->clock != NULL) {
+        const u64 spent = c->clock() - t0;
+        c->slow_ns += spent > c->clock_floor ? spent - c->clock_floor : 0U;
+        c->slow_calls++;
+    }
 }
 
 static inline void cow_touch(u32 page) {
@@ -399,6 +409,16 @@ u32 mem_cow_gx_current(void) {
 
 u64 mem_cow_copies(void) {
     return atomic_load_explicit(&s_mem.cow.copies, memory_order_relaxed);
+}
+
+void mem_cow_set_clock(u64 (*ticks_ns)(void), u64 floor_ns) {
+    s_mem.cow.clock = ticks_ns;
+    s_mem.cow.clock_floor = floor_ns;
+}
+
+void mem_cow_cpu_cost(u64 *ns, u64 *calls) {
+    *ns = s_mem.cow.slow_ns;
+    *calls = s_mem.cow.slow_calls;
 }
 
 /* Vaga com a cópia mais antiga tirada depois da época do GX (o conteúdo da página no fim dessa época), ou -1. */

@@ -103,6 +103,11 @@ u64 gx_fifo_thread_full_ns(void);
 /* 60 FPS (--frame-trace): maior atraso do GX em épocas (no instante de cada evento, antes de a CPU esperar) e maior
  * número de blocos em voo desde a última chamada; zera os dois. Só a thread da CPU chama. */
 void gx_fifo_thread_take_peaks(u32 *lag, u32 *blocks);
+/* 60 FPS (--frame-trace): quanto a thread da CPU gasta no caminho do GX, sem as esperas. Liga depois de
+ * gx_fifo_thread_start (sem a thread não faz nada). feed = queue_push + leitura por cima dos bytes diretos; dl = só a
+ * leitura das display lists (as duas medidas não se sobrepõem). Totais desde que ligou; só a thread da CPU chama. */
+void gx_fifo_cpu_timing(bool on, u64 clock_floor_ns);
+void gx_fifo_cpu_cost(u64 *feed_ns, u64 *feed_calls, u64 *dl_ns, u64 *dl_calls);
 /* Janela com a thread do GX: pede que o GX converta o XFB em RGBA quando chegar a este ponto do fluxo, sem a CPU
  * esperar (false sem a thread: o chamador converte). gx_fifo_xfb_latest copia a última conversão pronta. */
 bool gx_fifo_present_xfb(GuestAddr addr, u32 width, u32 height, u32 stride);

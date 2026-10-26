@@ -110,6 +110,7 @@ static struct {
         u64 present_ns, sleep_ns;
         u64 wait_ns[4]; /* 60 FPS: espera por motivo até o último quadro (DrawDone, token, leitura, fila cheia) */
         u64 gx_draws, gx_triangles, gx_uploads, gx_resets, gx_texels;
+        u64 cow_ns, cow_calls, feed_ns, feed_calls, dl_ns, dl_calls; /* CPU no caminho do GX, até o último quadro */
         u64 last_shown_ns, gap_ns; /* instante da última apresentação que mostrou, e o intervalo até a de agora */
         bool presented, unique, shown, started;
     } ft;
@@ -389,6 +390,14 @@ static void trace_frame(const CPUState *cpu) {
     if (gx_gpu_active()) {
         gpu_now = *gx_gpu_stats();
     }
+    u64 cow_ns = 0;
+    u64 cow_calls = 0;
+    u64 feed_ns = 0;
+    u64 feed_calls = 0;
+    u64 dl_ns = 0;
+    u64 dl_calls = 0;
+    mem_cow_cpu_cost(&cow_ns, &cow_calls);
+    gx_fifo_cpu_cost(&feed_ns, &feed_calls, &dl_ns, &dl_calls);
     if (s_run.ft.started && frame_trace_wants(s_run.frames - 1U)) {
         const FrameTraceRow row = {.frame = s_run.frames - 1U,
                                    .wall_ns = now - s_run.ft.wall_ns,
@@ -416,9 +425,21 @@ static void trace_frame(const CPUState *cpu) {
                                    .gx_triangles = (u32)(gpu_now.triangles - s_run.ft.gx_triangles),
                                    .gx_tex_uploads = (u32)(gpu_now.texture_uploads - s_run.ft.gx_uploads),
                                    .gx_arena_resets = (u32)(gpu_now.arena_resets - s_run.ft.gx_resets),
-                                   .gx_texels = gpu_now.uploaded_texels - s_run.ft.gx_texels};
+                                   .gx_texels = gpu_now.uploaded_texels - s_run.ft.gx_texels,
+                                   .cow_ns = cow_ns - s_run.ft.cow_ns,
+                                   .feed_ns = feed_ns - s_run.ft.feed_ns,
+                                   .dl_scan_ns = dl_ns - s_run.ft.dl_ns,
+                                   .cow_calls = (u32)(cow_calls - s_run.ft.cow_calls),
+                                   .feed_calls = (u32)(feed_calls - s_run.ft.feed_calls),
+                                   .dl_calls = (u32)(dl_calls - s_run.ft.dl_calls)};
         frame_trace_add(&row);
     }
+    s_run.ft.cow_ns = cow_ns;
+    s_run.ft.cow_calls = cow_calls;
+    s_run.ft.feed_ns = feed_ns;
+    s_run.ft.feed_calls = feed_calls;
+    s_run.ft.dl_ns = dl_ns;
+    s_run.ft.dl_calls = dl_calls;
     memcpy(s_run.ft.wait_ns, wait_now, sizeof(wait_now));
     s_run.ft.gx_draws = gpu_now.draws;
     s_run.ft.gx_triangles = gpu_now.triangles;
@@ -634,6 +655,16 @@ static bool init_logs(const GameRunConfig *config) {
     return hook_register(GAME_ADDR_DVD_IRQ_HANDLER, "__DVDInterruptHandler", on_dvd_irq, NULL);
 }
 
+/* Custo de uma leitura de platform_ticks_ns (média de pares seguidos), descontado das medidas do --frame-trace. */
+static u64 clock_floor_ns(void) {
+    u64 sum = 0;
+    for (u32 i = 0; i < 4096U; i++) {
+        const u64 a = platform_ticks_ns();
+        sum += platform_ticks_ns() - a;
+    }
+    return sum / 4096U;
+}
+
 bool game_run_init(const GameRunConfig *config) {
     memset(&s_run, 0, sizeof(s_run));
     s_run.config = *config;
@@ -643,6 +674,15 @@ bool game_run_init(const GameRunConfig *config) {
     if (config->frame_trace != NULL && !frame_trace_open(config->frame_trace)) {
         AM_LOG_ERROR("--frame-trace: esperado [q0:q1:]arquivo.csv, veio %s", config->frame_trace);
         return false;
+    }
+    if (frame_trace_on()) { /* a thread do GX já foi criada em init_video: o custo da CPU no caminho dele só se mede
+                               aqui */
+        const u64 floor_ns = clock_floor_ns();
+        mem_cow_set_clock(platform_ticks_ns, floor_ns);
+        gx_fifo_cpu_timing(true, floor_ns);
+        AM_LOG_INFO("--frame-trace: leitura do relógio custa %" PRIu64
+                    " ns (descontada das medidas da CPU no caminho do GX)",
+                    floor_ns);
     }
     const DiscResult d = disc_open(config->disc_root);
     if (d != DISC_OK) {
@@ -681,6 +721,8 @@ void game_run_shutdown(void) {
     di_set_read_observer(NULL);
     game_diag_shutdown();
     frame_trace_close();
+    gx_fifo_cpu_timing(false, 0);
+    mem_cow_set_clock(NULL, 0);
     if (s_run.timebase != NULL) {
         (void)fclose(s_run.timebase);
         s_run.timebase = NULL;
