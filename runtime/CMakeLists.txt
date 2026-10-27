@@ -120,6 +120,21 @@ target_include_directories(am_platform PUBLIC include)
 target_link_libraries(am_platform PUBLIC SDL3::SDL3 PRIVATE am_imgui)
 am_apply_strict(am_platform)
 
+# --- am_disc_extract (M9 parte 5): ISO/GCM/RVZ -> sys/ + files/ (docs/M9_PARTE5_LAUNCHER.md §6) ----------------------
+# zstd só descomprime (BSD-3-Clause, third_party/zstd): código de terceiros, sem os warnings estritos do projeto.
+add_library(am_zstd STATIC ${CMAKE_SOURCE_DIR}/third_party/zstd/zstddeclib.c)
+target_include_directories(am_zstd SYSTEM PUBLIC ${CMAKE_SOURCE_DIR}/third_party/zstd)
+add_library(am_disc_extract STATIC core/disc_image.c core/disc_rvz.c core/disc_extract.c platform/platform_fs.c)
+target_include_directories(am_disc_extract PUBLIC include)
+target_link_libraries(am_disc_extract PUBLIC am_core PRIVATE am_zstd) # am_core: core/sha256.c
+am_apply_strict(am_disc_extract)
+
+# Extrator de linha de comando (o mesmo código do launcher): disc_extract <imagem> <pasta>.
+add_executable(disc_extract ${CMAKE_SOURCE_DIR}/tools/disc_extract/main.c)
+target_link_libraries(disc_extract PRIVATE am_disc_extract)
+am_apply_strict(disc_extract)
+am_apply_sanitize_link(disc_extract)
+
 # --- am_front (M9 parte 5): configurações, pasta do jogo, banner, tela inicial e contador de quadros -----------------
 add_library(am_front STATIC front/settings.c front/gamedir.c front/banner.c front/session.c front/launcher.cpp
   front/launcher_gfx.c front/overlay.cpp)

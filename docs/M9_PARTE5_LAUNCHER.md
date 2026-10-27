@@ -154,13 +154,26 @@ Na primeira vez (arquivo sem `dir`, ou pasta que não confere) a tela inicial ab
 Com `--sys` a pasta vem da linha de comando; se não conferir, a runtime avisa e segue (o boot já recusa um DOL
 diferente pelo entry point).
 
-**Extrair o `.rvz` direto (para depois).** Hoje o jogador extrai com o dtk ou o Dolphin. Para aceitar a imagem:
-RVZ é o formato do Dolphin (cabeçalho, tabela de grupos comprimidos com zstd/LZMA/bzip2, partes "junk" reconstruídas
-pelo gerador de lixo do disco). Duas saídas: (a) ler o RVZ em tempo de execução com um leitor próprio (blocos de 128
-KiB a 2 MiB, cache dos grupos) por baixo de `core/disc.c`, sem extrair nada, ou (b) extrair uma vez para o diretório
-de dados (`sys/` + `files/` pela FST, como o `dtk disc extract`), com barra de progresso na tela inicial. A (b) é mais
-simples e reaproveita todo o resto; a (a) evita 1,4 GB extras. Ambas precisam de zstd (e de LZMA para RVZ antigos)
-como dependência; ISO/GCM sem compressão seria trivial pela FST.
+**Extração da imagem (feita; falta ligar na tela).** Escolhida a saída (b): extrair uma vez para a pasta de dados,
+com o runtime inalterado (`core/disc.c`, `hw/di.c` e a temporização do DVD não mudam). O código é o mesmo para ISO/GCM
+crus e para RVZ, que só trocam a fonte de bytes:
+
+- `core/disc_image.c`, `core/disc_rvz.c` (`am/disc_image.h`): `DiscSource` com `read(offset, dst, n)`. RVZ do Dolphin com
+  zstd ou sem compressão, grupos empacotados (segmentos de dados e de lixo com o gerador Lagged Fibonacci do Dolphin,
+  só os arquivos são gravados, o lixo nunca entra na árvore); LZMA, LZMA2 e bzip2 dão erro próprio ("reconverta no Dolphin com zstd
+  ou use ISO"), WIA também; só GameCube. O decodificador zstd 1.5.7 (BSD-3-Clause) está em `third_party/zstd/`.
+- `core/disc_extract.c` (`am/disc_extract.h`): lê cabeçalho, bi2, apploader, FST e DOL e grava `sys/` + `files/` no
+  formato do `dtk disc extract`. Grava em `<destino>.parte` e só renomeia no fim; em erro ou cancelamento apaga o que
+  criou. Confere o SHA-256 do `main.dol` antes de gravar (outro jogo: `DISC_EXTRACT_ERR_OTHER_GAME`, nada escrito),
+  e o espaço livre. `platform/platform_fs.c` traz arquivos UTF-8, 64 bits, mkdir/rename/remove e espaço livre.
+- API para o launcher, numa thread própria, sem estado global:
+  `disc_extract_ex(imagem, destino, &opções)` (`progress(const DiscExtractProgress *, user)` devolve `false` para
+  cancelar; `cancel` aponta para um `int` escrito por outra thread; `detail` recebe a causa para o log) e
+  `disc_extract_result_text(resultado)` com a mensagem em português. `disc_extract(...)` é o atalho sem opções.
+- `tools/disc_extract/main.c`: o mesmo código em linha de comando (compila sozinho; a linha está no cabeçalho do arquivo).
+- Testes: `tests/unit/disc_extract_test.c` (mini-disco sintético como ISO e como RVZ, erros, cancelamento, disco cheio).
+  No RVZ do jogador (zstd nível 19, blocos de 128 KiB): 38 arquivos, 861.688.678 bytes, todos idênticos à árvore do dtk.
+- Fora desta etapa: LZMA/bzip2, WIA e ler o RVZ direto sem extrair (a saída (a)).
 
 ## 7. Verificação
 

@@ -26,6 +26,8 @@ am_add_unit_test(sched)
 am_add_unit_test(rel_map)
 am_add_unit_test(disc)
 target_link_libraries(disc_test PRIVATE am_platform) # cria a árvore sintética com platform_make_dir
+am_add_unit_test(disc_extract)
+target_link_libraries(disc_extract_test PRIVATE am_disc_extract) # cria o mini-disco sintético e extrai
 am_add_unit_test(vi)
 am_add_unit_test(gx_fifo)
 am_add_unit_test(gx_scan)
