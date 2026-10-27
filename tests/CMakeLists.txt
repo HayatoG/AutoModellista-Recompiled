@@ -28,6 +28,8 @@ am_add_unit_test(disc)
 target_link_libraries(disc_test PRIVATE am_platform) # cria a árvore sintética com platform_make_dir
 am_add_unit_test(vi)
 am_add_unit_test(gx_fifo)
+am_add_unit_test(gx_scan)
+target_link_libraries(gx_scan_test PRIVATE am_platform) # a thread do GX do teste usa as threads da plataforma
 am_add_unit_test(gx_vtx)
 am_add_unit_test(gx_xf)
 am_add_unit_test(gx_tex)

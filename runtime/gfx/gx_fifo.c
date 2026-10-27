@@ -789,6 +789,23 @@ static void scan_feed(const u8 *data, u32 size) {
             }
             continue;
         }
+        if (p->phase == GX_PHASE_OPCODE) {
+            /* 60 FPS: a maioria dos comandos (BP de 5 bytes, desenho de 3, XF de 5) chega inteira na rajada de 32
+             * bytes. Copia o cabeçalho de uma vez e executa no mesmo ponto em que scan_byte executaria (depois do
+             * último byte do cabeçalho): mesma ordem e mesmo instante dos eventos, sem a máquina de estados por byte.
+             */
+            const u8 op = data[i];
+            const u32 need = header_size(op, p->in_display_list);
+            if (need < size - i) {
+                p->opcode = op;
+                p->header_len = need;
+                p->header_need = need;
+                memcpy(p->header, &data[i + 1U], need);
+                i += need + 1U;
+                scan_execute(p);
+                continue;
+            }
+        }
         scan_byte(p, data[i++]);
     }
 }
