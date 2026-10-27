@@ -170,11 +170,15 @@ static void blit_xfb(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target, u32 tw, 
     const float s = sx < sy ? sx : sy;
     const u32 w = (u32)((float)s_pg.xfb_w * s);
     const u32 h = (u32)((float)s_pg.xfb_h * s);
+    /* M9 --internal-res: imagem maior que o XFB (mais de 640 de largura) reduzida na janela: linear (reduzir com nearest
+     * serrilha); fora disso vale o filtro que o jogador escolheu. */
+    const bool shrink = s_pg.xfb_w > 640U && s < 1.0F;
     SDL_GPUTexture *source = s_pg.xfb;
     u32 source_w = s_pg.xfb_w;
     u32 source_h = s_pg.xfb_h;
-    SDL_GPUFilter filter = s_filter == (u32)PLATFORM_FILTER_NEAREST ? SDL_GPU_FILTER_NEAREST : SDL_GPU_FILTER_LINEAR;
-    if (s_filter == (u32)PLATFORM_FILTER_SHARP) {
+    SDL_GPUFilter filter = shrink || s_filter != (u32)PLATFORM_FILTER_NEAREST ? SDL_GPU_FILTER_LINEAR
+                                                                              : SDL_GPU_FILTER_NEAREST;
+    if (!shrink && s_filter == (u32)PLATFORM_FILTER_SHARP) {
         /* Escala não inteira: primeiro k vezes por nearest (pixels nítidos), depois o bilinear só tira a diferença
          * entre k e a escala de verdade. Abaixo de 2x o bilinear direto é o mesmo resultado. Escala inteira: nearest.
          */

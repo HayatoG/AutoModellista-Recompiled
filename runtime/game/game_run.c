@@ -115,6 +115,8 @@ static struct {
         u64 last_shown_ns, gap_ns;       /* instante da última apresentação que mostrou, e o intervalo até a de agora */
         bool presented, unique, shown, started;
     } ft;
+    u8 *hires;      /* M9 --internal-res: imagem da janela em N x N pixels por pixel do XFB (alocada na primeira vez) */
+    u32 hires_cap;  /* bytes de hires */
     u8 rgba[GAME_XFB_WIDTH * GAME_XFB_HEIGHT * 4U];
 } s_run;
 
@@ -218,6 +220,39 @@ static void xfb_to_rgba(GuestAddr addr) {
     gx_efb_xfb_to_rgba(addr, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, GAME_XFB_WIDTH * 2U, s_run.rgba);
 }
 
+/* --internal-res N > 1 com a thread do GX: a última imagem pronta para a janela, no tamanho que tem (o do XFB ou N vezes
+ * maior, conforme o jogo tenha copiado o EFB para aquele XFB). Sem imagem nova ainda, fica a que está no buffer. */
+static void hires_latest(const u8 **image, u32 *width, u32 *height) {
+    const u32 n = gx_gpu_scale();
+    const u32 cap = GAME_XFB_WIDTH * GPU_EFB_HEIGHT * n * n * 4U;
+    if (s_run.hires == NULL) {
+        s_run.hires = calloc(cap, 1);
+        AM_ASSERT(s_run.hires != NULL, "sem memória para a imagem da janela (%u bytes)", cap);
+        s_run.hires_cap = cap;
+    }
+    if (gx_fifo_xfb_latest_any(s_run.hires, s_run.hires_cap, width, height)) {
+        *image = s_run.hires;
+    }
+}
+
+/* --shot com --internal-res: além do PNG nativo (do XFB do guest), grava <arquivo>_hires.png com o que a janela
+ * receberia para esse XFB, se o jogo o copiou do EFB grande. Caminho de desenvolvimento: dá para ver a imagem em
+ * N x N sem abrir janela. */
+static void save_hires_shot(const char *path, GuestAddr xfb) {
+    u32 w = 0;
+    u32 h = 0;
+    u8 *hi = gx_gpu_hires_xfb(xfb, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, &w, &h);
+    char out[600];
+    const size_t len = strlen(path);
+    if (hi == NULL || len < 5U) {
+        return;
+    }
+    (void)snprintf(out, sizeof(out), "%.*s_hires.png", (int)(len - 4U), path);
+    if (!platform_save_png(out, hi, w, h)) {
+        am_fatal("não consegui gravar %s: %s", out, platform_last_error());
+    }
+}
+
 /* Início do quadro: atualiza a janela com o XFB que o VI está mostrando e grava as capturas pedidas (o XFB que
  * VISetNextFrameBuffer recebeu por último, como o oráculo); com janela, a captura também grava o que a janela
  * desenhou (<arquivo>_janela.png). Devolve false se a janela foi fechada. */
@@ -237,10 +272,17 @@ static bool capture_frame(CPUState *cpu, bool refresh) {
         }
         const u32 shown = vi_xfb_top();
         bool unique = false;
+        const u8 *image = s_run.rgba; /* o que a janela mostra: o XFB, ou com --internal-res a cópia do EFB grande */
+        u32 image_w = GAME_XFB_WIDTH;
+        u32 image_h = GAME_XFB_HEIGHT;
         if (shown != 0U && refresh) { /* depois de um quadro pulado, o XFB é velho: fica a última imagem */
             if (gx_fifo_present_xfb(shown, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, GAME_XFB_WIDTH * 2U)) {
                 /* thread do GX: ele converte quando chegar aqui; a janela mostra a última pronta, sem esperar */
-                (void)gx_fifo_xfb_latest(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT);
+                if (gx_gpu_scale() > 1U) {
+                    hires_latest(&image, &image_w, &image_h);
+                } else {
+                    (void)gx_fifo_xfb_latest(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT);
+                }
                 if (frame_trace_on()) {
                     const u64 seq = gx_fifo_xfb_seq();
                     unique = seq != s_run.ft.xfb_seq;
@@ -248,13 +290,19 @@ static bool capture_frame(CPUState *cpu, bool refresh) {
                 }
             } else {
                 xfb_to_rgba(shown);
+                if (gx_gpu_scale() > 1U) { /* sem a thread, o GX é esta thread: a cópia grande já está pronta */
+                    const u8 *hi = gx_gpu_hires_xfb(shown, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, &image_w, &image_h);
+                    image = hi != NULL ? hi : image;
+                    image_w = hi != NULL ? image_w : GAME_XFB_WIDTH;
+                    image_h = hi != NULL ? image_h : GAME_XFB_HEIGHT;
+                }
                 unique = true;
             }
         }
         const u64 t0 = frame_trace_on() ? platform_ticks_ns() : 0U;
         const u64 dropped0 = frame_trace_on() ? platform_window_dropped_frames() : 0U;
         const PlatformWindowResult r =
-            platform_window_present(s_run.rgba, GAME_XFB_WIDTH, GAME_XFB_HEIGHT, shot != NULL ? window_png : NULL);
+            platform_window_present(image, image_w, image_h, shot != NULL ? window_png : NULL);
         if (frame_trace_on()) {
             const u64 t1 = platform_ticks_ns();
             s_run.ft.present_ns += t1 - t0;
@@ -284,6 +332,7 @@ static bool capture_frame(CPUState *cpu, bool refresh) {
             am_fatal("não consegui gravar %s: %s", shot->path, platform_last_error());
         }
         AM_LOG_INFO("quadro %" PRIu64 ": XFB 0x%08X -> %s", s_run.frames, xfb, shot->path);
+        save_hires_shot(shot->path, xfb);
     }
     return open;
 }
@@ -586,10 +635,17 @@ static bool init_video(GameRunConfig *config) {
         AM_LOG_INFO("GX: rasterizador com %u trabalhador(es)", workers > 1U ? workers : 1U);
     }
     if (config->render && config->gpu) {
+        platform_gpu_set_scale(config->internal_res);
         if (platform_gpu_init((PlatformGpuShader)config->gpu_shader)) {
+            const u32 scale = platform_gpu_scale();
             gx_gpu_reset();
+            gx_gpu_set_scale(scale);
             gx_gpu_set_backend(platform_gpu_run);
             AM_LOG_INFO("GX: desenho na GPU (driver %s, ubershader TEV)", platform_gpu_name());
+            if (scale > 1U) {
+                AM_LOG_INFO("GX: resolução interna %ux (EFB %ux%u, média de caixa para o XFB%s)", scale,
+                            GPU_EFB_WIDTH * scale, GPU_EFB_HEIGHT * scale, scale > 2U ? "; experimental" : "");
+            }
         } else {
             AM_LOG_WARN("--gfx gpu: sem GPU utilizável (%s); o GX desenha em software", platform_gpu_error());
             config->gpu = false;
@@ -742,6 +798,8 @@ void game_run_shutdown(void) {
         overlay_stop();
     }
     gx_fifo_thread_stop();
+    free(s_run.hires);
+    s_run.hires = NULL;
     gx_raster_set_parallel(NULL, 1);
     platform_parallel_shutdown();
     if (gx_gpu_active()) {

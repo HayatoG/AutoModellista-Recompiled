@@ -642,6 +642,73 @@ bool gx_efb_clear_params(GxEfbClear *c) {
     return c->left < c->right && c->top < c->bottom;
 }
 
+/* M9 (--internal-res N, etapa 1b): a mesma cópia para o XFB, mas lida do EFB grande e escrita direto em RGBA, sem o
+ * YUV 4:2:2 (a janela mostra a imagem em N x N pixels por pixel do XFB). O filtro vertical e a gama são os da cópia
+ * nativa; o filtro olha a linha grande de cima e a de baixo (e não N linhas), então o desfoque do filtro de
+ * deflicker encolhe 1/N junto com o pixel. */
+typedef struct HiXfbJob {
+    const CopyParams *p;
+    const u32 *hi;
+    u32 n, width, format;
+    f32 yscale;
+    u8 *rgba;
+    u8 gamma[256]; /* só com gama diferente de 1 */
+} HiXfbJob;
+
+static void hi_xfb_row(u32 y, u32 worker, void *user) {
+    (void)worker;
+    const HiXfbJob *j = user;
+    const CopyParams *p = j->p;
+    const s32 lo = (s32)(p->clamp_top * j->n);
+    const s32 last = (s32)((p->clamp_bottom + 1U) * j->n) - 1;
+    const s32 row = (s32)floorf((((f32)y + 0.5F) + (f32)(p->top * j->n)) / j->yscale);
+    const s32 cur = gx_clamp_s32(row, lo, last);
+    const s32 rows[3] = {cur > lo ? cur - 1 : lo, cur, cur < last ? cur + 1 : last};
+    const size_t stride = (size_t)GX_EFB_WIDTH * j->n;
+    for (u32 x = 0; x < j->width; x++) {
+        const size_t cx = (size_t)gx_clamp_s32((s32)((p->left * j->n) + x), 0, (s32)stride - 1);
+        u8 px[3][4];
+        for (u32 k = 0; k < 3U; k++) {
+            unpack(j->format, j->hi[((size_t)rows[k] * stride) + cx], px[k]);
+        }
+        u8 *out = &j->rgba[(((size_t)y * j->width) + x) * 4U];
+        for (u32 c = 0; c < 3U; c++) {
+            u32 v = (((u32)px[0][c] * p->coef[0]) + ((u32)px[1][c] * p->coef[1]) + ((u32)px[2][c] * p->coef[2])) >> 6;
+            v = p->overflow ? v & 0x1FFU : v;
+            v = v > 255U ? 255U : v;
+            out[c] = p->gamma_rcp != 1.0F ? j->gamma[v] : (u8)v;
+        }
+        out[3] = 0xFF;
+    }
+}
+
+bool gx_efb_copy_xfb_hires(const u32 *hi, u32 n, u8 *rgba, u32 cap, GxEfbHiXfb *out) {
+    const u32 copy = gx_bp_reg(GX_BP_COPY_EXECUTE);
+    CopyParams p = copy_params(copy);
+    if ((copy & COPY_TO_XFB) == 0U || p.depth || p.left >= GX_EFB_WIDTH || p.top >= GX_EFB_HEIGHT) {
+        return false;
+    }
+    p.right = p.right > GX_EFB_WIDTH ? GX_EFB_WIDTH : p.right;
+    p.bottom = p.bottom > GX_EFB_HEIGHT ? GX_EFB_HEIGHT : p.bottom;
+    clamp_rows(&p, copy);
+    const u32 ys = gx_bp_reg(GX_BP_COPYYSCALE) & 0x1FFU;
+    f32 yscale = (copy & COPY_SCALE_INVERT) != 0U ? 256.0F / (f32)ys : (f32)ys / 256.0F;
+    yscale = yscale > 0.0F ? yscale : 1.0F;
+    const u32 height = (u32)(1.0F + ((f32)((gx_bp_reg(GX_BP_EFB_WH) >> 10) & 0x3FFU) * yscale));
+    const u32 width = p.right - p.left;
+    if (((gx_bp_reg(GX_BP_EFB_STRIDE) & 0x3FFU) << 5) == 0U || (size_t)width * height * n * n * 4U > cap) {
+        return false;
+    }
+    HiXfbJob job = {.p = &p, .hi = hi, .n = n, .width = width * n, .format = pixel_format(), .yscale = yscale,
+                    .rgba = rgba};
+    for (u32 v = 0; v < 256U && p.gamma_rcp != 1.0F; v++) {
+        job.gamma[v] = (u8)roundf(powf((f32)v / 255.0F, p.gamma_rcp) * 255.0F);
+    }
+    gx_raster_parallel_for(height * n, hi_xfb_row, &job);
+    *out = (GxEfbHiXfb){.dest = (gx_bp_reg(GX_BP_EFB_ADDR) << 5) & 0x01FFFFFFU, .width = width * n, .height = height * n};
+    return true;
+}
+
 void gx_efb_copy_ex(bool do_clear) {
     const u32 copy = gx_bp_reg(GX_BP_COPY_EXECUTE);
     CopyParams p = copy_params(copy);

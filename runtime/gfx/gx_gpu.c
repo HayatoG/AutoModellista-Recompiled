@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "am/gpu_scale.h"
 #include "am/gx_bp.h"
 #include "am/gx_efb.h"
 #include "am/gx_raster.h"
@@ -23,6 +24,16 @@ typedef struct HeldTri {
     GxXfVertex v[3];
 } HeldTri;
 
+/* Imagem em RGBA de uma cópia para o XFB feita do EFB grande (para a janela; o XFB YUV do guest continua nativo). */
+typedef struct HiXfb {
+    u32 addr; /* endereço físico do XFB; 0 = vazio */
+    u32 width, height;
+    u8 *rgba;
+    u64 serial;
+} HiXfb;
+
+#define HI_XFB_SLOTS 3U
+
 static struct {
     GxGpuRunFn run;
     GpuVertex *verts;
@@ -36,6 +47,11 @@ static struct {
     ArenaSlot slots[ARENA_SLOTS];
     u32 arena_used;
     bool efb_dirty;
+    u32 scale;        /* M9: resolução interna (1 = nativa; ver am/gpu_scale.h) */
+    u32 *hi_color;    /* só com scale > 1: o EFB grande que vai e volta da GPU */
+    u32 *hi_depth;
+    HiXfb xfbs[HI_XFB_SLOTS]; /* M9 etapa 1b: as últimas cópias para o XFB em N x N, por endereço do XFB */
+    u64 xfb_serial;
     bool in_draw;
     s32 rects[GX_RASTER_MAX_RECTS][6];
     u32 rect_count;
@@ -74,15 +90,30 @@ bool gx_gpu_active(void) {
     return s_gpu.run != NULL;
 }
 
+void gx_gpu_set_scale(u32 n) {
+    s_gpu.scale = n > 1U ? gpu_scale_clamp((s32)n) : 0U;
+}
+
+u32 gx_gpu_scale(void) {
+    return s_gpu.scale != 0U ? s_gpu.scale : 1U;
+}
+
 void gx_gpu_reset(void) {
     const GxGpuRunFn run = s_gpu.run;
+    const u32 scale = s_gpu.scale;
     free(s_gpu.verts);
     free(s_gpu.draws);
     free(s_gpu.uploads);
     free(s_gpu.staging);
     free(s_gpu.held);
+    free(s_gpu.hi_color);
+    free(s_gpu.hi_depth);
+    for (u32 i = 0; i < HI_XFB_SLOTS; i++) {
+        free(s_gpu.xfbs[i].rgba);
+    }
     memset(&s_gpu, 0, sizeof(s_gpu));
     s_gpu.run = run;
+    s_gpu.scale = scale;
     s_gpu.efb_dirty = true;
 }
 
@@ -100,23 +131,67 @@ static void arena_clear(void) {
  * cópia do EFB fica só com a última parte. */
 #define PARTIAL_DRAWS 192U
 
-static void submit_rows(bool readback, u32 top, u32 bottom, bool depth_too) {
+/* M9: EFB grande. Entrada: o nativo replicado NxN (só quando a CPU mexeu no EFB). Saída: as linhas lidas voltam em N x N
+ * e viram a média de caixa por canal no EFB nativo, de onde a cópia (XFB ou textura) segue como sempre. */
+static void submit_rows_scaled(bool readback, u32 top, u32 bottom, bool depth_too) {
+    const u32 n = s_gpu.scale;
+    const size_t px = (size_t)GPU_EFB_WIDTH * GPU_EFB_HEIGHT * n * n;
     u32 *color = gx_efb_color_buffer();
     u32 *depth = gx_efb_depth_buffer();
+    if (s_gpu.hi_color == NULL) {
+        s_gpu.hi_color = calloc(px, sizeof(u32));
+        s_gpu.hi_depth = calloc(px, sizeof(u32));
+        AM_ASSERT(s_gpu.hi_color != NULL && s_gpu.hi_depth != NULL, "GX GPU: sem memória para o EFB %ux", n);
+    }
+    if (s_gpu.efb_dirty) {
+        gpu_scale_replicate(color, s_gpu.hi_color, GPU_EFB_WIDTH, GPU_EFB_HEIGHT, n);
+        gpu_scale_replicate(depth, s_gpu.hi_depth, GPU_EFB_WIDTH, GPU_EFB_HEIGHT, n);
+    }
     const GpuBatch b = {.vertices = s_gpu.verts,
                         .vertex_count = s_gpu.vert_count,
                         .draws = s_gpu.draws,
                         .draw_count = s_gpu.draw_count,
                         .uploads = s_gpu.uploads,
                         .upload_count = s_gpu.upload_count,
-                        .efb_color_in = s_gpu.efb_dirty ? color : NULL,
-                        .efb_depth_in = s_gpu.efb_dirty ? depth : NULL,
-                        .efb_color_out = readback ? color : NULL,
-                        .efb_depth_out = readback && depth_too ? depth : NULL,
+                        .efb_color_in = s_gpu.efb_dirty ? s_gpu.hi_color : NULL,
+                        .efb_depth_in = s_gpu.efb_dirty ? s_gpu.hi_depth : NULL,
+                        .efb_color_out = readback ? s_gpu.hi_color : NULL,
+                        .efb_depth_out = readback && depth_too ? s_gpu.hi_depth : NULL,
                         .readback_top = top,
                         .readback_bottom = bottom};
     if (!s_gpu.run(&b)) {
-        am_fatal("GX GPU: o lote de %u desenhos falhou na GPU", s_gpu.draw_count);
+        am_fatal("GX GPU: o lote de %u desenhos falhou na GPU (EFB %ux)", s_gpu.draw_count, n);
+    }
+    if (readback && bottom > top) {
+        const bool rgba6 = (gx_bp_reg(GX_BP_ZCOMPARE) & 7U) == GX_PIXEL_RGBA6_Z24;
+        gpu_scale_reduce_color(s_gpu.hi_color, color, GPU_EFB_WIDTH, top, bottom, n, rgba6);
+        if (depth_too) {
+            gpu_scale_reduce_depth(s_gpu.hi_depth, depth, GPU_EFB_WIDTH, top, bottom, n);
+        }
+    }
+}
+
+static void submit_rows(bool readback, u32 top, u32 bottom, bool depth_too) {
+    if (s_gpu.scale > 1U) {
+        submit_rows_scaled(readback, top, bottom, depth_too);
+    } else {
+        u32 *color = gx_efb_color_buffer();
+        u32 *depth = gx_efb_depth_buffer();
+        const GpuBatch b = {.vertices = s_gpu.verts,
+                            .vertex_count = s_gpu.vert_count,
+                            .draws = s_gpu.draws,
+                            .draw_count = s_gpu.draw_count,
+                            .uploads = s_gpu.uploads,
+                            .upload_count = s_gpu.upload_count,
+                            .efb_color_in = s_gpu.efb_dirty ? color : NULL,
+                            .efb_depth_in = s_gpu.efb_dirty ? depth : NULL,
+                            .efb_color_out = readback ? color : NULL,
+                            .efb_depth_out = readback && depth_too ? depth : NULL,
+                            .readback_top = top,
+                            .readback_bottom = bottom};
+        if (!s_gpu.run(&b)) {
+            am_fatal("GX GPU: o lote de %u desenhos falhou na GPU", s_gpu.draw_count);
+        }
     }
     s_gpu.stats.batches++;
     s_gpu.vert_count = 0;
@@ -192,7 +267,7 @@ static void fill_textures(GpuDrawUniforms *u) {
         GxTexGpuUnit t;
         gx_tex_gpu_unit(m, &t);
         u->tex_size[m] = t.wm1 | (t.hm1 << 16);
-        u->tex_mode0[m] = t.mode0;
+        u->tex_mode0[m] = s_gpu.scale > 1U ? gpu_scale_lod_mode0(t.mode0, s_gpu.scale) : t.mode0;
         u->tex_mode1[m] = t.mode1;
         u->tex_levels[m] = t.serial != 0U ? t.levels : 0U;
         u->tex_base[m] = t.serial != 0U ? arena_place(&t) : 0U;
@@ -244,6 +319,11 @@ static void fill_tev(GpuDrawUniforms *u) {
     u->fog_color = gx_bp_reg(GX_BP_FOGCOLOR);
     for (u32 i = 0; i < 6U; i++) {
         u->fog_range[i] = gx_bp_reg((u8)(GX_BP_FOGRANGE + i));
+    }
+    if (s_gpu.scale > 1U) {
+        /* O ajuste de alcance da neblina usa o x do pixel e a largura do viewport em pixels nativos; no EFB grande o x
+         * seria N vezes maior e a conta, errada. Sem o ajuste a neblina só perde o alargamento nas bordas. */
+        u->fog_range[0] &= ~(1U << 10);
     }
     u->vp_wd = gx_xf_viewport().wd;
     u->zmode = gx_bp_reg(GX_BP_ZMODE);
@@ -420,6 +500,48 @@ static void push_clear(const GxEfbClear *c) {
     }
 }
 
+/* Etapa 1b: guarda a cópia para o XFB em N x N, no lugar da do mesmo endereço (ou da mais antiga). O EFB grande tem as
+ * linhas da cópia (submit_rows acabou de ler). */
+static void keep_hires_xfb(void) {
+    const u32 dest = (gx_bp_reg(GX_BP_EFB_ADDR) << 5) & 0x01FFFFFFU;
+    HiXfb *slot = &s_gpu.xfbs[0];
+    for (u32 i = 0; i < HI_XFB_SLOTS; i++) {
+        HiXfb *s = &s_gpu.xfbs[i];
+        if (s->addr == dest) {
+            slot = s;
+            break;
+        }
+        slot = s->serial < slot->serial ? s : slot;
+    }
+    const u32 cap = GPU_EFB_WIDTH * GPU_EFB_HEIGHT * s_gpu.scale * s_gpu.scale * 4U;
+    if (slot->rgba == NULL) {
+        slot->rgba = malloc(cap);
+        AM_ASSERT(slot->rgba != NULL, "GX GPU: sem memória para o XFB %ux", s_gpu.scale);
+    }
+    GxEfbHiXfb img;
+    slot->addr = 0;
+    if (gx_efb_copy_xfb_hires(s_gpu.hi_color, s_gpu.scale, slot->rgba, cap, &img)) {
+        *slot = (HiXfb){.addr = img.dest, .width = img.width, .height = img.height, .rgba = slot->rgba,
+                        .serial = ++s_gpu.xfb_serial};
+    }
+}
+
+u8 *gx_gpu_hires_xfb(u32 addr, u32 width, u32 height, u32 *out_width, u32 *out_height) {
+    if (s_gpu.scale <= 1U) {
+        return NULL;
+    }
+    for (u32 i = 0; i < HI_XFB_SLOTS; i++) {
+        const HiXfb *s = &s_gpu.xfbs[i];
+        if (s->addr != 0U && s->addr == (addr & 0x01FFFFFFU) && s->width == width * s_gpu.scale &&
+            s->height == height * s_gpu.scale) {
+            *out_width = s->width;
+            *out_height = s->height;
+            return s->rgba;
+        }
+    }
+    return NULL;
+}
+
 void gx_gpu_copy(void) {
     gx_gpu_end_draw();
     u32 top = 0;
@@ -427,6 +549,9 @@ void gx_gpu_copy(void) {
     bool depth = false;
     const bool rows = gx_efb_copy_rows(&top, &bottom, &depth);
     submit_rows(true, top, rows ? bottom : 0U, depth);
+    if (s_gpu.scale > 1U && rows && !depth && gx_efb_copy_is_xfb()) {
+        keep_hires_xfb();
+    }
     gx_efb_copy_ex(false);
     GxEfbClear c;
     if (gx_efb_copy_clears() && gx_efb_clear_params(&c)) {

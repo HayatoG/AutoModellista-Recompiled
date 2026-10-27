@@ -115,6 +115,8 @@ void gx_fifo_cpu_cost(u64 *feed_ns, u64 *feed_calls, u64 *dl_ns, u64 *dl_calls);
  * esperar (false sem a thread: o chamador converte). gx_fifo_xfb_latest copia a última conversão pronta. */
 bool gx_fifo_present_xfb(GuestAddr addr, u32 width, u32 height, u32 stride);
 bool gx_fifo_xfb_latest(u8 *rgba, u32 width, u32 height);
+/* M9 --internal-res: a última imagem pronta no tamanho que ela tem (o do XFB, ou N vezes maior); cap = bytes de rgba. */
+bool gx_fifo_xfb_latest_any(u8 *rgba, u32 cap, u32 *width, u32 *height);
 /* M9 parte 6: quantas conversões do XFB o GX já entregou (muda = a janela tem imagem nova; --frame-trace). */
 u64 gx_fifo_xfb_seq(void);
 

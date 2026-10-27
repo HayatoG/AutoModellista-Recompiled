@@ -72,6 +72,14 @@ typedef struct GxEfbClear {
     u32 format;
 } GxEfbClear;
 bool gx_efb_clear_params(GxEfbClear *c);
+/* M9 (--internal-res N): a cópia para o XFB pedida agora, feita do EFB grande (hi: N*640 de largura) direto em RGBA, sem o
+ * YUV. rgba tem cap bytes; out recebe o endereço físico do XFB e o tamanho da imagem em pixels grandes. false = a
+ * cópia não é para o XFB, é do Z ou não cabe. Não escreve na memória do guest. */
+typedef struct GxEfbHiXfb {
+    u32 dest; /* endereço físico (como GxEfbStats.last_xfb_addr) */
+    u32 width, height;
+} GxEfbHiXfb;
+bool gx_efb_copy_xfb_hires(const u32 *hi, u32 n, u8 *rgba, u32 cap, GxEfbHiXfb *out);
 /* A cópia pedida agora (BP COPY_EXECUTE) é para o XFB. */
 bool gx_efb_copy_is_xfb(void);
 /* A cópia pedida agora limpa o EFB depois (COPY_EXECUTE.clear). */

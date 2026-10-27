@@ -21,6 +21,12 @@ typedef enum PlatformGpuShader {
     PLATFORM_GPU_SHADER_HLSL,
 } PlatformGpuShader;
 
+/* M9: resolução interna N (1..4, am/gpu_scale.h): o EFB da GPU passa a ter N x N pixels por pixel nativo. Vale só antes
+ * de platform_gpu_init. Com N > 1 os buffers do GpuBatch (efb_*_in/out) têm o tamanho do EFB grande, linha a linha
+ * (640 * N de largura); readback_top/bottom e os scissors continuam em pixels nativos. */
+void platform_gpu_set_scale(u32 n);
+u32 platform_gpu_scale(void);
+
 /* Cria o dispositivo, o pipeline do ubershader pedido e o EFB da GPU. false = sem GPU utilizável para esse shader
  * (platform_gpu_error diz por quê; quem chama cai no software). */
 bool platform_gpu_init(PlatformGpuShader shader);
