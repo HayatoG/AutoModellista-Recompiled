@@ -586,6 +586,13 @@ void platform_dialog_save_file(const char *start, const char *filter_name, const
     }
 }
 
+void platform_dialog_open_file(const char *start, const char *filter_name, const char *filter_exts) {
+    if (dialog_prepare()) {
+        const SDL_DialogFileFilter filter = {filter_name, filter_exts};
+        SDL_ShowOpenFileDialog(dialog_done, NULL, s_win.window, &filter, 1, start, false);
+    }
+}
+
 bool platform_dialog_take(char *out, size_t size) {
     if (s_win.dialog_lock == NULL) {
         return false;

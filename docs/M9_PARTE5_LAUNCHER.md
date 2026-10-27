@@ -235,7 +235,7 @@ nada delas vai para o `settings.ini`.
 
 | Ativas | Em breve (apagadas) |
 | --- | --- |
-| JOGAR e a pasta do jogo (só pasta extraída sys/ + files/, SHA-256; mostra o banner do disco) | Imagem ISO/GCM/RVZ (RVZ em breve) |
+| JOGAR, a pasta do jogo (pasta extraída sys/ + files/, SHA-256; mostra o banner do disco) e a imagem ISO, GCM ou RVZ (zstd), extraída pelo launcher | RVZ com LZMA ou bzip2 e WIA (o extrator avisa para reconverter) |
 | Backend GPU/Software (com o driver real, só leitura) | Vulkan/OpenGL (não existem), resolução interna 2x a 4x, proporção 16:9 e 21:9, limite de FPS, anti-aliasing, contornos cel-shading |
 | Escala da janela (apagada em tela cheia), modo Janela/Tela cheia, VSync, filtro da imagem, contador de FPS | Volumes de música, efeitos e vozes, saída surround, dispositivo de áudio, silenciar em segundo plano |
 | Volume geral, escolha do controle, remapeamento de teclas e botões, memory card (arquivo, padrão, "Sem cartão" = `memcard = none`) | Ícones dos botões, zona morta, vibração, gatilhos analógicos |
@@ -250,3 +250,25 @@ pasta de logs): o cartão do Suporte abre a pasta de dados.
 teclado e do controle por teclas enviadas ao ImGui, janela pequena, 4K e 16:10) e sai sem gravar o `settings.ini`.
 `AM_LAUNCHER_SHOT_GAMEDIR` dá a pasta válida; `AM_LAUNCHER_SHOT_ONLY=<texto>` limita às cenas cujo nome contém o texto.
 Só o caminho do SDL_Renderer (software) captura.
+
+### 9.1 Escolher a imagem (ISO, GCM, RVZ)
+
+O cartão da pasta do jogo tem "Escolher imagem" (`SDL_ShowOpenFileDialog`, filtro iso;gcm;rvz) além de "Escolher pasta".
+`launcher_import.cpp` extrai com `disc_extract_ex` (§6) numa thread própria (`platform_thread_start`) para
+`<pasta de dados>/jogo`; o progresso (bytes, arquivo atual) é copiado sob uma trava e lido a cada quadro para a barra do
+cartão. Regras:
+
+- **Nunca sobrescreve.** Se `<dados>/jogo` já confere (`gamedir_check`), o cartão mostra "Extração existente" com
+  "Usar a existente" e "Cancelar", sem extrair de novo. Se existe mas não confere, o extrator recusa (`ERR_EXISTS`).
+- **Cancelar** grava no `cancel` do extrator; a thread para na próxima 1 MiB e o extrator apaga o que criou
+  (`<dados>/jogo.parte`).
+- **Ao terminar OK**, `game_dir` vira a pasta extraída e a verificação SHA-256 de sempre mostra "Verificada".
+  `ERR_OTHER_GAME` avisa "outro jogo ou outra versão" e não troca a pasta; os demais erros mostram
+  `disc_extract_result_text` em âmbar (o detalhe vai para o log).
+- **JOGAR fica desabilitado** durante a extração e a oferta. Fechar a janela cancela e espera a thread terminar antes de
+  sair (`import_shutdown`); nunca sobra uma pasta pela metade.
+
+Capturas de desenvolvimento novas: `41_inicio_extraindo` (42% simulado), `42_inicio_extracao_existente`,
+`43_inicio_erro_imagem` (a thread de verdade sobre um arquivo falso, com destino em `<captura>/jogo_teste`) e
+`44_inicio_outro_jogo`. A extração completa com o mini-disco sintético é coberta por `disc_extract_test` (o launcher só
+chama a mesma API); o RVZ real do jogador não foi extraído nestas verificações.

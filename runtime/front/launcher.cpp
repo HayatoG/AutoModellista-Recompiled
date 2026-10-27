@@ -341,50 +341,117 @@ void draw_game_card(ImDrawList *dl, const HomeLayout &l) {
     const float right = b.x - px(20.0F);
     const float play_x = right - px(240.0F);
     const float div_x = play_x - px(24.0F);
+    Import &im = g.imp;
+    const bool running = im.phase == ImportPhase::Running;
+    const bool offer = im.phase == ImportPhase::Offer;
     const char *pick_label = ok ? "Trocar pasta" : "Escolher pasta";
-    const float pick_w = ghost_width(pick_label, Icon::Folder, 0.0F);
-    const float pick_x = div_x - px(24.0F) - pick_w;
-    const float info_w = std::max(px(80.0F), pick_x - px(24.0F) - x);
+    const char *img_label = "Escolher imagem";
+    const float btn_h = 36.0F;
+    float col_w = std::max(ghost_width(pick_label, Icon::Folder, 0.0F), ghost_width(img_label, Icon::Doc, 0.0F));
+    col_w = std::max(col_w, ghost_width("Usar a existente", Icon::Check, 0.0F));
+    const float col_x = div_x - px(24.0F) - col_w;
+    const float info_w = std::max(px(80.0F), col_x - px(24.0F) - x);
     /* texto: rótulo, caminho (ou "nenhuma") e a linha de situação */
     const float label_h = line_h(Face::Bold, 12.0F);
     const float line1_h = line_h(Face::Mono, 15.0F);
     const float line2_h = px(22.0F);
     const float total = label_h + px(6.0F) + line1_h + px(6.0F) + line2_h;
     float y = cy - total * 0.5F;
-    text(dl, Face::Bold, 12.0F, ImVec2(x, y), white(0.70F), "PASTA DO JOGO", 0.1F);
+    const char *label = running ? "EXTRAINDO A IMAGEM" : (offer ? "EXTRAÇÃO EXISTENTE" : "PASTA DO JOGO");
+    text(dl, Face::Bold, 12.0F, ImVec2(x, y), white(0.70F), label, 0.1F);
     y += label_h + px(6.0F);
+    const ImU32 amber = IM_COL32(255, 196, 140, 255);
+    char cur[sizeof(im.current)] = "";
+    u64 done = 0;
+    u64 all = 0;
+    u32 fdone = 0;
+    u32 fall = 0;
+    if (running) { /* o progresso é escrito pela thread da extração */
+        if (im.lock != nullptr && !im.fake) {
+            platform_lock(im.lock);
+        }
+        (void)std::snprintf(cur, sizeof(cur), "%s", im.current);
+        done = im.bytes_done;
+        all = im.bytes_total;
+        fdone = im.files_done;
+        fall = im.files_total;
+        if (im.lock != nullptr && !im.fake) {
+            platform_unlock(im.lock);
+        }
+    }
     const bool have_path = ok || g.typed[0] != '\0';
-    if (have_path) {
+    if (running) {
+        text_fit(dl, Face::Mono, 15.0F, x, y + line1_h * 0.5F, info_w, IM_COL32_WHITE, cur[0] != '\0' ? cur : "...");
+    } else if (offer) {
+        text_fit(dl, Face::Mono, 15.0F, x, y + line1_h * 0.5F, info_w, IM_COL32_WHITE, im.out);
+    } else if (have_path) {
         text_fit(dl, Face::Mono, 15.0F, x, y + line1_h * 0.5F, info_w, IM_COL32_WHITE, ok ? g.s->game_dir : g.typed);
     } else {
         text_fit(dl, Face::Semi, 16.0F, x, y + line1_h * 0.5F, info_w, IM_COL32_WHITE, "Nenhuma pasta selecionada");
     }
     y += line1_h + px(6.0F);
     const float y2 = y + line2_h * 0.5F;
-    if (g.message[0] != '\0') {
-        text_fit(dl, Face::Body, 13.0F, x, y2, info_w, IM_COL32(255, 196, 140, 255), g.message);
+    if (running) {
+        const float frac = all != 0U ? static_cast<float>(static_cast<double>(done) / static_cast<double>(all)) : 0.0F;
+        const float bw = info_w * 0.5F;
+        dl->AddRectFilled(ImVec2(x, y2 - px(4.0F)), ImVec2(x + bw, y2 + px(4.0F)), white(0.18F), px(99.0F));
+        dl->AddRectFilled(ImVec2(x, y2 - px(4.0F)), ImVec2(x + bw * frac, y2 + px(4.0F)), fr.accent, px(99.0F));
+        char st[160];
+        (void)std::snprintf(st, sizeof(st), "%.0f%% · %.0f / %.0f MiB · %u/%u arquivos",
+                            static_cast<double>(frac) * 100.0, static_cast<double>(done) / 1048576.0,
+                            static_cast<double>(all) / 1048576.0, fdone, fall);
+        text_fit(dl, Face::Body, 13.0F, x + bw + px(12.0F), y2, info_w - bw - px(12.0F), white(0.80F), st);
+    } else if (offer) {
+        text_fit(dl, Face::Body, 13.0F, x, y2, info_w, white(0.80F),
+                 "Já existe uma extração aqui; nada será sobrescrito.");
+    } else if (g.message[0] != '\0') {
+        text_fit(dl, Face::Body, 13.0F, x, y2, info_w, amber, g.message);
     } else if (ok) {
         const float cw = chip(dl, ImVec2(x, y), "Verificada", Icon::Check, 2, 22.0F);
         text_fit(dl, Face::Body, 13.0F, x + cw + px(8.0F), y2, info_w - cw - px(8.0F), white(0.75F),
                  "SHA-256 do main.dol confere (GAUE08)");
     } else if (g.dir_state != GAMEDIR_OK && g.typed[0] != '\0') {
-        text_fit(dl, Face::Body, 13.0F, x, y2, info_w, IM_COL32(255, 196, 140, 255), gamedir_result_text(g.dir_state));
+        text_fit(dl, Face::Body, 13.0F, x, y2, info_w, amber, gamedir_result_text(g.dir_state));
     } else {
-        text_fit(dl, Face::Body, 13.0F, x, y2, info_w, white(0.72F),
-                 "Formato aceito: pasta extraída (sys/ + files/). RVZ: em breve.");
+        text_fit(dl, Face::Body, 13.0F, x, y2, info_w, white(0.72F), "Aceita: pasta extraída, ISO, GCM e RVZ (zstd).");
     }
-    if (!ok && g.focus_content) { /* sem pasta, o foco inicial é o botão de escolher */
+    /* botões empilhados à direita do texto */
+    const float bx = col_x;
+    const float by1 = cy - px(btn_h) - px(4.0F);
+    const float by2 = cy + px(4.0F);
+    if (!ok && !running && !offer && g.focus_content) { /* sem pasta, o foco inicial é o botão de escolher */
         fr.focus_request = true;
         g.focus_content = false;
     }
-    if (ghost("pick", ImVec2(pick_x, cy - px(22.0F)), pick_label, Icon::Folder, true, 0.0F, nullptr)) {
-        g.dialog_folder = true;
-        platform_dialog_pick_folder(g.s->game_dir[0] != '\0' ? g.s->game_dir : nullptr);
+    if (running) {
+        const float w = ghost_width("Cancelar", Icon::Close, 0.0F);
+        if (ghost("cancel", ImVec2(bx + col_w - w, cy - px(btn_h) * 0.5F), "Cancelar", Icon::Close, true, 0.0F, nullptr,
+                  btn_h)) {
+            import_cancel();
+        }
+    } else if (offer) {
+        if (ghost("useold", ImVec2(bx, by1), "Usar a existente", Icon::Check, true, col_w / fr.s, nullptr, btn_h)) {
+            import_use_existing();
+        }
+        if (ghost("canceloffer", ImVec2(bx, by2), "Cancelar", Icon::Close, true, col_w / fr.s, nullptr, btn_h)) {
+            import_cancel();
+        }
+    } else {
+        if (ghost("img", ImVec2(bx, by1), img_label, Icon::Doc, true, col_w / fr.s, nullptr, btn_h)) {
+            g.dialog_image = true;
+            platform_dialog_open_file(nullptr, "Imagem do jogo (iso, gcm, rvz)", "iso;gcm;rvz");
+        }
+        if (ghost("pick", ImVec2(bx, by2), pick_label, Icon::Folder, true, col_w / fr.s, nullptr, btn_h)) {
+            g.dialog_folder = true;
+            platform_dialog_pick_folder(g.s->game_dir[0] != '\0' ? g.s->game_dir : nullptr);
+        }
     }
     dl->AddLine(ImVec2(div_x, a.y + px(20.0F)), ImVec2(div_x, b.y - px(20.0F)), white(0.14F), 1.0F);
     const ImVec2 pa(play_x, a.y + px(20.0F));
-    draw_play(dl, pa, ImVec2(pa.x + px(240.0F), pa.y + px(72.0F)), ok);
-    const char *hint = ok ? "Pronto para a largada" : "Selecione a pasta para jogar";
+    const bool can_play = ok && !running && !offer;
+    draw_play(dl, pa, ImVec2(pa.x + px(240.0F), pa.y + px(72.0F)), can_play);
+    const char *hint =
+        running ? "Extraindo a imagem..." : (ok ? "Pronto para a largada" : "Selecione a pasta para jogar");
     const float hw = text_w(Face::Body, 12.0F, hint);
     text(dl, Face::Body, 12.0F, ImVec2(play_x + (px(240.0F) - hw) * 0.5F, pa.y + px(72.0F + 8.0F)), white(0.75F), hint);
 }
@@ -432,6 +499,13 @@ void draw(void *user) {
             g.message[0] = '\0';
         }
     }
+    if (g.dialog_image && platform_dialog_take(picked, sizeof(picked))) {
+        g.dialog_image = false;
+        if (picked[0] != '\0') {
+            import_start(picked);
+        }
+    }
+    import_poll();
     if (g.dialog_card && platform_dialog_take(picked, sizeof(picked))) {
         g.dialog_card = false;
         if (picked[0] != '\0') {
@@ -524,6 +598,8 @@ struct ShotScene {
     bool valid_dir;
     u32 w, h; /* 0 = tamanho atual da janela */
     ImGuiKey keys[8];
+    int imp = 0; /* 0 = nada; 1 = extraindo 42% (simulado); 2 = oferta de usar a extração existente; 3 = extração real
+                  * de uma imagem inválida (erro); 4 = outro jogo (aviso) */
 };
 
 const ShotScene kScenes[] = {
@@ -557,6 +633,10 @@ const ShotScene kScenes[] = {
      1280,
      760,
      {ImGuiKey_RightArrow, ImGuiKey_DownArrow, ImGuiKey_DownArrow, ImGuiKey_DownArrow, ImGuiKey_RightArrow}},
+    {"41_inicio_extraindo", Page::Home, true, false, 1280, 760, {}, 1},
+    {"42_inicio_extracao_existente", Page::Home, true, false, 1280, 760, {}, 2},
+    {"43_inicio_erro_imagem", Page::Home, true, false, 1280, 760, {}, 3},
+    {"44_inicio_outro_jogo", Page::Home, true, false, 1280, 760, {}, 4},
     {"31_inicio_pequena", Page::Home, true, true, 640, 448, {}},
     {"32_graficos_pequena", Page::Graphics, true, true, 640, 448, {}},
     {"33_inicio_4k", Page::Home, true, true, 3840, 2160, {}},
@@ -575,6 +655,37 @@ struct ShotState {
     char game_dir[SETTINGS_PATH_SIZE];
 };
 ShotState s_shot;
+
+/* Estados da extração para as capturas: simulados (sem thread), exceto o erro de imagem, que roda a thread de verdade
+ * sobre um arquivo falso, com o destino fora da pasta de dados do jogador. */
+void shot_import_scene(int imp) {
+    Import &im = g.imp;
+    import_shutdown();
+    im.fake = false;
+    im.out_override[0] = '\0';
+    if (imp == 1) {
+        im.fake = true;
+        im.phase = ImportPhase::Running;
+        im.bytes_total = 1459617792ULL;
+        im.bytes_done = im.bytes_total * 42ULL / 100ULL;
+        im.files_total = 203;
+        im.files_done = 87;
+        (void)std::snprintf(im.current, sizeof(im.current), "files/afs03.afs");
+    } else if (imp == 2) {
+        im.phase = ImportPhase::Offer;
+        (void)std::snprintf(im.out, sizeof(im.out), "C:/Users/jogador/AppData/Roaming/AutoModellista/jogo");
+    } else if (imp == 3) {
+        char fake[1200];
+        (void)std::snprintf(fake, sizeof(fake), "%s/imagem_falsa.iso", s_shot.dir);
+        static const u8 junk[64] = {1, 2, 3};
+        (void)platform_save_file(fake, junk, sizeof(junk));
+        (void)std::snprintf(im.out_override, sizeof(im.out_override), "%s/jogo_teste", s_shot.dir);
+        import_start(fake);
+    } else if (imp == 4) {
+        (void)std::snprintf(g.message, sizeof(g.message),
+                            "Outro jogo ou outra versão (main.dol diferente): a pasta do jogo não foi trocada.");
+    }
+}
 
 void shot_begin_scene(const ShotScene &sc) {
     *g.s = s_shot.base;
@@ -595,6 +706,7 @@ void shot_begin_scene(const ShotScene &sc) {
     if (sc.page == Page::Home) {
         g.focus_content = true;
     }
+    shot_import_scene(sc.imp);
     if (sc.w != 0U) {
         platform_window_set_size(sc.w, sc.h);
     }
@@ -702,6 +814,7 @@ extern "C" LauncherResult launcher_run(Settings *s, const LauncherInfo *info) {
     platform_ui_set_draw(draw, nullptr);
     if (g.s == &shot_copy) {
         const bool ok = run_shots(shot_dir);
+        import_shutdown();
         platform_ui_set_draw(nullptr, nullptr);
         return ok ? LAUNCHER_SHOT : LAUNCHER_ERROR;
     }
@@ -714,6 +827,7 @@ extern "C" LauncherResult launcher_run(Settings *s, const LauncherInfo *info) {
         apply_pending();
         platform_sleep_ns(8000000ULL); /* a tela inicial não precisa de mais que ~120 quadros/s */
     }
+    import_shutdown(); /* cancela e espera a extração: nunca sai com a pasta pela metade */
     platform_ui_set_draw(nullptr, nullptr);
     return g.result;
 }

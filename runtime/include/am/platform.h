@@ -93,6 +93,8 @@ u32 platform_hotkeys_take(void);
  * texto vazio = cancelado). Um por vez. */
 void platform_dialog_pick_folder(const char *start);
 void platform_dialog_save_file(const char *start, const char *filter_name, const char *filter_ext);
+/* Escolher um arquivo existente; filter_exts separadas por ';' ("iso;gcm;rvz"). */
+void platform_dialog_open_file(const char *start, const char *filter_name, const char *filter_exts);
 bool platform_dialog_take(char *out, size_t size);
 
 /* Tela inicial (M9 parte 5): tamanho da janela fora da tela cheia, em pixels (só para as capturas de desenvolvimento

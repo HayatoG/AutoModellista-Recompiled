@@ -137,9 +137,9 @@ am_apply_sanitize_link(disc_extract)
 
 # --- am_front (M9 parte 5): configurações, pasta do jogo, banner, tela inicial e contador de quadros -----------------
 add_library(am_front STATIC front/settings.c front/gamedir.c front/banner.c front/session.c front/launcher.cpp
-  front/launcher_gfx.c front/launcher_ui.cpp front/launcher_pages.cpp front/overlay.cpp)
+  front/launcher_gfx.c front/launcher_ui.cpp front/launcher_pages.cpp front/launcher_import.cpp front/overlay.cpp)
 target_include_directories(am_front PUBLIC include)
-target_link_libraries(am_front PUBLIC am_core am_platform PRIVATE am_imgui)
+target_link_libraries(am_front PUBLIC am_core am_platform PRIVATE am_imgui am_disc_extract)
 target_compile_definitions(am_front PRIVATE AM_VERSION="${PROJECT_VERSION}")
 am_apply_strict(am_front)
 
