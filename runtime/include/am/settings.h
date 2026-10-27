@@ -24,6 +24,7 @@ typedef struct Settings {
     u32 window_scale;                  /* 1..SETTINGS_SCALE_MAX */
     bool fullscreen;
     bool vsync;
+    u32 filter; /* PlatformFilter (am/platform.h): 0 nearest, 1 linear, 2 sharp */
     bool fps_overlay;
     u32 volume;        /* 0..100 */
     char gamepad[128]; /* nome do gamepad da porta 1; vazio = o primeiro conectado */
@@ -32,6 +33,8 @@ typedef struct Settings {
 } Settings;
 
 void settings_defaults(Settings *s);
+/* Nome do filtro da imagem no INI e na linha de comando ("nearest", "linear", "sharp"); fora da faixa, "nearest". */
+const char *settings_filter_name(u32 filter);
 /* Lê o texto INI por cima de `s` (chaves ausentes ficam como estão). Devolve quantas linhas foram ignoradas por não
  * serem entendidas. */
 u32 settings_parse(const char *text, size_t size, Settings *s);

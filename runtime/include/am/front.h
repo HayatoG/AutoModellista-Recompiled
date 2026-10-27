@@ -41,6 +41,7 @@ typedef struct FrontOverrides {
     int gpu;                                    /* -1 = do arquivo; 0/1 = --gfx soft/gpu */
     u32 window_scale;                           /* 0 = do arquivo */
     int fullscreen, vsync, fps_overlay, volume; /* -1 = do arquivo */
+    int filter;                                 /* -1 = do arquivo; senão PlatformFilter (--present-filter) */
     const char *memcard;                        /* NULL = do arquivo */
     bool no_launcher;
     int gpu_shader;

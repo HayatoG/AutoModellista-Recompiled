@@ -17,6 +17,7 @@ static struct {
     bool gpu; /* apresentação pelo swapchain do device da GPU */
     u32 base_w, base_h, scale;
     bool high_dpi, fullscreen, vsync;
+    u32 filter; /* PlatformFilter */
     char presenter[64];
     SDL_Gamepad *pads[PLATFORM_MAX_GAMEPADS]; /* todos os conectados */
     u32 pad_count;
@@ -189,6 +190,28 @@ void platform_window_set_vsync(bool on) {
     }
 }
 
+/* SDL_Renderer: nearest, linear, e para o sharp o modo "pixel art" da SDL 3.4 (nearest com bordas suaves); numa SDL
+ * mais velha o sharp vira linear. */
+static SDL_ScaleMode renderer_scale_mode(void) {
+    if (s_win.filter == (u32)PLATFORM_FILTER_NEAREST) {
+        return SDL_SCALEMODE_NEAREST;
+    }
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    if (s_win.filter == (u32)PLATFORM_FILTER_SHARP) {
+        return SDL_SCALEMODE_PIXELART;
+    }
+#endif
+    return SDL_SCALEMODE_LINEAR;
+}
+
+void platform_window_set_filter(u32 filter) {
+    s_win.filter = filter < (u32)PLATFORM_FILTER_COUNT ? filter : (u32)PLATFORM_FILTER_NEAREST;
+    present_gpu_set_filter(s_win.filter);
+    if (s_win.texture != NULL) {
+        (void)SDL_SetTextureScaleMode(s_win.texture, renderer_scale_mode());
+    }
+}
+
 void platform_window_set_scale(u32 scale) {
     s_win.scale = scale;
     if (s_win.window != NULL && !s_win.fullscreen && scale != 0U) {
@@ -334,7 +357,7 @@ static bool ensure_texture(u32 width, u32 height) {
         platform_set_error(SDL_GetError());
         return false;
     }
-    (void)SDL_SetTextureScaleMode(s_win.texture, SDL_SCALEMODE_NEAREST);
+    (void)SDL_SetTextureScaleMode(s_win.texture, renderer_scale_mode());
     s_win.tex_w = width;
     s_win.tex_h = height;
     return true;

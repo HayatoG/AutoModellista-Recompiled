@@ -335,6 +335,13 @@ void settings_rows(float w) {
         s->vsync = !s->vsync;
         platform_window_set_vsync(s->vsync);
     }
+    static const char *const filters[] = {"Pixels (nearest)", "Suave (linear)", "Nítido (sharp)"};
+    const int nf = static_cast<int>(PLATFORM_FILTER_COUNT);
+    d = option_row("Filtro da imagem", filters[s->filter < static_cast<u32>(nf) ? s->filter : 0U], w);
+    if (d != 0) {
+        s->filter = static_cast<u32>((static_cast<int>(s->filter) + d + nf) % nf);
+        platform_window_set_filter(s->filter);
+    }
     if (option_row("Contador de FPS (F3)", yes_no(s->fps_overlay), w) != 0) {
         s->fps_overlay = !s->fps_overlay;
     }

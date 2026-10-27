@@ -25,6 +25,8 @@ void platform_window_release_gpu(void);
 bool present_gpu_attach(SDL_Window *window, SDL_GPUDevice *device, bool vsync);
 void present_gpu_detach(void);
 void present_gpu_set_vsync(bool on);
+/* PlatformFilter (am/platform.h); vale já no próximo quadro e sobrevive a um detach. */
+void present_gpu_set_filter(u32 filter);
 SDL_GPUTextureFormat present_gpu_format(void);
 /* 60 FPS: quadros descartados porque o swapchain não deu textura. */
 u64 present_gpu_dropped(void);

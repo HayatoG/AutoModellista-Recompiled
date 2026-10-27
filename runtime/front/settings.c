@@ -20,6 +20,11 @@ void settings_defaults(Settings *s) {
     pad_input_default_bindings(&s->pad);
 }
 
+const char *settings_filter_name(u32 filter) {
+    static const char *const names[] = {"nearest", "linear", "sharp"};
+    return names[filter < (u32)PLATFORM_FILTER_COUNT ? filter : 0U];
+}
+
 static bool parse_bool(const char *v, bool *out) {
     if (strcmp(v, "1") == 0 || strcmp(v, "true") == 0 || strcmp(v, "on") == 0) {
         *out = true;
@@ -102,6 +107,15 @@ static bool parse_pair(Settings *s, const char *section, const char *key, const 
     }
     if (strcmp(full, "video.vsync") == 0) {
         return parse_bool(v, &s->vsync);
+    }
+    if (strcmp(full, "video.filter") == 0) {
+        for (u32 f = 0; f < (u32)PLATFORM_FILTER_COUNT; f++) {
+            if (strcmp(v, settings_filter_name(f)) == 0) {
+                s->filter = f;
+                return true;
+            }
+        }
+        return false;
     }
     if (strcmp(full, "video.fps_overlay") == 0) {
         return parse_bool(v, &s->fps_overlay);
@@ -209,8 +223,9 @@ size_t settings_format(const Settings *s, char *out, size_t size) {
     put(&o, "# Auto Modellista Recompiled: configurações (docs/M9_PARTE5_LAUNCHER.md). A linha de comando tem\n"
             "# prioridade. Teclas pelo nome da SDL; botões do gamepad por posição, juntos com '+'.\n");
     put(&o, "\n[game]\ndir = %s\nmemcard = %s\n", s->game_dir, s->memcard);
-    put(&o, "\n[video]\nbackend = %s\nscale = %u\nfullscreen = %d\nvsync = %d\nfps_overlay = %d\n",
-        s->gpu ? "gpu" : "soft", s->window_scale, s->fullscreen ? 1 : 0, s->vsync ? 1 : 0, s->fps_overlay ? 1 : 0);
+    put(&o, "\n[video]\nbackend = %s\nscale = %u\nfullscreen = %d\nvsync = %d\nfilter = %s\nfps_overlay = %d\n",
+        s->gpu ? "gpu" : "soft", s->window_scale, s->fullscreen ? 1 : 0, s->vsync ? 1 : 0,
+        settings_filter_name(s->filter), s->fps_overlay ? 1 : 0);
     put(&o, "\n[audio]\nvolume = %u\n", s->volume);
     put(&o, "\n[input]\ngamepad = %s\n", s->gamepad);
     put(&o, "\n[keyboard]\n");

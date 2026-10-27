@@ -71,6 +71,9 @@
  *   --volume <0..100>          volume geral da saída de som (F9/F10 mudam de 10 em 10)
  *   --fullscreen on|off        tela cheia (F11 ou Alt+Enter alternam)
  *   --vsync on|off             a apresentação espera o retraço do monitor (padrão off: o ritmo é o do VI emulado)
+ *   --present-filter nearest|linear|sharp  filtro com que a janela estica a imagem (padrão nearest, igual ao de antes;
+ *                              sharp = escala inteira por nearest e depois bilinear). Só a janela: o XFB e as capturas
+ *                              --shot não mudam. Como o --vsync, vale no modo interativo (docs/M9_PARTE5_LAUNCHER.md)
  *
  * Caminhos relativos de --trace/--dump-boot-state são resolvidos em $AM_LOG_DIR quando definido (os scripts usam
  * /Volumes/AMRecomp/logs): saída de execução nunca vai para o repositório. */
@@ -144,6 +147,7 @@ typedef struct Options {
     int fps_overlay;
     int fullscreen;
     int vsync;
+    int filter; /* PlatformFilter; -1 = do arquivo */
     int volume;
     int idle_skip; /* -1 = padrão (on) */
     bool gfx_given;
@@ -204,6 +208,17 @@ static bool parse_on_off(const char *text, int *out) {
     return false;
 }
 
+/* --present-filter: o nome do filtro (settings_filter_name) vira o PlatformFilter. */
+static bool parse_filter(const char *text, int *out) {
+    for (int f = 0; f < (int)PLATFORM_FILTER_COUNT; f++) {
+        if (strcmp(text, settings_filter_name((u32)f)) == 0) {
+            *out = f;
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Opções on|off do M7. */
 static bool parse_switch(Options *o, const char *name, const char *value) {
     const struct {
@@ -255,6 +270,8 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->gfx_off = strcmp(value, "off") == 0;
         o->gfx_gpu = strcmp(value, "gpu") == 0;
         o->gfx_given = true;
+    } else if (strcmp(name, "--present-filter") == 0 && parse_filter(value, &o->filter)) {
+        return true;
     } else if (strcmp(name, "--volume") == 0 && parse_u64(value, &n) && n <= 100U) {
         o->volume = (int)n;
     } else if (strcmp(name, "--gpu-shader") == 0 &&
@@ -317,6 +334,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
                    .fps_overlay = -1,
                    .fullscreen = -1,
                    .vsync = -1,
+                   .filter = -1,
                    .idle_skip = -1,
                    .volume = -1,
                    .max_seconds = 120U,
@@ -724,6 +742,7 @@ static int run_session(CPUState *cpu, Options *o) {
                                .window_scale = o->window_given ? (u32)o->window_scale : 0U,
                                .fullscreen = o->fullscreen,
                                .vsync = o->vsync,
+                               .filter = o->filter,
                                .fps_overlay = o->fps_overlay,
                                .volume = o->volume,
                                .memcard = o->memcard,

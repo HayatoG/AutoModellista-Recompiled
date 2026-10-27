@@ -14,6 +14,7 @@ TEST(defaults_follow_dolphin) {
     EXPECT_TRUE(s.gpu);
     EXPECT_EQ(s.window_scale, 2U);
     EXPECT_EQ(s.volume, 100U);
+    EXPECT_EQ(s.filter, 0U); /* nearest: a janela estica a imagem como antes */
     EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_A], "X") == 0);
     EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_START], "Return") == 0);
     EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_HALF], "Left Shift") == 0);
@@ -25,6 +26,7 @@ TEST(parse_overrides_and_counts_bad_lines) {
                                "[game]\n dir = /jogos/am \n"
                                "[video]\nbackend = soft\nscale = 3\nfullscreen = 1\nvsync = on\nfps_overlay = true\n"
                                "scale = 99\n"
+                               "filter = sharp\nfilter = pixelart\n"
                                "[audio]\nvolume = 35\n"
                                "[input]\ngamepad = Xbox Wireless Controller\n"
                                "[keyboard]\nA = Space\n"
@@ -33,7 +35,8 @@ TEST(parse_overrides_and_counts_bad_lines) {
     Settings s;
     settings_defaults(&s);
     const u32 bad = settings_parse(text, sizeof(text) - 1U, &s);
-    EXPECT_EQ(bad, 3U); /* scale = 99, Z = nada, linha sem igual */
+    EXPECT_EQ(bad, 4U);      /* scale = 99, filter = pixelart, Z = nada, linha sem igual */
+    EXPECT_EQ(s.filter, 2U); /* sharp; o valor inválido não mexe */
     EXPECT_TRUE(strcmp(s.game_dir, "/jogos/am") == 0);
     EXPECT_TRUE(!s.gpu);
     EXPECT_EQ(s.window_scale, 3U);
@@ -53,6 +56,7 @@ TEST(format_round_trip) {
     (void)strcpy(a.memcard, "/tmp/cartao.raw");
     a.gpu = false;
     a.volume = 0;
+    a.filter = 1;
     a.pad.pad[PAD_CONTROL_L] = 1U << PLATFORM_PAD_LEFT_SHOULDER;
     (void)strcpy(a.keys[PAD_CONTROL_C_UP], "Keypad 8");
     static char text[16384];

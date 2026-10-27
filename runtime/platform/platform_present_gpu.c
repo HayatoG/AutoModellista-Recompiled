@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* M9 parte 5: com o GX na GPU, a janela é apresentada pelo swapchain do mesmo device da SDL3 GPU (sem um segundo
- * device do SDL_Renderer). O XFB vai para uma textura e é copiado para o swapchain com SDL_BlitGPUTexture (filtro
- * nearest, barras pretas, a mesma conta do SDL_LOGICAL_PRESENTATION_LETTERBOX); a interface (imgui_impl_sdlgpu3) é
- * desenhada por cima num passe com LOAD. Nenhum shader próprio: o blit é da SDL e os shaders do ImGui vêm embutidos no
- * backend dele (SPIR-V, DXBC e metallib). */
+ * device do SDL_Renderer). O XFB vai para uma textura e é copiado para o swapchain com SDL_BlitGPUTexture (barras
+ * pretas, a mesma conta do SDL_LOGICAL_PRESENTATION_LETTERBOX) com o filtro escolhido (PlatformFilter: nearest, linear
+ * ou sharp, que são dois blits); a interface (imgui_impl_sdlgpu3) é desenhada por cima num passe com LOAD. Nenhum
+ * shader próprio: o blit é da SDL e os shaders do ImGui vêm embutidos no backend dele (SPIR-V, DXBC e metallib). */
 #include <stdio.h>
 #include <string.h>
 
@@ -16,6 +16,8 @@ static struct {
     SDL_Window *window;
     SDL_GPUTexture *xfb;
     u32 xfb_w, xfb_h;
+    SDL_GPUTexture *mid; /* filtro sharp: o XFB já ampliado por nearest numa escala inteira */
+    u32 mid_w, mid_h;
     SDL_GPUTransferBuffer *upload;
     u32 upload_size;
     SDL_GPUTextureFormat format;
@@ -23,6 +25,13 @@ static struct {
 
 /* 60 FPS: quadros em que o swapchain não deu textura e nada foi mostrado (--frame-trace; sobrevive ao detach). */
 static u64 s_dropped;
+
+/* Filtro da imagem (PlatformFilter), também fora de s_pg: a escolha vale antes do attach e depois de um detach. */
+static u32 s_filter;
+
+void present_gpu_set_filter(u32 filter) {
+    s_filter = filter < (u32)PLATFORM_FILTER_COUNT ? filter : (u32)PLATFORM_FILTER_NEAREST;
+}
 
 u64 present_gpu_dropped(void) {
     return s_dropped;
@@ -53,6 +62,9 @@ void present_gpu_detach(void) {
     SDL_WaitForGPUIdle(s_pg.device);
     if (s_pg.xfb != NULL) {
         SDL_ReleaseGPUTexture(s_pg.device, s_pg.xfb);
+    }
+    if (s_pg.mid != NULL) {
+        SDL_ReleaseGPUTexture(s_pg.device, s_pg.mid);
     }
     if (s_pg.upload != NULL) {
         SDL_ReleaseGPUTransferBuffer(s_pg.device, s_pg.upload);
@@ -126,19 +138,68 @@ static bool upload_xfb(SDL_GPUCommandBuffer *cmd, const u8 *rgba, u32 width, u32
     return true;
 }
 
-/* XFB escalado para caber em target (tw x th), centralizado, fundo preto. */
+/* Filtro sharp: a textura intermediária (width x height, o XFB vezes k), recriada só quando k muda. */
+static bool ensure_mid(u32 width, u32 height) {
+    if (s_pg.mid != NULL && s_pg.mid_w == width && s_pg.mid_h == height) {
+        return true;
+    }
+    if (s_pg.mid != NULL) {
+        SDL_ReleaseGPUTexture(s_pg.device, s_pg.mid);
+        s_pg.mid = NULL;
+    }
+    const SDL_GPUTextureCreateInfo tex = {.type = SDL_GPU_TEXTURETYPE_2D,
+                                          .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                          .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                                          .width = width,
+                                          .height = height,
+                                          .layer_count_or_depth = 1,
+                                          .num_levels = 1};
+    s_pg.mid = SDL_CreateGPUTexture(s_pg.device, &tex);
+    if (s_pg.mid == NULL) {
+        return false;
+    }
+    s_pg.mid_w = width;
+    s_pg.mid_h = height;
+    return true;
+}
+
+/* XFB escalado para caber em target (tw x th), centralizado, fundo preto, com o filtro escolhido. */
 static void blit_xfb(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target, u32 tw, u32 th) {
     const float sx = (float)tw / (float)s_pg.xfb_w;
     const float sy = (float)th / (float)s_pg.xfb_h;
     const float s = sx < sy ? sx : sy;
     const u32 w = (u32)((float)s_pg.xfb_w * s);
     const u32 h = (u32)((float)s_pg.xfb_h * s);
+    SDL_GPUTexture *source = s_pg.xfb;
+    u32 source_w = s_pg.xfb_w;
+    u32 source_h = s_pg.xfb_h;
+    SDL_GPUFilter filter = s_filter == (u32)PLATFORM_FILTER_NEAREST ? SDL_GPU_FILTER_NEAREST : SDL_GPU_FILTER_LINEAR;
+    if (s_filter == (u32)PLATFORM_FILTER_SHARP) {
+        /* Escala não inteira: primeiro k vezes por nearest (pixels nítidos), depois o bilinear só tira a diferença
+         * entre k e a escala de verdade. Abaixo de 2x o bilinear direto é o mesmo resultado. Escala inteira: nearest.
+         */
+        const u32 k = (u32)s;
+        if (s == (float)k) {
+            filter = SDL_GPU_FILTER_NEAREST;
+        } else if (k >= 2U && ensure_mid(s_pg.xfb_w * k, s_pg.xfb_h * k)) {
+            const SDL_GPUBlitInfo up = {
+                .source = {.texture = s_pg.xfb, .w = s_pg.xfb_w, .h = s_pg.xfb_h},
+                .destination = {.texture = s_pg.mid, .w = s_pg.mid_w, .h = s_pg.mid_h},
+                .load_op = SDL_GPU_LOADOP_DONT_CARE,
+                .filter = SDL_GPU_FILTER_NEAREST,
+            };
+            SDL_BlitGPUTexture(cmd, &up);
+            source = s_pg.mid;
+            source_w = s_pg.mid_w;
+            source_h = s_pg.mid_h;
+        }
+    }
     const SDL_GPUBlitInfo blit = {
-        .source = {.texture = s_pg.xfb, .w = s_pg.xfb_w, .h = s_pg.xfb_h},
+        .source = {.texture = source, .w = source_w, .h = source_h},
         .destination = {.texture = target, .x = (tw - w) / 2U, .y = (th - h) / 2U, .w = w, .h = h},
         .load_op = SDL_GPU_LOADOP_CLEAR,
         .clear_color = {0.0F, 0.0F, 0.0F, 1.0F},
-        .filter = SDL_GPU_FILTER_NEAREST,
+        .filter = filter,
     };
     SDL_BlitGPUTexture(cmd, &blit);
 }

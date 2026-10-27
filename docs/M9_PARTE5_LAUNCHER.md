@@ -56,7 +56,7 @@ opção, esquerda/direita mudam o valor.
 | Tela | Conteúdo |
 | --- | --- |
 | Principal | banner, JOGAR, Configurações, Controles, Memory card, Sair; rodapé "Metal · Apple M4 · escala 2x" (ou "software · janela metal (SDL_Renderer)") e "A / Enter Confirmar · B / Esc Voltar" |
-| Configurações | backend do GX (GPU/software), escala da janela (1x a 6x), tela cheia, VSync, contador de FPS, volume (de 10 em 10%), pasta do jogo |
+| Configurações | backend do GX (GPU/software), escala da janela (1x a 6x), tela cheia, VSync, filtro da imagem (`nearest` pixels, `linear` suave, `sharp` escala inteira por nearest e bilinear nas bordas; `video.filter` no INI, `--present-filter` na linha de comando; só a janela, o XFB e as capturas não mudam), contador de FPS, volume (de 10 em 10%), pasta do jogo |
 | Controles | controle da porta 1 (automático = o primeiro conectado, ou um pelo nome) e uma linha por controle do GameCube: escolher a linha e apertar a tecla **ou** o botão novo (Esc cancela); "Restaurar os padrões do Dolphin" |
 | Memory card | arquivo do slot A (padrão ou escolhido no diálogo de salvar da SDL, filtro `.raw`) |
 | Pasta do jogo | diálogo de pasta da SDL (`SDL_ShowOpenFolderDialog`) ou o caminho digitado; mostra o resultado da conferência |

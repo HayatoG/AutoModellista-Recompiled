@@ -30,6 +30,9 @@ static void apply_overrides(Settings *s, const FrontOverrides *ov) {
     if (ov->vsync >= 0) {
         s->vsync = ov->vsync == 1;
     }
+    if (ov->filter >= 0) {
+        s->filter = (u32)ov->filter;
+    }
     if (ov->fps_overlay >= 0) {
         s->fps_overlay = ov->fps_overlay == 1;
     }
@@ -55,6 +58,7 @@ static bool open_window(FrontSession *fs, const char *title) {
     platform_window_set_high_dpi(true);
     platform_window_set_fullscreen(fs->eff.fullscreen);
     platform_window_set_vsync(fs->eff.vsync);
+    platform_window_set_filter(fs->eff.filter);
     platform_audio_set_volume((float)fs->eff.volume / 100.0F);
     if (fs->eff.gpu && !platform_gpu_init((PlatformGpuShader)fs->ov.gpu_shader)) {
         AM_LOG_WARN("--gfx gpu: sem GPU utilizável (%s); a tela inicial vai pelo SDL_Renderer", platform_gpu_error());
@@ -116,6 +120,7 @@ FrontStart front_session_begin(FrontSession *fs, const FrontOverrides *ov, const
         platform_window_set_high_dpi(true);
         platform_window_set_fullscreen(fs->eff.fullscreen);
         platform_window_set_vsync(fs->eff.vsync);
+        platform_window_set_filter(fs->eff.filter);
         (void)platform_ui_init();
     }
     return resolve_sys(fs) ? FRONT_PLAY : FRONT_ERROR;
@@ -136,6 +141,7 @@ void front_session_end(FrontSession *fs) {
     KEEP_FILE_VALUE(fs->ov.window_scale != 0U, window_scale);
     KEEP_FILE_VALUE(fs->ov.fullscreen >= 0, fullscreen);
     KEEP_FILE_VALUE(fs->ov.vsync >= 0, vsync);
+    KEEP_FILE_VALUE(fs->ov.filter >= 0, filter);
     KEEP_FILE_VALUE(fs->ov.fps_overlay >= 0, fps_overlay);
     KEEP_FILE_VALUE(fs->ov.volume >= 0, volume);
     KEEP_FILE_VALUE(fs->ov.memcard != NULL, memcard);

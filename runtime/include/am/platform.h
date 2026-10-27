@@ -59,6 +59,18 @@ void platform_window_set_fullscreen(bool on);
 bool platform_window_fullscreen(void);
 /* VSync: a apresentação espera o retraço do monitor. Padrão desligado (o ritmo é o do VI emulado). */
 void platform_window_set_vsync(bool on);
+/* Filtro com que a janela estica a imagem do jogo. Só a apresentação: o XFB, as capturas --shot do XFB e a emulação não
+ * mudam; a captura <arq>_janela.png (--shot com janela) é lida de volta do que a janela desenhou, então reflete o
+ * filtro. nearest = pixels quadrados (o padrão, igual ao de antes); linear = bilinear; sharp = bilinear só nas bordas,
+ * depois de uma escala inteira com nearest (sem shader próprio na GPU; no SDL_Renderer, SDL_SCALEMODE_PIXELART da
+ * SDL 3.4). */
+typedef enum PlatformFilter {
+    PLATFORM_FILTER_NEAREST,
+    PLATFORM_FILTER_LINEAR,
+    PLATFORM_FILTER_SHARP,
+    PLATFORM_FILTER_COUNT,
+} PlatformFilter;
+void platform_window_set_filter(u32 filter);
 /* Tamanho da janela fora da tela cheia: width x height x scale (os de platform_window_open). */
 void platform_window_set_scale(u32 scale);
 /* "Metal (SDL GPU)", "metal (SDL_Renderer)"...; "" sem janela. */
