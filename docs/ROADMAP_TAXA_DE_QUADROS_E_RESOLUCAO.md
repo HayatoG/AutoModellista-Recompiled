@@ -55,6 +55,25 @@ quebram, e a física muda de velocidade). O ganho possível é de **apresentaç�
    identidade de objeto a resolver por hash e HUD sem interpolar (esforço G, risco alto); ou por pós-processamento do
    XFB (fluxo óptico, experimental, precisa de shaders).
 
+### Nota (27/10): 120 imagens DIFERENTES por segundo é possível, e o gargalo decide o caminho
+
+O que está descartado é rodar a **lógica** a 120 Hz, não mostrar 120 imagens. Para ter 120 imagens distintas é preciso
+gerar uma imagem intermediária por quadro lógico, e o custo muda muito conforme o caminho:
+
+- **Interpolação por vértices (render interpolation):** reemite o fluxo do GX com as posições interpoladas, então cada
+  quadro lógico passa a custar **duas** renderizações. Como o GX já gasta ~15 ms de um orçamento de 16,7 ms, o gasto iria
+  para ~30 ms: só é viável depois de cortar o custo do GX por quadro para ≤ 7 ms (fase 2). Qualidade melhor (HUD fica de
+  fora, sem fantasmas), esforço G, risco alto.
+- **Interpolação por pós-processamento (geração de quadros sobre as duas últimas imagens finais, como FSR3/RIFE):** NÃO
+  passa pela thread do GX, que é o gargalo; custa GPU (a placa tem folga: a espera média pela GPU é ~1 ms por leitura) e
+  precisa de shaders (DXC no Windows). Artefatos em HUD, rodas e cortes de câmera; +1 quadro de latência. É o caminho
+  que chega primeiro a 120 imagens distintas.
+
+Ordem prática: (1) apresentar por vblank do monitor (já melhora a regularidade e a latência em 120/144 Hz, ainda com 60
+imagens distintas), (2) DXC no Windows, (3) geração de quadros por pós-processamento como opção experimental, (4) em
+paralelo, cortar o custo do GX; quando ficar ≤ 7 ms, a interpolação por vértices vira o modo de qualidade.
+Falta saber a taxa e o tipo (VRR) do monitor do usuário.
+
 ## 4. Resoluções
 
 - Fator interno **inteiro** N = altura de saída ÷ 448 arredondada para cima, entre 1 e 4 (1080p dá 3×, 1440p e 4K dão 4×);
