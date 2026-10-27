@@ -115,14 +115,14 @@ if(UNIX AND NOT APPLE)
 endif()
 
 add_library(am_platform STATIC platform/platform.c platform/platform_gpu.c platform/platform_window.c
-  platform/platform_present_gpu.c platform/platform_ui.cpp)
+  platform/platform_present_gpu.c platform/platform_ui.cpp platform/ui_assets_data.c)
 target_include_directories(am_platform PUBLIC include)
 target_link_libraries(am_platform PUBLIC SDL3::SDL3 PRIVATE am_imgui)
 am_apply_strict(am_platform)
 
 # --- am_front (M9 parte 5): configurações, pasta do jogo, banner, tela inicial e contador de quadros -----------------
 add_library(am_front STATIC front/settings.c front/gamedir.c front/banner.c front/session.c front/launcher.cpp
-  front/overlay.cpp)
+  front/launcher_gfx.c front/overlay.cpp)
 target_include_directories(am_front PUBLIC include)
 target_link_libraries(am_front PUBLIC am_core am_platform PRIVATE am_imgui)
 am_apply_strict(am_front)

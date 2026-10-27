@@ -426,6 +426,52 @@ void platform_audio_close(void) {
     }
 }
 
+bool platform_clipboard_set(const char *text) {
+    if (!SDL_SetClipboardText(text)) {
+        set_error(SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
+bool platform_open_url(const char *url) {
+    if (!SDL_OpenURL(url)) {
+        set_error(SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
+/* file:// com os bytes fora de [A-Za-z0-9/_.~:-] em %XX; no Windows, "C:\a b" vira "file:///C:/a%20b". */
+bool platform_open_folder(const char *path) {
+    static const char hex[] = "0123456789ABCDEF";
+    char url[2048];
+    size_t n = 0;
+    const char *prefix = path[0] != '/' ? "file:///" : "file://";
+    for (const char *p = prefix; *p != '\0'; p++) {
+        url[n++] = *p;
+    }
+    for (const char *p = path; *p != '\0' && n + 4U < sizeof(url); p++) {
+        const unsigned char c = (unsigned char)*p;
+        if (c == '\\') {
+            url[n++] = '/';
+        } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '/' || c == '_' ||
+                   c == '.' || c == '~' || c == ':' || c == '-') {
+            url[n++] = (char)c;
+        } else {
+            url[n++] = '%';
+            url[n++] = hex[c >> 4];
+            url[n++] = hex[c & 15U];
+        }
+    }
+    url[n] = '\0';
+    return platform_open_url(url);
+}
+
+const char *platform_os_name(void) {
+    return SDL_GetPlatform();
+}
+
 int platform_sdl_version(void) {
     return SDL_GetVersion();
 }

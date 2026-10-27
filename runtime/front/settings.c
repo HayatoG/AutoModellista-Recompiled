@@ -14,6 +14,8 @@ void settings_defaults(Settings *s) {
     s->gpu = true;
     s->window_scale = 2;
     s->volume = 100;
+    s->ui_glass = true;
+    s->ui_blur = 24;
     for (u32 i = 0; i < (u32)PAD_CONTROL_COUNT; i++) {
         (void)snprintf(s->keys[i], sizeof(s->keys[i]), "%s", pad_input_default_key((PadControl)i));
     }
@@ -119,6 +121,13 @@ static bool parse_pair(Settings *s, const char *section, const char *key, const 
     }
     if (strcmp(full, "video.fps_overlay") == 0) {
         return parse_bool(v, &s->fps_overlay);
+    }
+    if (strcmp(full, "ui.style") == 0 && (strcmp(v, "glass") == 0 || strcmp(v, "solid") == 0)) {
+        s->ui_glass = strcmp(v, "glass") == 0;
+        return true;
+    }
+    if (strcmp(full, "ui.glass") == 0) {
+        return parse_uint(v, SETTINGS_BLUR_MIN, SETTINGS_BLUR_MAX, &s->ui_blur);
     }
     if (strcmp(full, "audio.volume") == 0) {
         return parse_uint(v, 0, 100, &s->volume);
@@ -226,6 +235,7 @@ size_t settings_format(const Settings *s, char *out, size_t size) {
     put(&o, "\n[video]\nbackend = %s\nscale = %u\nfullscreen = %d\nvsync = %d\nfilter = %s\nfps_overlay = %d\n",
         s->gpu ? "gpu" : "soft", s->window_scale, s->fullscreen ? 1 : 0, s->vsync ? 1 : 0,
         settings_filter_name(s->filter), s->fps_overlay ? 1 : 0);
+    put(&o, "\n[ui]\nstyle = %s\nglass = %u\n", s->ui_glass ? "glass" : "solid", s->ui_blur);
     put(&o, "\n[audio]\nvolume = %u\n", s->volume);
     put(&o, "\n[input]\ngamepad = %s\n", s->gamepad);
     put(&o, "\n[keyboard]\n");

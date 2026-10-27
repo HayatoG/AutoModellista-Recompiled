@@ -1,0 +1,11 @@
+Zstandard (zstd) 1.5.7, apenas o decodificador.
+
+Origem:   https://github.com/facebook/zstd/releases/tag/v1.5.7 (zstd-1.5.7.tar.gz)
+Licença:  BSD-3-Clause (arquivo LICENSE ao lado), escolhida entre as duas oferecidas pelo projeto (BSD ou GPLv2);
+          compatível com o GPL-3.0 do Auto Modellista Recompiled.
+Uso:      core/disc_rvz.c descomprime os grupos de imagens RVZ (formato do Dolphin) na extração da imagem do jogo.
+
+zstddeclib.c é o amalgamado do decodificador, gerado sem alterações com:
+    cd build/single_file_libs
+    sh ./combine.sh -r ../../lib -x legacy/zstd_legacy.h -o zstddeclib.c zstddeclib-in.c
+zstd.h e zstd_errors.h são cópias de lib/ do mesmo release. Nada neste diretório foi modificado à mão.

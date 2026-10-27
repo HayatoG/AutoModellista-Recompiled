@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "am/ui_assets.h"
+
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
@@ -35,42 +37,22 @@ struct UiState {
     SDL_GPUTextureFormat format;
     PlatformUiDrawFn draw;
     void *user;
-    ImFont *fonts[2];
+    ImFont *fonts[PLATFORM_UI_FONT_COUNT];
     UiTexture tex[kMaxTextures];
     u32 tex_count;
 };
 
 UiState s_ui;
 
-/* Fontes do sistema com acentos (a primeira que existir); sem nenhuma, a vetorial embutida no ImGui. */
-const char *const kRegular[] = {
-    "/System/Library/Fonts/Supplemental/Arial.ttf",        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",   "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/noto/NotoSans-Regular.ttf",          "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", "C:\\Windows\\Fonts\\segoeui.ttf",
-};
-const char *const kBold[] = {
-    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/noto/NotoSans-Bold.ttf",
-    "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-    "C:\\Windows\\Fonts\\segoeuib.ttf",
-};
-
-template <size_t N> ImFont *load_font(const char *const (&paths)[N]) {
+/* Fontes OFL embutidas (am/ui_assets.h, third_party/fonts): independem do que o sistema tem. */
+ImFont *load_font(UiAssetId id) {
     ImGuiIO &io = ImGui::GetIO();
-    for (const char *path : paths) {
-        if (SDL_GetPathInfo(path, nullptr)) {
-            ImFont *f = io.Fonts->AddFontFromFileTTF(path);
-            if (f != nullptr) {
-                return f;
-            }
-        }
-    }
-    return io.Fonts->AddFontDefaultVector();
+    const UiAsset a = ui_asset(id);
+    ImFontConfig cfg;
+    cfg.FontDataOwnedByAtlas = false; /* os bytes são do executável */
+    ImFont *f =
+        io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char *>(a.data), static_cast<int>(a.size), 0.0F, &cfg);
+    return f != nullptr ? f : io.Fonts->AddFontDefaultVector();
 }
 
 void release_texture_objects(UiTexture &t) {
@@ -221,8 +203,12 @@ bool platform_ui_init(void) {
     io.IniFilename = nullptr; /* nada de imgui.ini: as configurações do jogo ficam no arquivo próprio */
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     style();
-    s_ui.fonts[0] = load_font(kRegular);
-    s_ui.fonts[1] = load_font(kBold);
+    s_ui.fonts[PLATFORM_UI_FONT_BODY] = load_font(UI_ASSET_FONT_SAIRA_500);
+    s_ui.fonts[PLATFORM_UI_FONT_BOLD] = load_font(UI_ASSET_FONT_SAIRA_700);
+    s_ui.fonts[PLATFORM_UI_FONT_REGULAR] = load_font(UI_ASSET_FONT_SAIRA_400);
+    s_ui.fonts[PLATFORM_UI_FONT_SEMIBOLD] = load_font(UI_ASSET_FONT_SAIRA_600);
+    s_ui.fonts[PLATFORM_UI_FONT_DISPLAY] = load_font(UI_ASSET_FONT_SAIRA_COND_800);
+    s_ui.fonts[PLATFORM_UI_FONT_MONO] = load_font(UI_ASSET_FONT_MONO_400);
     s_ui.ready = true;
     backends_up();
     return true;
@@ -250,7 +236,7 @@ void platform_ui_set_draw(PlatformUiDrawFn fn, void *user) {
 }
 
 void *platform_ui_font(u32 which) {
-    return which < 2U ? s_ui.fonts[which] : nullptr;
+    return which < static_cast<u32>(PLATFORM_UI_FONT_COUNT) ? s_ui.fonts[which] : nullptr;
 }
 
 u32 platform_ui_texture_add(const u8 *rgba, u32 width, u32 height) {
@@ -267,6 +253,52 @@ u32 platform_ui_texture_add(const u8 *rgba, u32 width, u32 height) {
     t.w = width;
     t.h = height;
     return ++s_ui.tex_count;
+}
+
+bool platform_ui_texture_update(u32 handle, const u8 *rgba, u32 width, u32 height) {
+    if (handle == 0U || handle > s_ui.tex_count) {
+        return false;
+    }
+    UiTexture &t = s_ui.tex[handle - 1U];
+    const size_t bytes = static_cast<size_t>(width) * height * 4U;
+    u8 *copy = static_cast<u8 *>(SDL_malloc(bytes));
+    if (copy == nullptr) {
+        return false;
+    }
+    std::memcpy(copy, rgba, bytes);
+    release_texture_objects(t);
+    SDL_free(t.rgba);
+    t.rgba = copy;
+    t.w = width;
+    t.h = height;
+    return true;
+}
+
+bool platform_ui_decode_png(const u8 *data, size_t size, u8 **rgba, u32 *width, u32 *height) {
+    SDL_IOStream *io = SDL_IOFromConstMem(data, size);
+    SDL_Surface *png = io != nullptr ? SDL_LoadPNG_IO(io, true) : nullptr;
+    SDL_Surface *conv = png != nullptr ? SDL_ConvertSurface(png, SDL_PIXELFORMAT_RGBA32) : nullptr;
+    SDL_DestroySurface(png);
+    if (conv == nullptr) {
+        return false;
+    }
+    const size_t row = static_cast<size_t>(conv->w) * 4U;
+    u8 *out = static_cast<u8 *>(SDL_malloc(row * static_cast<size_t>(conv->h)));
+    if (out != nullptr) {
+        for (int y = 0; y < conv->h; y++) {
+            std::memcpy(out + row * static_cast<size_t>(y), static_cast<const u8 *>(conv->pixels) + conv->pitch * y,
+                        row);
+        }
+        *rgba = out;
+        *width = static_cast<u32>(conv->w);
+        *height = static_cast<u32>(conv->h);
+    }
+    SDL_DestroySurface(conv);
+    return out != nullptr;
+}
+
+void platform_ui_free(void *p) {
+    SDL_free(p);
 }
 
 u64 platform_ui_texture_id(u32 handle) {

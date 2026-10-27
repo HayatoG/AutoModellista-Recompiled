@@ -16,6 +16,8 @@ extern "C" {
 #define SETTINGS_PATH_SIZE 1024U
 #define SETTINGS_KEY_SIZE  32U
 #define SETTINGS_SCALE_MAX 6U
+#define SETTINGS_BLUR_MIN  4U /* intensidade do vidro, em px de desfoque do design */
+#define SETTINGS_BLUR_MAX  48U
 
 typedef struct Settings {
     char game_dir[SETTINGS_PATH_SIZE]; /* raiz da árvore extraída (sys/ e files/); vazio = perguntar */
@@ -26,6 +28,8 @@ typedef struct Settings {
     bool vsync;
     u32 filter; /* PlatformFilter (am/platform.h): 0 nearest, 1 linear, 2 sharp */
     bool fps_overlay;
+    bool ui_glass;     /* estilo da tela inicial: true = Liquid Glass (vidro fosco), false = Sólido */
+    u32 ui_blur;       /* intensidade do vidro, SETTINGS_BLUR_MIN..MAX */
     u32 volume;        /* 0..100 */
     char gamepad[128]; /* nome do gamepad da porta 1; vazio = o primeiro conectado */
     char keys[PAD_CONTROL_COUNT][SETTINGS_KEY_SIZE];

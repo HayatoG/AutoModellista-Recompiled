@@ -15,6 +15,8 @@ TEST(defaults_follow_dolphin) {
     EXPECT_EQ(s.window_scale, 2U);
     EXPECT_EQ(s.volume, 100U);
     EXPECT_EQ(s.filter, 0U); /* nearest: a janela estica a imagem como antes */
+    EXPECT_TRUE(s.ui_glass); /* Liquid Glass, 24 px: o padrão do design */
+    EXPECT_EQ(s.ui_blur, 24U);
     EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_A], "X") == 0);
     EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_START], "Return") == 0);
     EXPECT_TRUE(strcmp(s.keys[PAD_CONTROL_HALF], "Left Shift") == 0);
@@ -49,6 +51,30 @@ TEST(parse_overrides_and_counts_bad_lines) {
     EXPECT_EQ(s.pad.pad[PAD_CONTROL_Z], (1U << PLATFORM_PAD_LEFT_SHOULDER) | (1U << PLATFORM_PAD_RIGHT_SHOULDER));
 }
 
+TEST(ui_style_keys) {
+    Settings s;
+    settings_defaults(&s);
+    static const char ok[] = "[ui]\nstyle = solid\nglass = 40\n";
+    EXPECT_EQ(settings_parse(ok, sizeof(ok) - 1U, &s), 0U);
+    EXPECT_TRUE(!s.ui_glass);
+    EXPECT_EQ(s.ui_blur, 40U);
+    /* fora da faixa ou desconhecido: ignorado e contado, sem mexer no valor */
+    static const char bad[] = "[ui]\nstyle = acrilico\nglass = 3\nglass = 49\nglass = muito\n";
+    EXPECT_EQ(settings_parse(bad, sizeof(bad) - 1U, &s), 4U);
+    EXPECT_TRUE(!s.ui_glass);
+    EXPECT_EQ(s.ui_blur, 40U);
+    static const char edges[] = "[ui]\nstyle = glass\nglass = 4\n";
+    EXPECT_EQ(settings_parse(edges, sizeof(edges) - 1U, &s), 0U);
+    EXPECT_TRUE(s.ui_glass && s.ui_blur == SETTINGS_BLUR_MIN);
+    static char text[16384];
+    EXPECT_TRUE(settings_format(&s, text, sizeof(text)) > 0U);
+    EXPECT_TRUE(strstr(text, "[ui]\nstyle = glass\nglass = 4\n") != NULL);
+    /* "sem cartão" é o memcard = none que a linha de comando já aceita */
+    static const char card[] = "[game]\nmemcard = none\n";
+    EXPECT_EQ(settings_parse(card, sizeof(card) - 1U, &s), 0U);
+    EXPECT_TRUE(strcmp(s.memcard, "none") == 0);
+}
+
 TEST(format_round_trip) {
     Settings a;
     settings_defaults(&a);
@@ -57,6 +83,8 @@ TEST(format_round_trip) {
     a.gpu = false;
     a.volume = 0;
     a.filter = 1;
+    a.ui_glass = false;
+    a.ui_blur = 48;
     a.pad.pad[PAD_CONTROL_L] = 1U << PLATFORM_PAD_LEFT_SHOULDER;
     (void)strcpy(a.keys[PAD_CONTROL_C_UP], "Keypad 8");
     static char text[16384];
@@ -97,6 +125,7 @@ TEST(banner_decodes_rgb5a3_tiles) {
 int main(void) {
     RUN_TEST(defaults_follow_dolphin);
     RUN_TEST(parse_overrides_and_counts_bad_lines);
+    RUN_TEST(ui_style_keys);
     RUN_TEST(format_round_trip);
     RUN_TEST(banner_decodes_rgb5a3_tiles);
     return am_test_finish();

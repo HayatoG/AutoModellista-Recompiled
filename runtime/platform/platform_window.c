@@ -33,6 +33,7 @@ static struct {
     SDL_Mutex *dialog_lock;
     bool dialog_done;
     char dialog_path[1024];
+    char ui_shot[512]; /* captura de desenvolvimento com a interface (platform_window_ui_shot) */
 } s_win;
 
 /* Teclas padrão até platform_input_set_keys: as de am/pad_input.h, na ordem de PadControl. */
@@ -219,6 +220,17 @@ void platform_window_set_scale(u32 scale) {
     }
 }
 
+void platform_window_set_size(u32 width, u32 height) {
+    if (s_win.window != NULL && !s_win.fullscreen && width != 0U && height != 0U) {
+        (void)SDL_SetWindowSize(s_win.window, (int)width, (int)height);
+        (void)SDL_SyncWindow(s_win.window);
+    }
+}
+
+void platform_window_ui_shot(const char *path) {
+    (void)snprintf(s_win.ui_shot, sizeof(s_win.ui_shot), "%s", path != NULL ? path : "");
+}
+
 const char *platform_window_presenter(void) {
     return s_win.presenter;
 }
@@ -397,6 +409,13 @@ static bool renderer_frame(const u8 *rgba, u32 width, u32 height, const char *sa
     if (ui) { /* a interface desenha em pixels da janela, sem a escala da imagem do jogo */
         (void)SDL_SetRenderLogicalPresentation(r, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
         platform_ui_render_renderer(r);
+    }
+    if (s_win.ui_shot[0] != '\0') {
+        const bool ok = save_render(s_win.ui_shot);
+        s_win.ui_shot[0] = '\0';
+        if (!ok) {
+            return false;
+        }
     }
     (void)SDL_RenderPresent(r);
     return true;

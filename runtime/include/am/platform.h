@@ -95,6 +95,13 @@ void platform_dialog_pick_folder(const char *start);
 void platform_dialog_save_file(const char *start, const char *filter_name, const char *filter_ext);
 bool platform_dialog_take(char *out, size_t size);
 
+/* Tela inicial (M9 parte 5): tamanho da janela fora da tela cheia, em pixels (só para as capturas de desenvolvimento
+ * e para testar janelas pequenas e 4K). */
+void platform_window_set_size(u32 width, u32 height);
+/* Captura de desenvolvimento (AM_LAUNCHER_SHOT, front/launcher.cpp): no próximo quadro, grava em PNG o que o
+ * SDL_Renderer desenhou COM a interface por cima. Só o caminho do SDL_Renderer (software); na GPU é ignorado. */
+void platform_window_ui_shot(const char *path);
+
 /* Grava uma imagem RGBA (linhas contíguas) em PNG. Não altera `rgba` (não é const porque a SDL pede void*). */
 bool platform_save_png(const char *path, u8 *rgba, u32 width, u32 height);
 
@@ -203,6 +210,14 @@ u64 platform_ticks_ms(void);
 /* Nanossegundos de relógio monotônico (para o ritmo em tempo real) e espera. */
 u64 platform_ticks_ns(void);
 void platform_sleep_ns(u64 ns);
+
+/* Ajudas da tela inicial (Suporte). Texto na área de transferência; URL no navegador (https://...); pasta no
+ * gerenciador de arquivos (por file://, com SDL_OpenURL). false = o sistema recusou (platform_last_error). */
+bool platform_clipboard_set(const char *text);
+bool platform_open_url(const char *url);
+bool platform_open_folder(const char *path);
+/* "Windows", "Mac OS X", "Linux"... (SDL_GetPlatform). */
+const char *platform_os_name(void);
 
 /* Versão da SDL em uso, no formato major*1000000 + minor*1000 + patch. */
 int platform_sdl_version(void);
