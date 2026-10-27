@@ -17,9 +17,14 @@
 #define AM_GPU_HAVE_RW 0
 #endif
 
-#define EFB_PIXELS  (GPU_EFB_WIDTH * GPU_EFB_HEIGHT)
+#include "am/gpu_scale.h"
+
+/* M9: com --internal-res N o EFB da GPU tem (N * 640) x (N * 528) pixels; N = 1 é o de sempre. */
+#define EFB_PIXELS  (GPU_EFB_WIDTH * GPU_EFB_HEIGHT * s_gpu.scale * s_gpu.scale)
 #define EFB_BYTES   (EFB_PIXELS * 4U)
 #define EFB_BYTES_Z ((size_t)EFB_BYTES)
+#define EFB_W       (GPU_EFB_WIDTH * s_gpu.scale)
+#define EFB_H       (GPU_EFB_HEIGHT * s_gpu.scale)
 
 /* Um ubershader embutido num formato: código e entrada dos dois estágios. */
 typedef struct ShaderBlob {
@@ -46,9 +51,20 @@ static struct {
     SDL_GPUTransferBuffer *download;
     u64 wait_ns; /* tempo esperando a GPU nas leituras do EFB */
     u64 readbacks;
+    u32 scale; /* resolução interna 1..GPU_SCALE_MAX (platform_gpu_scale); 0 = não pedida */
     char name[128];
     char error[256];
 } s_gpu;
+
+void platform_gpu_set_scale(u32 n) {
+    if (s_gpu.device == NULL) { /* o tamanho do EFB é fixado na criação dos recursos */
+        s_gpu.scale = gpu_scale_clamp((s32)n);
+    }
+}
+
+u32 platform_gpu_scale(void) {
+    return s_gpu.scale != 0U ? s_gpu.scale : 1U;
+}
 
 static bool fail(const char *what) {
     (void)snprintf(s_gpu.error, sizeof(s_gpu.error), "%s: %s", what, SDL_GetError());
@@ -118,8 +134,8 @@ static SDL_GPUTexture *texture(SDL_GPUTextureFormat format, SDL_GPUTextureUsageF
     const SDL_GPUTextureCreateInfo info = {.type = SDL_GPU_TEXTURETYPE_2D,
                                            .format = format,
                                            .usage = usage,
-                                           .width = GPU_EFB_WIDTH,
-                                           .height = GPU_EFB_HEIGHT,
+                                           .width = EFB_W,
+                                           .height = EFB_H,
                                            .layer_count_or_depth = 1,
                                            .num_levels = 1};
     return SDL_CreateGPUTexture(s_gpu.device, &info);
@@ -228,6 +244,7 @@ bool platform_gpu_init(PlatformGpuShader want) {
     if (s_gpu.device != NULL) {
         return true;
     }
+    s_gpu.scale = platform_gpu_scale();
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) { /* a SDL só cria o dispositivo com o vídeo iniciado */
         return fail("SDL_InitSubSystem(VIDEO)");
     }
@@ -238,7 +255,12 @@ bool platform_gpu_init(PlatformGpuShader want) {
         return false;
     }
     ShaderBlob blob;
-    if (!pick_shader(want, &blob) || !init_resources() || !create_pipeline(&blob)) {
+    const bool picked = pick_shader(want, &blob);
+    if (picked && !s_gpu.hlsl && s_gpu.scale > 1U) {
+        SDL_Log("GPU: --internal-res %u só existe com o shader HLSL; seguindo em 1x", s_gpu.scale);
+        s_gpu.scale = 1U;
+    }
+    if (!picked || !init_resources() || !create_pipeline(&blob)) {
         char error[sizeof(s_gpu.error)];
         (void)snprintf(error, sizeof(error), "%s", s_gpu.error);
         platform_gpu_shutdown();
@@ -362,10 +384,10 @@ static bool upload(SDL_GPUCommandBuffer *cmd, const GpuBatch *b) {
     for (u32 k = 0; k < (ebytes != 0U ? 2U : 0U); k++) {
         const SDL_GPUTextureTransferInfo src = {.transfer_buffer = s_gpu.upload,
                                                 .offset = at + (k * EFB_BYTES),
-                                                .pixels_per_row = GPU_EFB_WIDTH,
-                                                .rows_per_layer = GPU_EFB_HEIGHT};
+                                                .pixels_per_row = EFB_W,
+                                                .rows_per_layer = EFB_H};
         const SDL_GPUTextureRegion dst = {
-            .texture = k == 0U ? s_gpu.efb_color : s_gpu.efb_depth, .w = GPU_EFB_WIDTH, .h = GPU_EFB_HEIGHT, .d = 1};
+            .texture = k == 0U ? s_gpu.efb_color : s_gpu.efb_depth, .w = EFB_W, .h = EFB_H, .d = 1};
         SDL_UploadToGPUTexture(copy, &src, &dst, false);
     }
     SDL_EndGPUCopyPass(copy);
@@ -403,7 +425,11 @@ static void render(SDL_GPUCommandBuffer *cmd, const GpuBatch *b) {
         if (d->vertex_count == 0U || d->scissor[2] <= 0 || d->scissor[3] <= 0) {
             continue;
         }
-        const SDL_Rect sc = {d->scissor[0], d->scissor[1], d->scissor[2], d->scissor[3]};
+        s32 scaled[4] = {d->scissor[0], d->scissor[1], d->scissor[2], d->scissor[3]};
+        if (s_gpu.scale > 1U) {
+            gpu_scale_rect(d->scissor, s_gpu.scale, scaled);
+        }
+        const SDL_Rect sc = {scaled[0], scaled[1], scaled[2], scaled[3]};
         SDL_SetGPUScissor(pass, &sc);
         SDL_PushGPUFragmentUniformData(cmd, 0, &d->u, sizeof(d->u));
         SDL_DrawGPUPrimitives(pass, d->vertex_count, 1, d->first_vertex, 0);
@@ -427,16 +453,17 @@ bool platform_gpu_run(const GpuBatch *b) {
     if (b->efb_color_out == NULL) { /* lote parcial: a GPU desenha enquanto a CPU segue */
         return SDL_SubmitGPUCommandBuffer(cmd) || fail("SDL_SubmitGPUCommandBuffer");
     }
-    const u32 top = b->readback_top;
-    const u32 rows = b->readback_bottom > top ? b->readback_bottom - top : 0U;
-    const u32 bytes = rows * GPU_EFB_WIDTH * 4U;
+    const u32 top = b->readback_top * platform_gpu_scale(); /* linhas do EFB da GPU (o lote conta em linhas nativas) */
+    const u32 rows =
+        b->readback_bottom > b->readback_top ? (b->readback_bottom - b->readback_top) * platform_gpu_scale() : 0U;
+    const u32 bytes = rows * EFB_W * 4U;
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
     for (u32 k = 0; k < (b->efb_depth_out != NULL ? 2U : 1U) && rows != 0U; k++) {
         const SDL_GPUTextureRegion src = {
-            .texture = k == 0U ? s_gpu.efb_color : s_gpu.efb_depth, .y = top, .w = GPU_EFB_WIDTH, .h = rows, .d = 1};
+            .texture = k == 0U ? s_gpu.efb_color : s_gpu.efb_depth, .y = top, .w = EFB_W, .h = rows, .d = 1};
         const SDL_GPUTextureTransferInfo dst = {.transfer_buffer = s_gpu.download,
                                                 .offset = k * EFB_BYTES,
-                                                .pixels_per_row = GPU_EFB_WIDTH,
+                                                .pixels_per_row = EFB_W,
                                                 .rows_per_layer = rows};
         SDL_DownloadFromGPUTexture(copy, &src, &dst);
     }
@@ -457,7 +484,7 @@ bool platform_gpu_run(const GpuBatch *b) {
     if (map == NULL) {
         return fail("SDL_MapGPUTransferBuffer (leitura)");
     }
-    const size_t at = (size_t)top * (size_t)GPU_EFB_WIDTH;
+    const size_t at = (size_t)top * (size_t)EFB_W;
     memcpy(b->efb_color_out + at, map, bytes);
     if (b->efb_depth_out != NULL) {
         memcpy(b->efb_depth_out + at, map + EFB_BYTES_Z, bytes);

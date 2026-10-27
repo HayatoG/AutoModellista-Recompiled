@@ -27,6 +27,10 @@
  *                              hlsl = gx_ubershader.hlsl (DXIL/SPIR-V/metallib, EFB em storage na ordem da
  *                              rasterização; exige ROV/interlock). auto (padrão): hand no Metal, hlsl nos outros
  *                              (docs/M9_PARTE1B_HLSL.md). As capturas são iguais byte a byte
+ *   --internal-res 1|2|3|4     M9: resolução interna do EFB no --gfx gpu com o shader HLSL (padrão 1 = nativa, igual
+ *                              ao de sempre). N desenha em N x N pixels por pixel do GameCube e reduz por média de
+ *                              caixa ao nativo na cópia para o XFB (SSAA); 3 e 4 são experimentais
+ *                              (docs/M9_RESOLUCAO_INTERNA.md)
  *   --shot <q:arq.png,...>     M6: no início do quadro q grava o XFB em PNG (o mesmo que dolphin_trace.py --shots)
  *   --window <escala>          M6: janela SDL3 com o XFB que o VI mostra (1, 2...); com --shot grava também
  *                              <arq>_janela.png, lido de volta do que a janela desenhou. M7: sem --pad-script, o
@@ -138,6 +142,7 @@ typedef struct Options {
     bool gfx_off;
     bool gfx_gpu;
     int gpu_shader; /* PlatformGpuShader */
+    u64 internal_res;
     bool stop_given;
     bool verbose;
     /* M9 parte 5: -1 = não dado (vale o arquivo de configuração no modo interativo) */
@@ -262,6 +267,8 @@ static bool parse_option(Options *o, const char *name, const char *value) {
         o->gpu_shader = strcmp(value, "hand") == 0   ? PLATFORM_GPU_SHADER_HAND
                         : strcmp(value, "hlsl") == 0 ? PLATFORM_GPU_SHADER_HLSL
                                                      : PLATFORM_GPU_SHADER_AUTO;
+    } else if (strcmp(name, "--internal-res") == 0 && parse_u64(value, &n) && n >= 1U && n <= 4U) {
+        o->internal_res = n;
     } else if (strcmp(name, "--audio-dump") == 0) {
         o->audio_dump = value;
     } else if (strcmp(name, "--audio-dump-max-mb") == 0 && parse_u64(value, &n) && n > 0U) {
@@ -571,6 +578,7 @@ static GameRunConfig run_config(const Options *o, RunPaths *p, Settings *front) 
                            .render = !o->gfx_off,
                            .gpu = o->gfx_gpu,
                            .gpu_shader = o->gpu_shader,
+                           .internal_res = (u32)o->internal_res,
                            .shots = log_path_list(o->shots, p->shots, sizeof(p->shots)),
                            .window_scale = (u32)o->window_scale,
                            .audio_dump = log_path(o->audio_dump, p->audio, sizeof(p->audio)),

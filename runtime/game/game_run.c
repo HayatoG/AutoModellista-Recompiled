@@ -514,10 +514,17 @@ static bool init_video(GameRunConfig *config) {
         AM_LOG_INFO("GX: rasterizador com %u trabalhador(es)", workers > 1U ? workers : 1U);
     }
     if (config->render && config->gpu) {
+        platform_gpu_set_scale(config->internal_res);
         if (platform_gpu_init((PlatformGpuShader)config->gpu_shader)) {
+            const u32 scale = platform_gpu_scale();
             gx_gpu_reset();
+            gx_gpu_set_scale(scale);
             gx_gpu_set_backend(platform_gpu_run);
             AM_LOG_INFO("GX: desenho na GPU (driver %s, ubershader TEV)", platform_gpu_name());
+            if (scale > 1U) {
+                AM_LOG_INFO("GX: resolução interna %ux (EFB %ux%u, média de caixa para o XFB%s)", scale,
+                            GPU_EFB_WIDTH * scale, GPU_EFB_HEIGHT * scale, scale > 2U ? "; experimental" : "");
+            }
         } else {
             AM_LOG_WARN("--gfx gpu: sem GPU utilizável (%s); o GX desenha em software", platform_gpu_error());
             config->gpu = false;

@@ -33,6 +33,11 @@ typedef bool (*GxGpuRunFn)(const GpuBatch *batch);
 void gx_gpu_set_backend(GxGpuRunFn run);
 bool gx_gpu_active(void);
 void gx_gpu_reset(void);
+/* M9: resolução interna N (1..4; am/gpu_scale.h). Com N > 1 o lote leva e traz o EFB grande (platform_gpu_set_scale tem
+ * de ter o mesmo N) e este módulo reduz por média de caixa para o EFB nativo; N = 1 não muda nada. Sobrevive ao
+ * gx_gpu_reset; chamar antes de gx_gpu_set_backend. */
+void gx_gpu_set_scale(u32 n);
+u32 gx_gpu_scale(void);
 
 /* Chamados pelo GX quando ativo: estado do desenho (depois de gx_tex_prepare e gx_raster_begin_draw), cada
  * triângulo de frente, fim do desenho. */

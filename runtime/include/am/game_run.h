@@ -16,6 +16,7 @@ typedef struct GameRunConfig {
     bool render;              /* M6: rasterizar e copiar o EFB (--gfx soft) ou só contar (--gfx off) */
     bool gpu;                 /* M8: com render, desenhar na GPU (--gfx gpu, am/gx_gpu.h) */
     int gpu_shader;           /* M9: PlatformGpuShader (am/platform_gpu.h; --gpu-shader auto|hand|hlsl) */
+    u32 internal_res;         /* M9: resolução interna 1..4 do EFB da GPU (--internal-res; am/gpu_scale.h); 0 = 1 */
     const char *shots;        /* NULL ou "quadro:arquivo.png,...": XFB do quadro em PNG (como dolphin_trace --shots) */
     u32 window_scale;         /* 0 = sem janela; senão a janela SDL3 mostra o XFB com esse fator */
     const char *audio_dump;   /* NULL ou WAV com a saída da DMA de áudio (am/audio_dump.h) */

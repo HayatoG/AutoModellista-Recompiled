@@ -66,6 +66,8 @@ typedef struct GpuBatch {
     u32 draw_count;
     const GpuTexUpload *uploads;
     u32 upload_count;
+    /* M9: com --internal-res N > 1 (am/gpu_scale.h) os quatro buffers efb_* têm (N * 640) x (N * 528) pixels; vértices,
+     * scissors e readback_top/bottom seguem em pixels nativos. */
     /* Se não NULL, o EFB da GPU é substituído por estes antes de desenhar (a CPU limpou ou mudou o EFB). */
     const u32 *efb_color_in;
     const u32 *efb_depth_in;
