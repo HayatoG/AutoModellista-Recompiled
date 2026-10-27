@@ -6,9 +6,12 @@
 #include "am/gpu_scale.h"
 #include "am/gx_bp.h"
 #include "am/gx_efb.h"
+#include "am/gx_fifo.h"
 #include "am/gx_gpu.h"
+#include "am/mem.h"
 
 #include "am_test.h"
+#include "gx_test_util.h"
 
 TEST(clamp_and_rect) {
     EXPECT_EQ(gpu_scale_clamp(-3), 1U);
@@ -144,7 +147,59 @@ TEST(gx_gpu_scaled_batch) {
     EXPECT_EQ(gx_gpu_scale(), 1U);
 }
 
+/* --- etapa 1b: a cópia para o XFB também sai em N x N, em RGBA, guardada pelo endereço do XFB --- */
+static bool paint_run(const GpuBatch *b) {
+    if (b->efb_color_out != NULL) {
+        /* EFB grande de 2x: as 4 primeiras colunas grandes (2 pixels nativos) brancas, o resto preto */
+        for (u32 y = b->readback_top * 2U; y < b->readback_bottom * 2U; y++) {
+            for (u32 x = 0; x < GPU_EFB_WIDTH * 2U; x++) {
+                b->efb_color_out[((size_t)y * GPU_EFB_WIDTH * 2U) + x] = x < 4U ? 0xFFFFFFU : 0U;
+            }
+        }
+    }
+    return true;
+}
+
+TEST(hires_xfb_by_address) {
+    gx_fifo_reset(NULL);
+    gx_fifo_set_render(true);
+    gx_gpu_reset();
+    gx_gpu_set_scale(2U);
+    gx_gpu_set_backend(paint_run);
+    gxt_setup_2d();
+    u32 w = 0;
+    u32 h = 0;
+    EXPECT_TRUE(gx_gpu_hires_xfb(0x80350000U, 4U, 2U, &w, &h) == NULL); /* ainda não houve cópia */
+    gxt_bp(GX_BP_EFB_TL, 0);
+    gxt_bp(GX_BP_EFB_WH, 3U | (1U << 10)); /* 4 x 2 */
+    gxt_bp(GX_BP_EFB_ADDR, 0x00350000U >> 5);
+    gxt_bp(GX_BP_EFB_STRIDE, 1);
+    gxt_bp(GX_BP_COPYYSCALE, 256);
+    gxt_bp(GX_BP_COPYFILTER0, (21U << 12) | (22U << 18)); /* filtro identidade: peso 64 na linha atual */
+    gxt_bp(GX_BP_COPYFILTER1, 21U);
+    gxt_bp(GX_BP_COPY_EXECUTE, 1U << 14);
+    const u8 *img = gx_gpu_hires_xfb(0x80350000U, 4U, 2U, &w, &h);
+    EXPECT_TRUE(img != NULL);
+    EXPECT_EQ(w, 8U);
+    EXPECT_EQ(h, 4U);
+    if (img != NULL) {
+        EXPECT_EQ(img[0], 255U); /* pixel grande (0, 0): branco, alfa cheio */
+        EXPECT_EQ(img[3], 255U);
+        EXPECT_EQ(img[(3U * 4U) + 0U], 255U); /* (3, 0) ainda branco */
+        EXPECT_EQ(img[(4U * 4U) + 0U], 0U);   /* (4, 0) preto */
+        EXPECT_EQ(img[((3U * 8U) + 3U) * 4U], 255U); /* última linha grande, mesmo recorte */
+    }
+    EXPECT_TRUE(gx_gpu_hires_xfb(0x80360000U, 4U, 2U, &w, &h) == NULL); /* outro endereço */
+    EXPECT_TRUE(gx_gpu_hires_xfb(0x80350000U, 4U, 3U, &w, &h) == NULL); /* outro tamanho */
+    EXPECT_EQ(mem_read32(NULL, 0x80350000U), 0xEB80EB80U); /* o XFB do guest segue nativo (YUV) */
+    gx_gpu_set_backend(NULL);
+    gx_gpu_reset();
+    gx_gpu_set_scale(1U);
+    EXPECT_TRUE(gx_gpu_hires_xfb(0x80350000U, 4U, 2U, &w, &h) == NULL);
+}
+
 int main(void) {
+    EXPECT_TRUE(mem_init());
     RUN_TEST(clamp_and_rect);
     RUN_TEST(lod_bias);
     RUN_TEST(replicate);
@@ -152,5 +207,6 @@ int main(void) {
     RUN_TEST(reduce_average);
     RUN_TEST(reduce_depth_center);
     RUN_TEST(gx_gpu_scaled_batch);
+    RUN_TEST(hires_xfb_by_address);
     return am_test_finish();
 }

@@ -385,6 +385,8 @@ static struct {
     u64 xfb_seq;    /* com a trava: XFBs entregues à janela */
     u32 xfb_bytes;
     bool xfb_ready;
+    u32 xfb_front_w, xfb_front_h; /* com a trava: tamanho da imagem em xfb_front (maior que o do XFB com --internal-res) */
+    u32 xfb_back_w, xfb_back_h;
     u64 syncs;
     u64 waits;      /* sincronizações em que o GX ainda tinha trabalho */
     u64 wait_ns[3]; /* tempo de relógio esperando, por motivo (DrawDone, token, leitura de fora) */
@@ -426,7 +428,19 @@ static int gx_thread_main(void *user) {
         }
         feed_direct(b->data, b->size);
         if (b->present) {
-            gx_efb_xfb_to_rgba(b->xfb_addr, b->xfb_width, b->xfb_height, b->xfb_stride, s_q.xfb_back);
+            u32 hw = 0;
+            u32 hh = 0;
+            const u8 *hires = gx_gpu_scale() > 1U ? gx_gpu_hires_xfb(b->xfb_addr, b->xfb_width, b->xfb_height, &hw, &hh)
+                                                  : NULL;
+            if (hires != NULL) { /* --internal-res: a janela mostra a cópia feita do EFB grande, sem passar pelo YUV */
+                memcpy(s_q.xfb_back, hires, (size_t)hw * hh * 4U);
+                s_q.xfb_back_w = hw;
+                s_q.xfb_back_h = hh;
+            } else {
+                gx_efb_xfb_to_rgba(b->xfb_addr, b->xfb_width, b->xfb_height, b->xfb_stride, s_q.xfb_back);
+                s_q.xfb_back_w = b->xfb_width;
+                s_q.xfb_back_h = b->xfb_height;
+            }
         }
         if (b->closes && mem_cow_active()) {
             mem_cow_gx_done(b->epoch);
@@ -437,6 +451,8 @@ static int gx_thread_main(void *user) {
             u8 *t = s_q.xfb_front;
             s_q.xfb_front = s_q.xfb_back;
             s_q.xfb_back = t;
+            s_q.xfb_front_w = s_q.xfb_back_w;
+            s_q.xfb_front_h = s_q.xfb_back_h;
             s_q.xfb_ready = true;
             s_q.xfb_seq++;
         }
@@ -800,7 +816,7 @@ bool gx_fifo_present_xfb(GuestAddr addr, u32 width, u32 height, u32 stride) {
     if (!s_q.on) {
         return false;
     }
-    const u32 bytes = width * height * 4U;
+    const u32 bytes = width * height * 4U * gx_gpu_scale() * gx_gpu_scale(); /* com --internal-res: o RGBA grande */
     if (bytes > s_q.xfb_bytes) {
         gx_fifo_sync(); /* o GX não está usando os buffers */
         u8 *front = realloc(s_q.xfb_front, bytes);
@@ -831,6 +847,23 @@ u64 gx_fifo_xfb_seq(void) {
     const u64 seq = s_q.xfb_seq;
     s_q.api.unlock(s_q.lock);
     return seq;
+}
+
+bool gx_fifo_xfb_latest_any(u8 *rgba, u32 cap, u32 *width, u32 *height) {
+    bool ok = false;
+    if (!s_q.on) {
+        return false;
+    }
+    s_q.api.lock(s_q.lock);
+    const size_t bytes = (size_t)s_q.xfb_front_w * s_q.xfb_front_h * 4U;
+    if (s_q.xfb_ready && bytes <= cap) {
+        memcpy(rgba, s_q.xfb_front, bytes);
+        *width = s_q.xfb_front_w;
+        *height = s_q.xfb_front_h;
+        ok = true;
+    }
+    s_q.api.unlock(s_q.lock);
+    return ok;
 }
 
 bool gx_fifo_xfb_latest(u8 *rgba, u32 width, u32 height) {

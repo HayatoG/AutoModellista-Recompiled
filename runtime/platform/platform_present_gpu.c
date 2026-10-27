@@ -126,12 +126,15 @@ static void blit_xfb(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target, u32 tw, 
     const float s = sx < sy ? sx : sy;
     const u32 w = (u32)((float)s_pg.xfb_w * s);
     const u32 h = (u32)((float)s_pg.xfb_h * s);
+    /* M9 --internal-res: imagem maior que o XFB (mais de 640 de largura) reduzida na janela: linear; as imagens
+     * nativas seguem em nearest, como antes. */
+    const bool shrink = s_pg.xfb_w > 640U && s < 1.0F;
     const SDL_GPUBlitInfo blit = {
         .source = {.texture = s_pg.xfb, .w = s_pg.xfb_w, .h = s_pg.xfb_h},
         .destination = {.texture = target, .x = (tw - w) / 2U, .y = (th - h) / 2U, .w = w, .h = h},
         .load_op = SDL_GPU_LOADOP_CLEAR,
         .clear_color = {0.0F, 0.0F, 0.0F, 1.0F},
-        .filter = SDL_GPU_FILTER_NEAREST,
+        .filter = shrink ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST,
     };
     SDL_BlitGPUTexture(cmd, &blit);
 }

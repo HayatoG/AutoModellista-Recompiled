@@ -24,6 +24,16 @@ typedef struct HeldTri {
     GxXfVertex v[3];
 } HeldTri;
 
+/* Imagem em RGBA de uma cópia para o XFB feita do EFB grande (para a janela; o XFB YUV do guest continua nativo). */
+typedef struct HiXfb {
+    u32 addr; /* endereço físico do XFB; 0 = vazio */
+    u32 width, height;
+    u8 *rgba;
+    u64 serial;
+} HiXfb;
+
+#define HI_XFB_SLOTS 3U
+
 static struct {
     GxGpuRunFn run;
     GpuVertex *verts;
@@ -40,6 +50,8 @@ static struct {
     u32 scale;        /* M9: resolução interna (1 = nativa; ver am/gpu_scale.h) */
     u32 *hi_color;    /* só com scale > 1: o EFB grande que vai e volta da GPU */
     u32 *hi_depth;
+    HiXfb xfbs[HI_XFB_SLOTS]; /* M9 etapa 1b: as últimas cópias para o XFB em N x N, por endereço do XFB */
+    u64 xfb_serial;
     bool in_draw;
     s32 rects[GX_RASTER_MAX_RECTS][6];
     u32 rect_count;
@@ -96,6 +108,9 @@ void gx_gpu_reset(void) {
     free(s_gpu.held);
     free(s_gpu.hi_color);
     free(s_gpu.hi_depth);
+    for (u32 i = 0; i < HI_XFB_SLOTS; i++) {
+        free(s_gpu.xfbs[i].rgba);
+    }
     memset(&s_gpu, 0, sizeof(s_gpu));
     s_gpu.run = run;
     s_gpu.scale = scale;
@@ -485,6 +500,48 @@ static void push_clear(const GxEfbClear *c) {
     }
 }
 
+/* Etapa 1b: guarda a cópia para o XFB em N x N, no lugar da do mesmo endereço (ou da mais antiga). O EFB grande tem as
+ * linhas da cópia (submit_rows acabou de ler). */
+static void keep_hires_xfb(void) {
+    const u32 dest = (gx_bp_reg(GX_BP_EFB_ADDR) << 5) & 0x01FFFFFFU;
+    HiXfb *slot = &s_gpu.xfbs[0];
+    for (u32 i = 0; i < HI_XFB_SLOTS; i++) {
+        HiXfb *s = &s_gpu.xfbs[i];
+        if (s->addr == dest) {
+            slot = s;
+            break;
+        }
+        slot = s->serial < slot->serial ? s : slot;
+    }
+    const u32 cap = GPU_EFB_WIDTH * GPU_EFB_HEIGHT * s_gpu.scale * s_gpu.scale * 4U;
+    if (slot->rgba == NULL) {
+        slot->rgba = malloc(cap);
+        AM_ASSERT(slot->rgba != NULL, "GX GPU: sem memória para o XFB %ux", s_gpu.scale);
+    }
+    GxEfbHiXfb img;
+    slot->addr = 0;
+    if (gx_efb_copy_xfb_hires(s_gpu.hi_color, s_gpu.scale, slot->rgba, cap, &img)) {
+        *slot = (HiXfb){.addr = img.dest, .width = img.width, .height = img.height, .rgba = slot->rgba,
+                        .serial = ++s_gpu.xfb_serial};
+    }
+}
+
+u8 *gx_gpu_hires_xfb(u32 addr, u32 width, u32 height, u32 *out_width, u32 *out_height) {
+    if (s_gpu.scale <= 1U) {
+        return NULL;
+    }
+    for (u32 i = 0; i < HI_XFB_SLOTS; i++) {
+        const HiXfb *s = &s_gpu.xfbs[i];
+        if (s->addr != 0U && s->addr == (addr & 0x01FFFFFFU) && s->width == width * s_gpu.scale &&
+            s->height == height * s_gpu.scale) {
+            *out_width = s->width;
+            *out_height = s->height;
+            return s->rgba;
+        }
+    }
+    return NULL;
+}
+
 void gx_gpu_copy(void) {
     gx_gpu_end_draw();
     u32 top = 0;
@@ -492,6 +549,9 @@ void gx_gpu_copy(void) {
     bool depth = false;
     const bool rows = gx_efb_copy_rows(&top, &bottom, &depth);
     submit_rows(true, top, rows ? bottom : 0U, depth);
+    if (s_gpu.scale > 1U && rows && !depth && gx_efb_copy_is_xfb()) {
+        keep_hires_xfb();
+    }
     gx_efb_copy_ex(false);
     GxEfbClear c;
     if (gx_efb_copy_clears() && gx_efb_clear_params(&c)) {

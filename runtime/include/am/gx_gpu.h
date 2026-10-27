@@ -38,6 +38,11 @@ void gx_gpu_reset(void);
  * gx_gpu_reset; chamar antes de gx_gpu_set_backend. */
 void gx_gpu_set_scale(u32 n);
 u32 gx_gpu_scale(void);
+/* Etapa 1b (N > 1): a imagem RGBA, em N x N pixels por pixel do XFB, da última cópia do EFB para o XFB em `addr`
+ * (endereço do guest ou físico), se tiver exatamente width x height pixels nativos; senão NULL (o chamador usa o XFB
+ * do guest). Devolve o tamanho real em out_*. O ponteiro vale até a próxima cópia para o mesmo endereço; só a thread
+ * que executa o GX (ou, sem a thread, a CPU emulada) pode chamar. */
+u8 *gx_gpu_hires_xfb(u32 addr, u32 width, u32 height, u32 *out_width, u32 *out_height);
 
 /* Chamados pelo GX quando ativo: estado do desenho (depois de gx_tex_prepare e gx_raster_begin_draw), cada
  * triângulo de frente, fim do desenho. */
