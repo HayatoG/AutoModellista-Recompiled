@@ -751,6 +751,7 @@ static int run_session(CPUState *cpu, Options *o) {
                                .fullscreen = o->fullscreen,
                                .vsync = o->vsync,
                                .filter = o->filter,
+                               .internal_res = o->internal_res != 0U ? (int)o->internal_res : -1,
                                .fps_overlay = o->fps_overlay,
                                .volume = o->volume,
                                .memcard = o->memcard,
@@ -764,6 +765,7 @@ static int run_session(CPUState *cpu, Options *o) {
     o->sys_dir = fs.sys_dir;
     o->gfx_gpu = !o->gfx_off && fs.eff.gpu;
     o->window_scale = fs.eff.window_scale;
+    o->internal_res = fs.eff.gpu ? fs.eff.internal_res : 1U; /* só vale com a GPU */
     o->memcard = fs.eff.memcard[0] != '\0' ? fs.eff.memcard : NULL;
     if (o->frames == 0U) { /* sem --frames: até a janela fechar */
         o->frames = UINT64_MAX;

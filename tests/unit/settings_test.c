@@ -51,6 +51,27 @@ TEST(parse_overrides_and_counts_bad_lines) {
     EXPECT_EQ(s.pad.pad[PAD_CONTROL_Z], (1U << PLATFORM_PAD_LEFT_SHOULDER) | (1U << PLATFORM_PAD_RIGHT_SHOULDER));
 }
 
+TEST(internal_res_key) {
+    Settings s;
+    settings_defaults(&s);
+    EXPECT_EQ(s.internal_res, 1U); /* nativa */
+    static const char ok[] = "[video]\ninternal_res = 3\n";
+    EXPECT_EQ(settings_parse(ok, sizeof(ok) - 1U, &s), 0U);
+    EXPECT_EQ(s.internal_res, 3U);
+    /* fora de 1..4 ou texto: ignorado e contado, sem mexer no valor */
+    static const char bad[] = "[video]\ninternal_res = 0\ninternal_res = 5\ninternal_res = dobro\n";
+    EXPECT_EQ(settings_parse(bad, sizeof(bad) - 1U, &s), 3U);
+    EXPECT_EQ(s.internal_res, 3U);
+    s.internal_res = 4;
+    static char text[16384];
+    EXPECT_TRUE(settings_format(&s, text, sizeof(text)) > 0U);
+    EXPECT_TRUE(strstr(text, "internal_res = 4\n") != NULL);
+    Settings b;
+    settings_defaults(&b);
+    EXPECT_EQ(settings_parse(text, strlen(text), &b), 0U);
+    EXPECT_EQ(b.internal_res, 4U);
+}
+
 TEST(ui_style_keys) {
     Settings s;
     settings_defaults(&s);
@@ -85,6 +106,7 @@ TEST(format_round_trip) {
     a.filter = 1;
     a.ui_glass = false;
     a.ui_blur = 48;
+    a.internal_res = 3;
     a.pad.pad[PAD_CONTROL_L] = 1U << PLATFORM_PAD_LEFT_SHOULDER;
     (void)strcpy(a.keys[PAD_CONTROL_C_UP], "Keypad 8");
     static char text[16384];
@@ -125,6 +147,7 @@ TEST(banner_decodes_rgb5a3_tiles) {
 int main(void) {
     RUN_TEST(defaults_follow_dolphin);
     RUN_TEST(parse_overrides_and_counts_bad_lines);
+    RUN_TEST(internal_res_key);
     RUN_TEST(ui_style_keys);
     RUN_TEST(format_round_trip);
     RUN_TEST(banner_decodes_rgb5a3_tiles);

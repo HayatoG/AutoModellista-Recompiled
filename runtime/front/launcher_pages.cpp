@@ -78,9 +78,21 @@ void page_graphics(Form &f) {
         g.pending = Pending::Backend;
     }
     static const char *const res[] = {"Nativa", "2×", "3×", "4×"};
-    (void)seg_row(f, "res", "Resolução interna",
-                  "Multiplica a resolução original do jogo (640×448). Só a nativa existe por enquanto.", res, 4, 0, 1U,
-                  true, false);
+    if (s->gpu) { /* só vale com a GPU e o shader HLSL (docs/M9_RESOLUCAO_INTERNA.md); sem ele a runtime volta a 1x */
+        f.badge = "EXPERIMENTAL";
+        pick =
+            seg_row(f, "res", "Resolução interna",
+                    "2× é o recomendado; 3× e 4× são experimentais e podem não manter 60 quadros/s. Só vale com a GPU "
+                    "e o shader HLSL.",
+                    res, 4, static_cast<int>(s->internal_res) - 1, 0xFU, false, false);
+        if (pick >= 0) {
+            s->internal_res = static_cast<u32>(pick) + 1U;
+        }
+    } else {
+        (void)seg_row(f, "res", "Resolução interna",
+                      "Só vale com o backend GPU (shader HLSL): no Software a imagem fica nativa.", res, 4, 0, 0U, true,
+                      true);
+    }
     static const char *const scale[] = {"1×", "2×", "3×", "4×", "5×", "6×"};
     pick = seg_row(f, "scale", "Escala da janela",
                    s->fullscreen ? "Tela cheia ativa: a escala não tem efeito agora, só vale em janela."

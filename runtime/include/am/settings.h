@@ -28,6 +28,7 @@ typedef struct Settings {
     bool vsync;
     u32 filter; /* PlatformFilter (am/platform.h): 0 nearest, 1 linear, 2 sharp */
     bool fps_overlay;
+    u32 internal_res;  /* resolução interna do EFB na GPU, 1..4 (--internal-res; 1 = nativa) */
     bool ui_glass;     /* estilo da tela inicial: true = Liquid Glass (vidro fosco), false = Sólido */
     u32 ui_blur;       /* intensidade do vidro, SETTINGS_BLUR_MIN..MAX */
     u32 volume;        /* 0..100 */

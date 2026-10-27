@@ -556,10 +556,9 @@ float chip(ImDrawList *dl, ImVec2 pos, const char *label, Icon ic, int kind, flo
     return w;
 }
 
-float soon_badge(ImDrawList *dl, ImVec2 pos) {
+float soon_badge(ImDrawList *dl, ImVec2 pos, const char *label) {
     const float size_d = 10.0F;
     const float tracking = 0.08F;
-    const char *label = "EM BREVE";
     const float w = px(16.0F) + text_w(Face::Bold, size_d, label, tracking);
     const float h = px(18.0F);
     dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), white(0.10F), px(99.0F));
@@ -662,9 +661,13 @@ Row row_begin(Form &f, const char *title, const char *desc, float ctrl_w, float 
     }
     float ty = r.cy - left_h * 0.5F;
     text(f.dl, Face::Semi, 15.0F, ImVec2(f.x, ty), white(a), title);
-    if (soon) {
-        (void)soon_badge(f.dl, ImVec2(f.x + text_w(Face::Semi, 15.0F, title) + px(10.0F),
-                                      ty + (line_h(Face::Semi, 15.0F) - px(18.0F)) * 0.5F));
+    const char *badge = soon ? "EM BREVE" : f.badge;
+    f.badge = nullptr;
+    if (badge != nullptr) {
+        (void)soon_badge(f.dl,
+                         ImVec2(f.x + text_w(Face::Semi, 15.0F, title) + px(10.0F),
+                                ty + (line_h(Face::Semi, 15.0F) - px(18.0F)) * 0.5F),
+                         badge);
     }
     ty += line_h(Face::Semi, 15.0F) + px(2.0F);
     if (desc_h > 0.0F) {

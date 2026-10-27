@@ -16,6 +16,7 @@ void settings_defaults(Settings *s) {
     s->volume = 100;
     s->ui_glass = true;
     s->ui_blur = 24;
+    s->internal_res = 1;
     for (u32 i = 0; i < (u32)PAD_CONTROL_COUNT; i++) {
         (void)snprintf(s->keys[i], sizeof(s->keys[i]), "%s", pad_input_default_key((PadControl)i));
     }
@@ -118,6 +119,9 @@ static bool parse_pair(Settings *s, const char *section, const char *key, const 
             }
         }
         return false;
+    }
+    if (strcmp(full, "video.internal_res") == 0) {
+        return parse_uint(v, 1, 4, &s->internal_res);
     }
     if (strcmp(full, "video.fps_overlay") == 0) {
         return parse_bool(v, &s->fps_overlay);
@@ -232,9 +236,11 @@ size_t settings_format(const Settings *s, char *out, size_t size) {
     put(&o, "# Auto Modellista Recompiled: configurações (docs/M9_PARTE5_LAUNCHER.md). A linha de comando tem\n"
             "# prioridade. Teclas pelo nome da SDL; botões do gamepad por posição, juntos com '+'.\n");
     put(&o, "\n[game]\ndir = %s\nmemcard = %s\n", s->game_dir, s->memcard);
-    put(&o, "\n[video]\nbackend = %s\nscale = %u\nfullscreen = %d\nvsync = %d\nfilter = %s\nfps_overlay = %d\n",
+    put(&o,
+        "\n[video]\nbackend = %s\nscale = %u\nfullscreen = %d\nvsync = %d\nfilter = %s\nfps_overlay = %d\ninternal_res "
+        "= %u\n",
         s->gpu ? "gpu" : "soft", s->window_scale, s->fullscreen ? 1 : 0, s->vsync ? 1 : 0,
-        settings_filter_name(s->filter), s->fps_overlay ? 1 : 0);
+        settings_filter_name(s->filter), s->fps_overlay ? 1 : 0, s->internal_res);
     put(&o, "\n[ui]\nstyle = %s\nglass = %u\n", s->ui_glass ? "glass" : "solid", s->ui_blur);
     put(&o, "\n[audio]\nvolume = %u\n", s->volume);
     put(&o, "\n[input]\ngamepad = %s\n", s->gamepad);

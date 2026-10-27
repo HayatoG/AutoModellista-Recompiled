@@ -131,21 +131,13 @@ void play() {
     g.done = true;
 }
 
-const char *pretty_driver(const char *driver) {
-    if (std::strcmp(driver, "direct3d12") == 0) {
-        return "D3D12";
-    }
-    if (std::strcmp(driver, "vulkan") == 0) {
-        return "Vulkan";
-    }
-    return std::strcmp(driver, "metal") == 0 ? "Metal" : driver;
-}
-
 void summary(char *out, size_t size) {
     static const char *const filters[] = {"Pixels", "Suave", "Nítido"};
-    const char *driver = platform_gpu_driver();
-    (void)std::snprintf(out, size, "%s · %s %u× · %s", driver[0] != '\0' ? pretty_driver(driver) : "Software",
-                        g.s->fullscreen ? "tela cheia, janela" : "janela", g.s->window_scale,
+    char res[16] = "Nativa";
+    if (g.s->gpu && g.s->internal_res > 1U) {
+        (void)std::snprintf(res, sizeof(res), "%u×", g.s->internal_res);
+    }
+    (void)std::snprintf(out, size, "%s · %s · %s", g.s->gpu ? "GPU" : "Software", res,
                         filters[g.s->filter < 3U ? g.s->filter : 0U]);
 }
 
@@ -600,11 +592,14 @@ struct ShotScene {
     ImGuiKey keys[8];
     int imp = 0; /* 0 = nada; 1 = extraindo 42% (simulado); 2 = oferta de usar a extração existente; 3 = extração real
                   * de uma imagem inválida (erro); 4 = outro jogo (aviso) */
+    int res = 0; /* > 0: backend GPU com esta resolução interna (a captura não abre o device) */
 };
 
 const ShotScene kScenes[] = {
     {"01_inicio_vidro", Page::Home, true, true, 1280, 760, {}},
     {"02_graficos_vidro", Page::Graphics, true, true, 1280, 760, {}},
+    {"08_graficos_resolucao_gpu", Page::Graphics, true, true, 1280, 760, {}, 0, 3},
+    {"09_inicio_gpu_2x", Page::Home, true, true, 1280, 760, {}, 0, 2},
     {"03_audio_vidro", Page::Audio, true, true, 1280, 760, {}},
     {"04_controles_vidro", Page::Controls, true, true, 1280, 760, {}},
     {"05_interface_vidro", Page::Interface, true, true, 1280, 760, {}},
@@ -706,6 +701,8 @@ void shot_begin_scene(const ShotScene &sc) {
     if (sc.page == Page::Home) {
         g.focus_content = true;
     }
+    g.s->gpu = sc.res > 0;
+    g.s->internal_res = sc.res > 0 ? static_cast<u32>(sc.res) : 1U;
     shot_import_scene(sc.imp);
     if (sc.w != 0U) {
         platform_window_set_size(sc.w, sc.h);

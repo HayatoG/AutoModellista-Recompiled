@@ -110,7 +110,7 @@ Hit hit(const char *id, ImVec2 a, ImVec2 b);
 float chip(ImDrawList *dl, ImVec2 pos, const char *label, Icon ic, int kind, float height_d = 26.0F,
            float size_d = 12.0F, bool measure_only = false);
 /* Etiqueta "EM BREVE": devolve a largura. */
-float soon_badge(ImDrawList *dl, ImVec2 pos);
+float soon_badge(ImDrawList *dl, ImVec2 pos, const char *label = "EM BREVE");
 
 /* Botão do menu lateral (44 de altura). */
 bool nav_item(const char *id, ImVec2 a, ImVec2 b, Icon ic, const char *label, bool active);
@@ -127,6 +127,7 @@ struct Form {
     float x, y, w; /* canto superior esquerdo e largura (px da tela) */
     bool first;
     bool nav; /* false: os controles não são navegáveis (captura de tela) */
+    const char *badge = nullptr; /* etiqueta ("EXPERIMENTAL") ao lado do título da próxima linha, se não for EM BREVE */
 };
 struct Row {
     float top, h, cy, right, left_w;

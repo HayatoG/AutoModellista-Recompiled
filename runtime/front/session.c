@@ -33,6 +33,9 @@ static void apply_overrides(Settings *s, const FrontOverrides *ov) {
     if (ov->filter >= 0) {
         s->filter = (u32)ov->filter;
     }
+    if (ov->internal_res > 0) {
+        s->internal_res = (u32)(ov->internal_res > 4 ? 4 : ov->internal_res);
+    }
     if (ov->fps_overlay >= 0) {
         s->fps_overlay = ov->fps_overlay == 1;
     }
@@ -147,6 +150,7 @@ void front_session_end(FrontSession *fs) {
     KEEP_FILE_VALUE(fs->ov.vsync >= 0, vsync);
     KEEP_FILE_VALUE(fs->ov.filter >= 0, filter);
     KEEP_FILE_VALUE(fs->ov.fps_overlay >= 0, fps_overlay);
+    KEEP_FILE_VALUE(fs->ov.internal_res > 0, internal_res);
     KEEP_FILE_VALUE(fs->ov.volume >= 0, volume);
     KEEP_FILE_VALUE(fs->ov.memcard != NULL, memcard);
     (void)settings_save(&out);

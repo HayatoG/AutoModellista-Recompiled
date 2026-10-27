@@ -236,7 +236,7 @@ nada delas vai para o `settings.ini`.
 | Ativas | Em breve (apagadas) |
 | --- | --- |
 | JOGAR, a pasta do jogo (pasta extraída sys/ + files/, SHA-256; mostra o banner do disco) e a imagem ISO, GCM ou RVZ (zstd), extraída pelo launcher | RVZ com LZMA ou bzip2 e WIA (o extrator avisa para reconverter) |
-| Backend GPU/Software (com o driver real, só leitura) | Vulkan/OpenGL (não existem), resolução interna 2x a 4x, proporção 16:9 e 21:9, limite de FPS, anti-aliasing, contornos cel-shading |
+| Backend GPU/Software (com o driver real, só leitura) e a resolução interna Nativa/2×/3×/4× (§9.2) | Vulkan/OpenGL (não existem), proporção 16:9 e 21:9, limite de FPS, anti-aliasing, contornos cel-shading |
 | Escala da janela (apagada em tela cheia), modo Janela/Tela cheia, VSync, filtro da imagem, contador de FPS | Volumes de música, efeitos e vozes, saída surround, dispositivo de áudio, silenciar em segundo plano |
 | Volume geral, escolha do controle, remapeamento de teclas e botões, memory card (arquivo, padrão, "Sem cartão" = `memcard = none`) | Ícones dos botões, zona morta, vibração, gatilhos analógicos |
 | Estilo visual (Liquid Glass/Sólido) e intensidade do vidro, novas chaves `[ui] style = glass\|solid` e `glass = 4..48` | Idioma (só Português), fechar o launcher ao jogar |
@@ -272,3 +272,15 @@ Capturas de desenvolvimento novas: `41_inicio_extraindo` (42% simulado), `42_ini
 `43_inicio_erro_imagem` (a thread de verdade sobre um arquivo falso, com destino em `<captura>/jogo_teste`) e
 `44_inicio_outro_jogo`. A extração completa com o mini-disco sintético é coberta por `disc_extract_test` (o launcher só
 chama a mesma API); o RVZ real do jogador não foi extraído nestas verificações.
+
+### 9.2 Resolução interna
+
+A linha "Resolução interna" de Gráficos liga `--internal-res 1|2|3|4` (docs/M9_RESOLUCAO_INTERNA.md): chave `video.internal_res`
+do `settings.ini` (1 a 4, padrão 1), com parse, formato e volta testados em `settings_test`. A linha de comando tem
+prioridade como nas outras opções (`FrontOverrides.internal_res` e `KEEP_FILE_VALUE`), e `run_session` repassa o valor
+ao `GameRunConfig`. Regras da tela:
+
+- 2× é o recomendado; 3× e 4× são experimentais (etiqueta EXPERIMENTAL na linha) e podem não manter 60 quadros/s.
+- Só vale com o backend GPU e o shader HLSL. Com o backend Software a linha fica apagada, "EM BREVE", com o motivo, e a
+  runtime recebe 1 (nativa); com a GPU mas sem o shader HLSL a própria runtime volta a 1x com aviso.
+- O chip do canto da tela inicial mostra backend, resolução e filtro ("GPU · 2× · Nítido"; "Nativa" quando é 1).
