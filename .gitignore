@@ -23,6 +23,7 @@
 # ---- Ferramentas de terceiros (buscadas por scripts/fetch_tools.sh em commits fixos) ----
 /tools/*/
 !/tools/README.md
+!/tools/disc_extract/
 
 # ---- Builds, caches, logs locais ----
 build/
