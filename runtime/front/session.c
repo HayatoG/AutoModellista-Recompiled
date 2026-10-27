@@ -108,6 +108,10 @@ FrontStart front_session_begin(FrontSession *fs, const FrontOverrides *ov, const
             AM_LOG_ERROR("tela inicial: %s", platform_last_error());
             return FRONT_ERROR;
         }
+        if (r == LAUNCHER_SHOT) { /* capturas de desenvolvimento: nada do jogador é gravado */
+            platform_ui_shutdown();
+            return FRONT_QUIT;
+        }
         if (r == LAUNCHER_QUIT) {
             AM_LOG_INFO("tela inicial: o jogador saiu");
             front_session_end(fs); /* grava o que o jogador mudou antes de sair */

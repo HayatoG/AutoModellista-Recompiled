@@ -213,3 +213,40 @@ executável do pacote roda 300 quadros em software e 30 na GPU (Vulkan do lavapi
 - Remapear os sticks analógicos do gamepad e zona morta configurável.
 - Voltar à tela inicial sem fechar o jogo (o jogo emulado não tem "reset" limpo ainda).
 - Testes de janela no Linux/Windows reais (o OrbStack não tem tela; só o build e os testes sem janela rodaram).
+
+## 9. Tela inicial nova (design "Liquid Glass")
+
+Substitui o menu de §2 (o resto do §2, atalhos e linha de comando, não mudou). Layout do design `work/launcher-bg/design_Main.dc.html`
+(1280x760): barra superior de 40 px, menu lateral de 236 px com sete seções (Início, Gráficos, Áudio, Controles,
+Interface, Suporte, Sobre) e a área principal. Fluido: fator `min(largura/1280, altura/760)` (`launcher_scale`, limitado
+a 0,4..8) para fontes e espaçamentos.
+
+| Peça | Onde | O quê |
+| --- | --- | --- |
+| Fundo | `assets/launcher/background_*.png` -> `runtime/platform/ui_assets_data.c` (`scripts/gen_launcher_assets.py`) | PNG embutido (1080p; 4K se a janela tem 2200 px ou mais), decodificado com `SDL_LoadPNG_IO` (SDL 3.4.18), modo cover (`launcher_cover`) e o scrim da esquerda do design |
+| Vidro fosco sem shader | `launcher_gfx.c`, `launcher_ui.cpp` | o fundo reduzido a 480x270 por média de caixa; dele sai a miniatura (largura de 154 a 688 texels conforme a "Intensidade do vidro" de 4 a 48, dobrada porque o SDL_Renderer em software amostra sem filtro), com passes de 3x3 (`launcher_glass_passes`) e saturação 170%; desenhada esticada com filtro linear por trás de cada painel com o UV da posição na tela, mais o gradiente translúcido de 140 graus e a borda clara. "Sólido" = painel opaco. Os realces radiais do design não foram reproduzidos |
+| Título inclinado | `lui::text_skewed` | texto da Saira Condensed ExtraBold desenhado com `ImDrawList` e os vértices cisalhados (`x += tan(9 graus) * (y_base - y)`); a sombra escura (4,4) e a da cor de destaque (9,9) são cópias deslocadas |
+| Fontes | `assets/launcher/*.ttf`, `third_party/fonts` | Saira 400/500/600/700 e JetBrains Mono (instâncias estáticas, subconjunto Latin) e Saira Condensed 800 (original), todas OFL, embutidas (~270 KB) |
+| Componentes | `launcher_ui.cpp` | painéis, chips, controles segmentados, chaves, barras, botões e ícones de traço; foco do teclado e do controle na cor de destaque (`#FF6A1A`) |
+| Páginas | `launcher_pages.cpp` | uma função por página; rolagem por `BeginChild` com navegação achatada |
+
+Só ficam ativas as opções que o port implementa; as outras do design aparecem apagadas, sem interação, com "EM BREVE", e
+nada delas vai para o `settings.ini`.
+
+| Ativas | Em breve (apagadas) |
+| --- | --- |
+| JOGAR e a pasta do jogo (só pasta extraída sys/ + files/, SHA-256; mostra o banner do disco) | Imagem ISO/GCM/RVZ (RVZ em breve) |
+| Backend GPU/Software (com o driver real, só leitura) | Vulkan/OpenGL (não existem), resolução interna 2x a 4x, proporção 16:9 e 21:9, limite de FPS, anti-aliasing, contornos cel-shading |
+| Escala da janela (apagada em tela cheia), modo Janela/Tela cheia, VSync, filtro da imagem, contador de FPS | Volumes de música, efeitos e vozes, saída surround, dispositivo de áudio, silenciar em segundo plano |
+| Volume geral, escolha do controle, remapeamento de teclas e botões, memory card (arquivo, padrão, "Sem cartão" = `memcard = none`) | Ícones dos botões, zona morta, vibração, gatilhos analógicos |
+| Estilo visual (Liquid Glass/Sólido) e intensidade do vidro, novas chaves `[ui] style = glass\|solid` e `glass = 4..48` | Idioma (só Português), fechar o launcher ao jogar |
+| Suporte: issues e projeto no GitHub, abrir a pasta de dados, copiar as informações do sistema; Sobre; "Ver versões" (releases) | Perguntas frequentes |
+
+A versão mostrada é a do CMake (`PROJECT_VERSION`); não há hash de build. O log do jogo vai para o terminal (não há
+pasta de logs): o cartão do Suporte abre a pasta de dados.
+
+**Captura de desenvolvimento, sem janela visível.** `AM_LAUNCHER_SHOT=<pasta>` com `SDL_VIDEODRIVER=offscreen` e
+`--gfx soft --fullscreen off` grava um PNG por cena (cada página em Vidro e Sólido, pasta válida e inválida, foco do
+teclado e do controle por teclas enviadas ao ImGui, janela pequena, 4K e 16:10) e sai sem gravar o `settings.ini`.
+`AM_LAUNCHER_SHOT_GAMEDIR` dá a pasta válida; `AM_LAUNCHER_SHOT_ONLY=<texto>` limita às cenas cujo nome contém o texto.
+Só o caminho do SDL_Renderer (software) captura.

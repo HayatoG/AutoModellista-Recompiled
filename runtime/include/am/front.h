@@ -21,6 +21,7 @@ typedef enum LauncherResult {
     LAUNCHER_PLAY,
     LAUNCHER_QUIT,
     LAUNCHER_ERROR, /* a janela falhou (platform_last_error) */
+    LAUNCHER_SHOT,  /* captura de desenvolvimento (AM_LAUNCHER_SHOT) terminada: sair sem gravar nada */
 } LauncherResult;
 
 /* Tela inicial na janela já aberta (com platform_ui_init feito). Edita `s` conforme o jogador mexe; aplica na hora

@@ -43,6 +43,12 @@ TEST(glass_width_shrinks_with_blur) {
     EXPECT_TRUE(launcher_glass_width(24U) >= 64U && launcher_glass_width(24U) <= 256U);
 }
 
+TEST(glass_passes_grow_with_blur_and_width) {
+    EXPECT_TRUE(launcher_glass_passes(48U, 200U) > launcher_glass_passes(24U, 200U));
+    EXPECT_TRUE(launcher_glass_passes(24U, 400U) > launcher_glass_passes(24U, 200U));
+    EXPECT_TRUE(launcher_glass_passes(4U, 20U) >= 1U && launcher_glass_passes(48U, 4000U) <= 40U);
+}
+
 TEST(box_reduce_averages_exactly) {
     /* 4x2: esquerda preta, direita branca; para 2x1 cada metade é uma média de 2x2 */
     u8 src[4 * 2 * 4];
@@ -77,11 +83,11 @@ TEST(glass_finish_keeps_grey_and_saturates) {
         memset(&grey[i * 4U], 100, 3U);
         grey[i * 4U + 3U] = 255U;
     }
-    launcher_glass_finish(grey, 3U, 3U, 1.7F);
+    launcher_glass_finish(grey, 3U, 3U, 2U, 1.7F);
     EXPECT_EQ(grey[16], 100U); /* cinza não muda com a saturação */
     EXPECT_EQ(grey[19], 255U);
     u8 red[1 * 1 * 4] = {200, 100, 100, 255};
-    launcher_glass_finish(red, 1U, 1U, 1.7F);
+    launcher_glass_finish(red, 1U, 1U, 1U, 1.7F);
     EXPECT_TRUE(red[0] > 200U && red[1] < 100U); /* o vermelho fica mais vermelho */
 }
 
@@ -89,6 +95,7 @@ int main(void) {
     RUN_TEST(scale_follows_the_smaller_axis);
     RUN_TEST(cover_fills_and_centres);
     RUN_TEST(glass_width_shrinks_with_blur);
+    RUN_TEST(glass_passes_grow_with_blur_and_width);
     RUN_TEST(box_reduce_averages_exactly);
     RUN_TEST(glass_finish_keeps_grey_and_saturates);
     return am_test_finish();

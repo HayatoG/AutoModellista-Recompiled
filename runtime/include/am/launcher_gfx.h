@@ -33,9 +33,13 @@ u32 launcher_glass_width(u32 blur);
  * dw x dh (qualquer razão, inclusive ampliando). */
 void launcher_box_reduce(const u8 *src, u32 sw, u32 sh, u8 *dst, u32 dw, u32 dh);
 
-/* Suaviza com um passe de 3x3 (pesos 1-2-1, bordas repetidas) e satura (1 = igual; o design usa saturate(170%)).
- * Altera `rgba` (w x h) no lugar. */
-void launcher_glass_finish(u8 *rgba, u32 w, u32 h, float saturation);
+/* Quantos passes de 3x3 (pesos 1-2-1) imitam o desfoque gaussiano de `blur` px do design numa miniatura de `width`
+ * texels de largura (sigma = 0,6 x blur px do design; cada passe soma ~0,71 texel de sigma). */
+u32 launcher_glass_passes(u32 blur, u32 width);
+
+/* Suaviza com `passes` passes de 3x3 (bordas repetidas) e satura (1 = igual; o design usa saturate(170%)). Altera
+ * `rgba` (w x h) no lugar. */
+void launcher_glass_finish(u8 *rgba, u32 w, u32 h, u32 passes, float saturation);
 
 #ifdef __cplusplus
 }

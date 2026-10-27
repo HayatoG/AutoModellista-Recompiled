@@ -79,11 +79,8 @@ static u8 clamp8(float v) {
     return (u8)(v < 0.0F ? 0.0F : (v > 255.0F ? 255.0F : v + 0.5F));
 }
 
-void launcher_glass_finish(u8 *rgba, u32 w, u32 h, float saturation) {
-    u8 *tmp = (u8 *)malloc((size_t)w * h * 4U);
-    if (tmp == NULL) {
-        return;
-    }
+/* Um passe 1-2-1 nos dois eixos, de src para dst (bordas repetidas). */
+static void blur_pass(const u8 *src, u8 *dst, u32 w, u32 h) {
     static const float k[3] = {0.25F, 0.5F, 0.25F};
     for (u32 y = 0; y < h; y++) {
         for (u32 x = 0; x < w; x++) {
@@ -92,22 +89,46 @@ void launcher_glass_finish(u8 *rgba, u32 w, u32 h, float saturation) {
                 const u32 yy = y + j == 0U ? 0U : (y + j - 1U >= h ? h - 1U : y + j - 1U);
                 for (u32 i = 0; i < 3U; i++) {
                     const u32 xx = x + i == 0U ? 0U : (x + i - 1U >= w ? w - 1U : x + i - 1U);
-                    const u8 *p = rgba + ((size_t)yy * w + xx) * 4U;
+                    const u8 *p = src + ((size_t)yy * w + xx) * 4U;
                     for (u32 c = 0; c < 3U; c++) {
                         acc[c] += k[i] * k[j] * (float)p[c];
                     }
                 }
             }
-            const float luma = 0.2126F * acc[0] + 0.7152F * acc[1] + 0.0722F * acc[2];
-            u8 *o = tmp + ((size_t)y * w + x) * 4U;
-            for (u32 c = 0; c < 3U; c++) {
-                o[c] = clamp8(luma + (acc[c] - luma) * saturation);
-            }
+            u8 *o = dst + ((size_t)y * w + x) * 4U;
+            o[0] = clamp8(acc[0]);
+            o[1] = clamp8(acc[1]);
+            o[2] = clamp8(acc[2]);
             o[3] = 255U;
         }
     }
-    for (size_t i = 0; i < (size_t)w * h * 4U; i++) {
-        rgba[i] = tmp[i];
+}
+
+u32 launcher_glass_passes(u32 blur, u32 width) {
+    const float b = (float)(blur < 4U ? 4U : (blur > 48U ? 48U : blur));
+    const float sigma_texels = b * 0.6F * (float)width / LAUNCHER_DESIGN_W;
+    const u32 n = (u32)(2.0F * sigma_texels * sigma_texels + 0.5F);
+    return n < 1U ? 1U : (n > 40U ? 40U : n);
+}
+
+void launcher_glass_finish(u8 *rgba, u32 w, u32 h, u32 passes, float saturation) {
+    u8 *tmp = (u8 *)malloc((size_t)w * h * 4U);
+    if (tmp == NULL) {
+        return;
+    }
+    for (u32 n = 0; n < passes; n++) {
+        blur_pass(rgba, tmp, w, h);
+        for (size_t i = 0; i < (size_t)w * h * 4U; i++) {
+            rgba[i] = tmp[i];
+        }
+    }
+    for (size_t i = 0; i < (size_t)w * h; i++) {
+        u8 *p = rgba + i * 4U;
+        const float luma = 0.2126F * (float)p[0] + 0.7152F * (float)p[1] + 0.0722F * (float)p[2];
+        for (u32 c = 0; c < 3U; c++) {
+            p[c] = clamp8(luma + ((float)p[c] - luma) * saturation);
+        }
+        p[3] = 255U;
     }
     free(tmp);
 }
