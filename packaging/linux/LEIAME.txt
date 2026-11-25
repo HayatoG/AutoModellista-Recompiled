@@ -1,6 +1,12 @@
 Auto Modellista Recompiled - Linux x86_64 (build de teste, M9)
 ================================================================
 
+ESTUDO DE CASO / CASE STUDY
+  PT-BR: este projeto é apenas um estudo de caso (pesquisa pessoal), não um produto. O desenvolvimento só
+  continuará no meu tempo disponível, quando possível: sem prazos, sem garantia de conclusão e sem suporte.
+  EN: this project is only a case study (personal research), not a product. Development will only continue
+  in my available time, when possible: no deadlines, no guarantee of completion and no support.
+
 Port nativo de Auto Modellista (GameCube, GAUE08, EUA) por recompilação estática. O pacote NÃO traz nenhum
 arquivo do jogo: você precisa da sua própria cópia do disco. Uso pessoal; não redistribua (o executável foi
 recompilado a partir do código do jogo).

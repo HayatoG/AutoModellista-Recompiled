@@ -1,5 +1,7 @@
 # Instruções para agentes: Auto Modellista Recompiled
 
+> **Estudo de caso / Case study:** o projeto é só um estudo de caso, desenvolvido no tempo disponível do autor, quando possível. Manter o aviso bilíngue (PT-BR/EN) no topo do `README.md` e dos docs principais. / The project is only a case study, developed in the author's available time, when possible. Keep the bilingual notice at the top of `README.md` and the main docs.
+
 Port nativo de Auto Modellista (GameCube, GAUE08) por recompilação estática (DolRecomp) + runtime própria em C17/SDL3.
 Leia antes de trabalhar: `docs/PLANO_PORT_C.md` (plano e marcos), `docs/PADROES_DE_CODIGO.md` (regras de código) e
 o `docs/M*_*.md` do último marco.

@@ -1,5 +1,7 @@
 # Memória do projeto (exportada do ai-memory)
 
+> **Estudo de caso / Case study.** PT-BR: projeto de estudo pessoal; o desenvolvimento só continua no meu tempo disponível, quando possível (sem prazos nem garantia de conclusão). EN: personal case study; development only continues in my available time, when possible (no deadlines, no guarantee of completion). Ver/see `README.md`.
+
 Cópia das páginas do ai-memory (projeto `decompmodellista`, workspace `default`) que guiam o trabalho entre sessões,
 exportada em 25/10/2026 para que uma sessão em outra máquina (Windows, Linux) continue de onde paramos. É um retrato
 do momento da exportação: o que mudar depois precisa ser exportado de novo. Comece por `../RETOMAR_WINDOWS.md`.

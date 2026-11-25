@@ -1,5 +1,7 @@
 # Plano: port nativo em C (M3–M10)
 
+> **Estudo de caso / Case study.** PT-BR: projeto de estudo pessoal; o desenvolvimento só continua no meu tempo disponível, quando possível (sem prazos nem garantia de conclusão). EN: personal case study; development only continues in my available time, when possible (no deadlines, no guarantee of completion). Ver/see `README.md`.
+
 Escrito em 2026-10-23. Substitui a ModernGekko como runtime alvo; o que já foi feito em M0–M2 continua valendo
 (`ENVIRONMENT.md`, `ISO_ANALYSIS.md`, `RECOMPILATION_REPORT.md`). Padrões de código: `PADROES_DE_CODIGO.md`.
 

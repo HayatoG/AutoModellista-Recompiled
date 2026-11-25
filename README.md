@@ -1,5 +1,11 @@
 # Auto Modellista Recompiled
 
+> **Estudo de caso / Case study**
+>
+> **PT-BR:** este projeto é apenas um estudo de caso, uma pesquisa pessoal sobre recompilação estática e engenharia reversa, e não um produto. O desenvolvimento só continuará no meu tempo disponível, quando possível: sem prazos, sem garantia de conclusão e sem suporte.
+>
+> **EN:** this project is only a case study, personal research into static recompilation and reverse engineering, not a product. Development will only continue in my available time, when possible: no deadlines, no guarantee of completion and no support.
+
 Port por recompilação estática de **Auto Modellista** (Capcom, GameCube) para PC, com runtime própria em C17 sobre SDL3
 (macOS, Linux e Windows).
 

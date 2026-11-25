@@ -1,5 +1,7 @@
 # Status do port (25/10/2026)
 
+> **Estudo de caso / Case study.** PT-BR: projeto de estudo pessoal; o desenvolvimento só continua no meu tempo disponível, quando possível (sem prazos nem garantia de conclusão). EN: personal case study; development only continues in my available time, when possible (no deadlines, no guarantee of completion). Ver/see `README.md`.
+
 Port nativo de Auto Modellista (GameCube, GAUE08 rev 0) por recompilação estática (DolRecomp → C) e runtime própria
 em C17/SDL3. O código do jogo já roda nativo (C recompilado); o hardware (OS, DVD, ARAM, VI, SI, AI, DSP/AX, EXI,
 GX) é emulado pela runtime. O Dolphin 2609a é só oráculo de desenvolvimento (`scripts/dolphin_trace.py`, no Mac).
