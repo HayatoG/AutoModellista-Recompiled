@@ -1,7 +1,7 @@
 # Onde paramos (25/10/2026, 17:45)
 
 Master limpo, com o launcher (parte 5) e a corrida a 60 quadros/s (parte 4, `docs/M9_PARTE4_DESEMPENHO.md`)
-juntados. Repositório no GitHub: `https://github.com/HayatoG/AutoModellista-Recompiled` (privado, Actions
+juntados. Repositório no GitHub: `https://github.com/HayatoG/AutoModellista-Recompiled` (público desde 24/11/2026, Actions
 desligado, remote `origin`). Nenhum agente rodando.
 
 ## Próximo: M9 parte 2, Windows (o usuário vai continuar pela máquina Windows dele, com o Claude Code lá)
@@ -14,5 +14,5 @@ desligado, remote `origin`). Nenhum agente rodando.
    `rodar.bat`, `LEIAME.txt`, `scripts/package_windows.sh`, `docs/M9_PARTE2A_WINDOWS.md`.
 2. **2b**: testar de verdade: D3D12 na GPU e no WARP, Vulkan, software, áudio, gamepad, memory card, desempenho,
    e os "farelos" vistos no Linux.
-3. Depois: a lentidão do Linux (ver `status.md`), CI no GitHub (o repositório existe, privado, com o Actions
+3. Depois: a lentidão do Linux (ver `status.md`), CI no GitHub (o repositório existe, público desde 24/11/2026, com o Actions
    desligado até o usuário pedir), e medir a parte 4 no x86\_64 nativo (Nobara).
